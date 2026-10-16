@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
-  "build": 4,
-  "notes": "Porcentaje de avance en vivo al analizar (por playlist o todo)."
+  "version": "1.4.0",
+  "build": 5,
+  "notes": "Reorganizar por playlist: eliges si mover cada canción a su carpeta o dejarla donde está."
 }

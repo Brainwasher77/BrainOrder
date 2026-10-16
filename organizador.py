@@ -85,3 +85,54 @@ def organize(analysis, cfg, progress=None):
 
     log(f"Organizar: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
     return {"moved": moved, "duplicates": to_dups, "errors": errors}
+
+
+def relocate(ops, cfg, progress=None):
+    """Mueve archivos que ya tienes a otra carpeta (Reorganizar por playlist).
+
+    ops: [(ruta_actual, carpeta_destino)]. Si algún archivo está en Rekordbox, se corrige su
+    ruta allí (Rekordbox debe estar cerrado; antes se respalda). Si algo falla, se deshace todo.
+    """
+    import rekordbox_sync
+    import unificar
+
+    rb = unificar.rb_index(progress) or {}
+    need_rb = any(src in rb for src, _ in ops)
+    if need_rb and rekordbox_sync.rekordbox_running():
+        raise rekordbox_sync.RekordboxError(
+            "Rekordbox está abierto. Ciérralo y vuelve a aplicar: hay canciones de tu librería y hay que corregir sus rutas.")
+    backup = rekordbox_sync.backup().name if need_rb else None
+
+    moved, changes, skipped = [], {}, []
+    try:
+        for n, (src, dest_dir) in enumerate(ops, 1):
+            s = Path(src)
+            if progress:
+                progress(f"Moviendo {n}/{len(ops)}: {s.name}", n / max(1, len(ops)))
+            d = Path(dest_dir) / s.name
+            if not s.exists():
+                skipped.append({"file": s.name, "why": "ya no existe"})
+                continue
+            if d.exists():
+                skipped.append({"file": s.name, "why": f"ya hay un archivo con ese nombre en {Path(dest_dir).name}"})
+                continue
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(s), str(d))
+            moved.append((str(s), str(d)))
+            changes[str(s)] = str(d)
+        rb_stats = None
+        if need_rb and any(src in rb for src in changes):
+            if progress:
+                progress("Corrigiendo rutas en Rekordbox…")
+            rb_stats = unificar._rb_apply({k: v for k, v in changes.items() if k in rb}, {}, {})
+    except Exception as e:
+        log(f"Reorganizar falló, deshaciendo: {e!r}")
+        for src, dst in reversed(moved):
+            try:
+                Path(src).parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(dst, src)
+            except Exception as e2:
+                log(f"No pude deshacer {dst} -> {src}: {e2}")
+        raise rekordbox_sync.RekordboxError(f"No se pudo reorganizar; se deshicieron los cambios. Detalle: {e}")
+    log(f"Reorganizar: {len(moved)} movidos, {len(skipped)} saltados, rekordbox={rb_stats}")
+    return {"moved": len(moved), "skipped": skipped, "rekordbox": rb_stats, "backup": backup, "changes": changes}

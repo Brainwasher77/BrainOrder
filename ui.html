@@ -110,6 +110,13 @@ button.pa{border-color:rgba(106,168,255,.5);color:var(--info)}
 button.pa.chg{border-color:var(--org);color:var(--org)}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,181,71,.7)}100%{box-shadow:0 0 0 14px rgba(255,181,71,0)}}
 .pulse{animation:pulse 1s ease-out 3}
+button.ro{border-color:rgba(61,220,151,.45);color:var(--ok)}
+select.rg{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:12.5px;max-width:100%}
+details.rgg{border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel)}
+details.rgg summary{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;list-style:none}
+details.rgg summary::-webkit-details-marker{display:none}
+details.rgg summary .rg{margin-left:auto}
+details.rgg table{margin:0 0 6px}
 button.cp{padding:7px 11px;font-size:12.5px}
 button.cp.sp{border-color:rgba(200,245,60,.45);color:var(--acid)}
 button.cp.dz{border-color:rgba(167,139,250,.5);color:#a78bfa}
@@ -232,7 +239,8 @@ function render(){
       <span class="cnt mono">${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
       <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
   }).join('');
-  document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('sel', el.dataset.v===S.view));
+  const sv = S.view.startsWith('reorg:') ? 'pl:'+S.view.split(':')[1] : S.view;
+  document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('sel', el.dataset.v===sv));
   renderMain();
 }
 
@@ -264,6 +272,7 @@ function renderMain(){
   }
   if(S.view==='foreign'){ m.innerHTML = foreignView(); return; }
   if(S.view==='stats'){ m.innerHTML = statsView(); return; }
+  if(S.view.startsWith('reorg:')){ m.innerHTML = reorgView(+S.view.split(':')[1]); rgCount(); return; }
   let head = '';
   if(S.view==='missing') head = `<h2>Faltan por descargar</h2><span class="sub">📁 = carpeta donde quedará el archivo · ♫ = otras playlists que lo usarán en Rekordbox.</span>`;
   else if(S.view==='organize') head = `<h2>Listas para organizar</h2><span class="sub">Descargas que se mueven a su carpeta (un solo archivo por canción).</span>`;
@@ -279,6 +288,7 @@ function renderMain(){
     const pl = S.analysis[i], oc = orgCount(pl.id);
     plBtn = `<button id="btnPlAnalyze" class="pa${changed(pl)?' chg':''}" onclick="analyzePlaylist(${jsq(pl.id)})" title="${changed(pl)?'Cambió en Spotify: vuelve a analizarla':'Vuelve a leer esta playlist de Spotify y tus archivos'}">🔄 Analizar${changed(pl)?' ●':''}</button>`
       + (oc?`<button class="warn" onclick="askOrganize(${jsq(pl.id)})">Organizar <span class="badge mono">${oc}</span></button>`:'')
+      + (reorgRows(pl).length?`<button class="ro" onclick="openReorg(${i})" title="Elige si mover a su carpeta las canciones que ya tienes en otras carpetas">📂 Reorganizar <span class="badge mono">${reorgRows(pl).length}</span></button>`:'')
       + copyButtons(`pl:${i}`) + `<button class="xl" onclick="exportPlaylist(${i})">📊 Informe Excel</button>`;
   } else if(S.view==='missing'){
     plBtn = copyButtons('missing');
@@ -554,6 +564,79 @@ function progressCard(name){
     <div class="pbar"><i id="pcFill" style="width:${S.pct??0}%"></i></div>
     <div class="art" id="pcMsg">${esc($('progTxt').textContent)}</div></div>`;
 }
+// ---------- reorganizar por playlist ----------
+// canciones de la playlist que ya tienes pero cuyo archivo NO está en la carpeta de esta playlist
+function reorgRows(pl, withPinned){
+  if(!pl || pl.pending) return [];
+  const seen = new Set();
+  return pl.tracks.filter(r => (r.status==='ok'||r.status==='elsewhere') && r.source && dirOf(r.source)!==pl.folder
+    && (withPinned || !S.pinned.has(r.source)) && !seen.has(r.source) && seen.add(r.source));
+}
+let RG = {i:null, choice:{}, remember:true, showPinned:false};
+function openReorg(i){ RG = {i, choice:{}, remember:true, showPinned:false}; S.view='reorg:'+i; render(); }
+function rgOptions(pl, r){
+  const cur = dirOf(r.source), o = [['keep', `Dejar en «${base(cur)}»`]];
+  if(r.dest_dir && r.dest_dir!==cur) o.push(['home', `Mover a su carpeta «${base(r.dest_dir)}»`]);
+  if(pl.folder!==cur && pl.folder!==r.dest_dir) o.push(['here', `Mover a esta playlist «${base(pl.folder)}»`]);
+  return o;
+}
+function rgDest(pl, r, c){ return c==='home' ? r.dest_dir : c==='here' ? pl.folder : null; }
+function rgSet(src, c){ RG.choice[src]=c; rgCount(); }
+function rgGroup(dir, c){
+  const pl=S.analysis[RG.i];
+  reorgRows(pl, RG.showPinned).filter(r=>dirOf(r.source)===dir).forEach(r=>{
+    const ok = rgOptions(pl,r).some(o=>o[0]===c); RG.choice[r.source] = ok ? c : 'keep'; });
+  renderMain();
+}
+function rgAll(c){ const pl=S.analysis[RG.i]; reorgRows(pl, RG.showPinned).forEach(r=>{ RG.choice[r.source] = rgOptions(pl,r).some(o=>o[0]===c)?c:'keep'; }); renderMain(); }
+function rgCount(){
+  const pl=S.analysis[RG.i]; const rows=reorgRows(pl, RG.showPinned);
+  const mv = rows.filter(r=>(RG.choice[r.source]||'keep')!=='keep').length;
+  const el=$('rgCount'); if(el) el.innerHTML = `<b>${mv}</b> a mover · ${rows.length-mv} se quedan donde están`;
+}
+function reorgView(i){
+  const pl = S.analysis[i]; if(!pl){ S.view='missing'; return ''; }
+  const rows = reorgRows(pl, RG.showPinned), pinnedN = reorgRows(pl, true).length - reorgRows(pl).length;
+  const groups = new Map(); rows.forEach(r=>{ const d=dirOf(r.source); if(!groups.has(d)) groups.set(d,[]); groups.get(d).push(r); });
+  const sorted = [...groups].sort((a,b)=>b[1].length-a[1].length);
+  const sel = (r) => `<select class="rg" onchange="rgSet(${jsq(r.source)},this.value)">${rgOptions(pl,r).map(([v,t])=>`<option value="${v}" ${(RG.choice[r.source]||'keep')===v?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
+  return `<div class="vhead"><h2>📂 Reorganizar «${esc(pl.name)}»</h2>
+      <span class="sub">Canciones que ya tienes pero que están en otra carpeta. Elige dónde quieres cada una; por defecto se quedan donde están.</span>
+      <div class="sp"><button class="ghost" onclick="S.view='pl:${i}';render()">← Volver</button></div></div>
+    <div class="box">📁 Carpeta de esta playlist: <span class="path" onclick="reveal(${jsq(pl.folder)})">${esc(short(pl.folder))}</span>.
+      «Su carpeta» es la de la primera playlist donde aparece la canción (así se evita tener el mismo archivo dos veces).
+      Si un archivo está en Rekordbox, se corrige su ruta (cierra Rekordbox antes; se hace respaldo).</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+      <button onclick="rgAll('home')">Todo a su carpeta</button><button onclick="rgAll('here')">Todo a esta playlist</button><button onclick="rgAll('keep')">Dejar todo</button>
+      ${pinnedN?`<label style="display:flex;gap:6px;align-items:center;margin-left:auto;color:var(--mute);cursor:pointer"><input type="checkbox" ${RG.showPinned?'checked':''} onchange="RG.showPinned=this.checked;renderMain()"> Mostrar las ${pinnedN} que ya decidiste dejar</label>`:''}</div>
+    ${rows.length?sorted.map(([d,rs])=>{
+      const opts = [['', 'Elegir para todo el grupo…'], ['keep','Dejar todas donde están'], ['home','Todas a su carpeta'], ['here','Todas a esta playlist']];
+      return `<details class="rgg" ${sorted.length<=3?'open':''}><summary>
+        <span class="path" onclick="event.preventDefault();reveal(${jsq(d)})">📁 ${esc(short(d))}</span><span class="badge mono">${rs.length}</span>
+        <select class="rg" onclick="event.stopPropagation()" onchange="if(this.value) rgGroup(${jsq(d)},this.value)">${opts.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></summary>
+        <table>${rs.map(r=>`<tr><td><div>${esc(r.name)}${S.pinned.has(r.source)?' <span class="art">(fijada)</span>':''}</div><div class="art">${esc(r.artists.join(', '))} · ${esc(base(r.source))}</div></td>
+          <td style="width:42%">${sel(r)}</td></tr>`).join('')}</table></details>`;}).join('')
+      : `<div class="empty"><h3>Nada que reorganizar</h3><p>Todas las canciones que tienes de esta playlist están en su carpeta${pinnedN?' o ya decidiste dejarlas donde están':''}.</p></div>`}
+    <div style="position:sticky;bottom:-40px;background:var(--bg);border-top:1px solid var(--line);margin-top:20px;padding:14px 0 18px;display:flex;align-items:center;gap:12px">
+      <span id="rgCount" style="flex:1;color:var(--mute)"></span>
+      <label style="display:flex;gap:6px;align-items:center;color:var(--mute);cursor:pointer"><input type="checkbox" ${RG.remember?'checked':''} onchange="RG.remember=this.checked"> Recordar lo que dejo donde está</label>
+      <button class="warn" onclick="rgApply()">Aplicar</button></div>`;
+}
+async function rgApply(){
+  const pl=S.analysis[RG.i], rows=reorgRows(pl, RG.showPinned);
+  const moves=[], keep=[];
+  rows.forEach(r=>{ const c=RG.choice[r.source]||'keep'; if(c==='keep') keep.push(r.source); else moves.push({src:r.source, dest:rgDest(pl,r,c)}); });
+  if(!moves.length && !RG.remember){ toast('No elegiste nada para mover.'); return; }
+  busy(true, moves.length?`Moviendo ${moves.length} archivo${moves.length!==1?'s':''}…`:'Guardando…');
+  const r = await api().relocate(pl.id, moves, keep, RG.remember); busy(false);
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  S.analysis = r.analysis; S.pinned = new Set(r.pinned||[]);
+  const i = S.analysis.findIndex(p=>p.id===pl.id); S.view = 'pl:'+(i>=0?i:RG.i); render();
+  const x=r.result; let msg = `<b>${x.moved}</b> movida${x.moved!==1?'s':''}` + (keep.length&&RG.remember?`, ${keep.length} se quedan donde están (no te las vuelvo a proponer)`:'');
+  if(x.skipped.length) msg += `<br><span style="color:var(--org)">${x.skipped.length} no se movieron: ${x.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${x.skipped.length>2?'…':''}</span>`;
+  if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
+  toast(msg, !!x.skipped.length);
+}
 function show(v){ S.view=v; S.q=''; render(); }
 
 // ---------- acciones ----------
@@ -701,7 +784,7 @@ async function saveSettings(){
 window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.foreign = st.foreign || {};
-  S.home = st.home || ''; S.win = !!st.win; S.version = st.version || {};
+  S.home = st.home || ''; S.win = !!st.win; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   setTimeout(checkUpdates, 1500);
   try{ api().start_watch(); }catch(e){}
   render();
