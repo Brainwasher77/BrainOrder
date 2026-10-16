@@ -45,7 +45,7 @@ Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en
 | **⟳ (Tus playlists)** | Trae solo la lista de tus playlists, sin canciones (rápido). Las que cambiaron en Spotify desde que las analizaste se marcan con ●. |
 | **🔄 Analizar** (en cada playlist) | Lee de Spotify solo esa playlist y la cruza con tus archivos. |
 | **Analizar todo** | Lee todas tus playlists de una vez. Verde = la tienes, naranja = está en descargas, rojo = falta. |
-| **Organizar** (general o en cada playlist) | Se ilumina en cuanto llega un archivo a la carpeta de descargas. Mueve las descargas a su carpeta (una sola copia por canción), aparta las repetidas en `_duplicados` y actualiza Rekordbox. **Rekordbox debe estar cerrado.** |
+| **Organizar** (general o en cada playlist) | Muestra cuántos archivos hay en descargas y se ilumina en cuanto llega uno. Lo que no coincide con ninguna playlist analizada lo puedes mover por subcarpeta (como carpeta de playlist) o a la carpeta que elijas. Mueve las descargas a su carpeta (una sola copia por canción), aparta las repetidas en `_duplicados` y actualiza Rekordbox. **Rekordbox debe estar cerrado.** |
 | **📂 Reorganizar** (en cada playlist) | Muestra las canciones que ya tienes en otras carpetas, agrupadas por carpeta, y eliges para cada una: dejarla donde está, moverla a su carpeta o a la de esta playlist. Lo que dejas queda recordado. Si el archivo está en Rekordbox, se corrige su ruta (con respaldo). |
 | **📋 Spotify / 📋 Deezer** | Copia al portapapeles los links de lo que falta (en cada playlist o en "Faltan por descargar"), uno por línea. |
 | **📊 Informe Excel** | Informe de una playlist: estado de cada canción, dónde está y links. |
