@@ -722,7 +722,7 @@ async function analyzePlaylist(pid){
   render();
   const pl = S.analysis[i]; if(!pl) return;
   const c = plStats(pl), oc = orgCount(pid);
-  toast(`<b>${esc(pl.name)}</b>: ${c.here+c.other}/${c.total} las tienes, faltan <b>${c.missing}</b>` + (oc?`, <b>${oc}</b> en descargas para organizar.`:'.'));
+  toast(`<b>${esc(pl.name)}</b>: ${c.here+c.other}/${c.total} las tienes, faltan <b>${c.missing}</b>` + (oc?`, <b>${oc}</b> en <code>${esc(base(S.settings.inbox))}</code> para organizar.`:'.'));
 }
 // el vigilante avisa cuando cambia la carpeta de descargas
 window.onInboxChange = async (info) => {
@@ -863,7 +863,12 @@ async function addRoot(){
 async function saveSettings(){
   const s = {client_id:$('sClient').value, dest_root:$('sDest').dataset.path, inbox:$('sInbox').dataset.path,
     library_roots:draftRoots, rekordbox_folder:$('sRb').value, include_liked:$('sLiked').checked, liked_name:$('sLikedName').value};
-  await api().save_settings(s); const st = await api().get_state(); S.settings = st.settings; closeModal(); render(); toast('Ajustes guardados.');
+  const r = await api().save_settings(s);
+  if(r && r.ok===false){ toast(esc(r.error), true); return; }
+  const st = await api().get_state(); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
+  if(r && r.analysis) S.analysis = r.analysis; else if(st.analysis) S.analysis = st.analysis;
+  closeModal(); render();
+  toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).`);
 }
 
 window.addEventListener('pywebviewready', async () => {

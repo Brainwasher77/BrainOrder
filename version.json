@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
-  "build": 7,
-  "notes": "Organizar arreglado: cuenta todo lo que hay en descargas y te deja ubicar también lo que no coincide con ninguna playlist."
+  "version": "1.6.1",
+  "build": 8,
+  "notes": "Todo sigue a la carpeta de descargas que elijas en Ajustes, al instante."
 }
