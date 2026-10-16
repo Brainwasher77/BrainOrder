@@ -128,6 +128,17 @@ class Api:
         return res[0] if isinstance(res, (list, tuple)) else str(res)
 
     def save_settings(self, s):
+        # validar carpetas: descargas y playlists no pueden ser la misma ni estar una dentro de la otra
+        new_inbox = Path((s.get("inbox") or self._cfg["inbox"]).strip()).expanduser()
+        new_dest = Path((s.get("dest_root") or self._cfg["dest_root"]).strip()).expanduser()
+        try:
+            a, b = new_inbox.resolve(), new_dest.resolve()
+            if a == b or a in b.parents or b in a.parents:
+                return {"ok": False, "error": "La carpeta de descargas y la de playlists no pueden ser la misma "
+                                              "ni estar una dentro de la otra. Elige otra."}
+        except Exception:
+            pass
+        before = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
         for k in ("client_id", "dest_root", "inbox", "liked_name", "rekordbox_folder"):
             if k in s and isinstance(s[k], str):
                 self._cfg[k] = s[k].strip()
@@ -139,7 +150,22 @@ class Api:
                 roots = [r.strip() for r in roots.splitlines() if r.strip()]
             self._cfg["library_roots"] = roots
         config.save(self._cfg)
-        return {"ok": True}
+        after = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
+        res = {"ok": True, "inbox_count": self._inbox_signature()[1], "analysis": None}
+        if after != before:
+            # cambiaron las carpetas: el vigilante toma la nueva como punto de partida (sin avisar de
+            # todo lo que ya había) y se recalculan los estados con las carpetas nuevas
+            self._inbox_sig = None
+            self._inbox_path = self._cfg.get("inbox")
+            if self._lock.acquire(blocking=False):
+                try:
+                    data = self._load_sp()
+                    if any(p.get("tracks") is not None for p in data["playlists"]):
+                        res["analysis"] = self._build_analysis(data, light=True, quiet=True)
+                        self._inbox_sig = self._inbox_signature()[0]
+                finally:
+                    self._lock.release()
+        return res
 
     # ---------- Spotify ----------
     def connect(self):
@@ -477,10 +503,14 @@ class Api:
         de copiarse), recalcula lo que hay por organizar y avisa a la ventana."""
         import time
         self._inbox_sig = None
+        self._inbox_path = self._cfg.get("inbox")
         last_seen, stable = None, 0
         while True:
             time.sleep(4)
             try:
+                if self._cfg.get("inbox") != self._inbox_path:   # cambiaste la carpeta en Ajustes
+                    self._inbox_path = self._cfg.get("inbox")
+                    self._inbox_sig, last_seen, stable = None, None, 0
                 sig, n = self._inbox_signature()
                 if sig != last_seen:          # algo cambió: esperar a que deje de cambiar (descarga en curso)
                     last_seen, stable = sig, 0
