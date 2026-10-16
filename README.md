@@ -17,14 +17,21 @@ Necesitas **Python 3.9 o superior**.
 ### macOS
 1. Si no tienes Python: `brew install python` (o descárgalo de python.org).
 2. Doble clic en **`Instalar SpotiSync.command`**. Si macOS lo bloquea: clic derecho → Abrir.
-3. Queda **SpotiSync** en `~/Applications`. Ábrelo con Spotlight (⌘ + espacio).
+3. Queda **SpotiSync** en Aplicaciones. Ábrelo con Spotlight (⌘ + espacio) y, si quieres, déjalo fijo en el Dock.
 
 ### Windows 10 / 11
 1. Si no tienes Python: instálalo desde [python.org](https://www.python.org/downloads/) marcando **"Add python.exe to PATH"**, o en una terminal: `winget install Python.Python.3.12`.
 2. Doble clic en **`Instalar SpotiSync (Windows).bat`**. Si aparece "Windows protegió tu PC": Más información → Ejecutar de todas formas.
 3. Queda un acceso directo **SpotiSync** en el Escritorio y en el Menú Inicio.
 
-El instalador crea un entorno de Python propio (no toca tu Python del sistema) e instala `pywebview`, `pyrekordbox`, `mutagen` y `openpyxl`. Para actualizar la app: baja los cambios del repositorio y vuelve a correr el instalador.
+El instalador copia la app a tu carpeta de datos y crea un entorno de Python propio (no toca tu Python del sistema). **Después de instalar puedes borrar la carpeta descargada.**
+
+## Actualizaciones automáticas
+- Cada vez que abres SpotiSync revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
+- Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app. La primera vez después de eso tarda un par de minutos.
+- Solo hace falta volver a correr el instalador si cambias de computador.
+
+Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en `version.json`.
 
 ## Conectar Spotify (una vez)
 1. Entra a <https://developer.spotify.com/dashboard> con tu cuenta (Spotify exige que el dueño de la app sea **Premium**).
@@ -69,6 +76,9 @@ Tu Client ID y tu sesión de Spotify viven solo ahí, nunca en el repositorio.
 ## Estructura
 | Archivo | Para qué |
 |---|---|
+| `arranque.py` | Instala actualizaciones pendientes y componentes que falten, y abre la app |
+| `actualizador.py` | Revisa y descarga versiones nuevas desde GitHub |
+| `mac/lanzador.sh`, `windows/abrir.*` | Lanzadores que reparan el entorno de Python si se daña |
 | `app.py` | Ventana (pywebview) y puente con la interfaz |
 | `ui.html` | Interfaz |
 | `spotify_api.py` | Login PKCE y lectura de playlists |

@@ -4,6 +4,7 @@ Ventana nativa de macOS (pywebview). Ejecutar: python app.py
 """
 import csv
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -21,6 +22,7 @@ import rekordbox_sync  # noqa: E402
 import reportes  # noqa: E402
 import deezer  # noqa: E402
 import unificar  # noqa: E402
+import actualizador  # noqa: E402
 from spotify_api import Spotify, SpotifyError  # noqa: E402
 
 CACHE_SPOTIFY = config.SUPPORT_DIR / "spotify_cache.json"
@@ -83,6 +85,7 @@ class Api:
             "foreign": self._cfg.get("foreign", {}),
             "rekordbox_running": rekordbox_sync.rekordbox_running(),
             "home": str(Path.home()),
+            "version": actualizador.local_version(),
             "win": plataforma.IS_WIN,
         }
 
@@ -219,6 +222,34 @@ class Api:
         """Copia texto al portapapeles (Mac y Windows)."""
         ok = plataforma.copy_text(text or "")
         return {"ok": ok, "error": None if ok else "No pude copiar al portapapeles."}
+
+    # ---------- actualizaciones ----------
+    def check_updates(self):
+        """Se llama al abrir la app: si hay versión nueva la descarga para el próximo inicio."""
+        try:
+            return actualizador.check_and_download()
+        except Exception as e:
+            config.log(f"check_updates: {e!r}")
+            return {"status": "error"}
+
+    def restart(self):
+        """Cierra y vuelve a abrir SpotiSync (así se instala la actualización descargada)."""
+        arr = config.SUPPORT_DIR / "arranque.py"
+        bundle = os.environ.get("SPOTISYNC_BUNDLE")
+        try:
+            if plataforma.IS_MAC and bundle and Path(bundle).exists():
+                subprocess.Popen(["/bin/sh", "-c", f'sleep 1; open -n "{bundle}"'])
+            elif arr.exists():
+                kw = {}
+                if plataforma.IS_WIN:
+                    kw["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+                subprocess.Popen([sys.executable, str(arr)], **kw)
+            else:
+                return {"ok": False, "error": "No encuentro el arranque instalado. Ábrela de nuevo a mano."}
+        except Exception as e:
+            return {"ok": False, "error": f"No pude reiniciar: {e}"}
+        threading.Timer(0.3, lambda: os._exit(0)).start()
+        return {"ok": True}
 
     def platform(self):
         return {"win": plataforma.IS_WIN, "mac": plataforma.IS_MAC}

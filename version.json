@@ -1,0 +1,5 @@
+{
+  "version": "1.1.0",
+  "build": 2,
+  "notes": "Se actualiza sola, se repara si cambia Python, botones para copiar links, compatible con Windows."
+}

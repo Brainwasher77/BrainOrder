@@ -486,6 +486,24 @@ async function copyLinks(scope, svc){
   toast(`Copiados <b>${links.length}</b> links de ${svc==='spotify'?'Spotify':'Deezer'}, uno por línea.` +
     (skipped?`<br><span style="color:var(--org)">${skipped} sin link exacto en Deezer no se copiaron (búscalas a mano o usa Spotify).</span>`:''));
 }
+// ---------- actualizaciones ----------
+async function checkUpdates(){
+  try{
+    const r = await api().check_updates();
+    if(r && r.status==='ready' && r.new){
+      const t=$('toast');
+      t.innerHTML = `<b>SpotiSync ${esc(r.new.version)} está lista.</b><br>${esc(r.new.notes||'')}<br>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+        <button onclick="$('toast').className='toast'">Después</button>
+        <button class="primary" onclick="restartApp()">Reiniciar ahora</button></div>`;
+      t.className='toast show'; clearTimeout(t._t);
+    }
+  }catch(e){}
+}
+async function restartApp(){
+  const r = await api().restart();
+  if(!r.ok) toast(esc(r.error), true); else busy(true, 'Reiniciando…');
+}
 function show(v){ S.view=v; S.q=''; render(); }
 
 // ---------- acciones ----------
@@ -544,7 +562,7 @@ function openUrl(u){ api().open_url(u); }
 
 function openSettings(){
   const s = S.settings;
-  modal(`<h3>Ajustes</h3>
+  modal(`<h3>Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')}</span></h3>
     <div class="box"><b>App de Spotify:</b> en <code>developer.spotify.com/dashboard</code> crea una app (Web API), agrega como Redirect URI
       <code>${esc(s.redirect_uri)}</code> y pega aquí su Client ID. No necesitas el Client Secret.</div>
     <label class="f">Client ID</label><input class="t mono" id="sClient" value="${esc(s.client_id)}" placeholder="32 caracteres">
@@ -588,7 +606,8 @@ async function saveSettings(){
 window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.foreign = st.foreign || {};
-  S.home = st.home || ''; S.win = !!st.win;
+  S.home = st.home || ''; S.win = !!st.win; S.version = st.version || {};
+  setTimeout(checkUpdates, 1500);
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
   const pend = Object.entries(S.foreign).filter(([,f]) => (f.choice||'preguntar')==='preguntar').map(([id])=>id);

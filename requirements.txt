@@ -1,0 +1,4 @@
+pywebview>=5
+pyrekordbox>=0.4
+mutagen
+openpyxl
