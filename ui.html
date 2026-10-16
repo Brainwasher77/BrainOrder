@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>SpotiSync</title>
+<style>
+:root{
+  --bg:#0d0e12; --panel:#15171d; --panel2:#1c1f27; --line:#2a2e39; --text:#e9ebf0; --mute:#8b91a1;
+  --acid:#c8f53c; --ok:#3ddc97; --org:#ffb547; --miss:#ff5d6c; --info:#6aa8ff;
+  --r:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font:13.5px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:0;border-radius:9px;padding:8px 14px;background:var(--panel2);color:var(--text);
+  border:1px solid var(--line);transition:.15s}
+button:hover{border-color:#3c4252;background:#232733}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--acid);color:#111;border-color:var(--acid);font-weight:650}
+button.primary:hover{filter:brightness(1.07)}
+button.warn{background:var(--org);color:#111;border-color:var(--org);font-weight:650}
+button.ghost{background:transparent;border-color:transparent;color:var(--mute)}
+button.ghost:hover{color:var(--text);background:var(--panel2)}
+.mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
+header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
+header *{-webkit-app-region:no-drag}
+.logo{font-weight:800;letter-spacing:-.02em;font-size:18px;margin-right:6px}
+.logo span{color:var(--acid)}
+.conn{display:flex;align-items:center;gap:6px;color:var(--mute);font-size:12.5px;margin-right:auto}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--miss)}
+.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.badge{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;border-radius:10px;background:rgba(0,0,0,.25);font-size:11.5px;text-align:center}
+.progress{height:34px;display:flex;align-items:center;gap:10px;padding:0 20px;color:var(--mute);font-size:12.5px;border-bottom:1px solid var(--line);background:var(--panel)}
+.spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--acid);border-radius:50%;animation:s .8s linear infinite;display:none}
+.busy .spin{display:block}
+@keyframes s{to{transform:rotate(360deg)}}
+.body{display:grid;grid-template-columns:270px 1fr;min-height:0}
+aside{border-right:1px solid var(--line);overflow:auto;padding:14px 10px}
+aside h4{margin:14px 10px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:block;padding:8px 10px;border-radius:8px;color:var(--text);text-decoration:none;cursor:pointer}
+.nav a:hover{background:var(--panel2)}
+.nav a.sel{background:var(--panel2);box-shadow:inset 3px 0 0 var(--acid)}
+.nav .row{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.nav .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav .cnt{font-size:11.5px;color:var(--mute)}
+.bar{height:4px;border-radius:2px;background:var(--line);margin-top:6px;display:flex;overflow:hidden}
+.bar i{display:block;height:100%}
+main{overflow:auto;padding:20px 24px 40px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;cursor:pointer}
+.card:hover{border-color:#3c4252}
+.card .k{font-size:11.5px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
+.card .v{font-size:28px;font-weight:750;margin-top:2px;letter-spacing:-.02em}
+.card.ok .v{color:var(--ok)} .card.org .v{color:var(--org)} .card.miss .v{color:var(--miss)}
+.vhead{display:flex;align-items:flex-end;gap:12px;margin:6px 0 12px;flex-wrap:wrap}
+.vhead h2{margin:0;font-size:22px;letter-spacing:-.02em}
+.vhead .sub{color:var(--mute);font-size:12.5px}
+.vhead .sp{margin-left:auto;display:flex;gap:8px}
+input.search{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:8px 12px;width:240px;font:inherit}
+table{width:100%;border-collapse:collapse}
+th{position:sticky;top:-20px;background:var(--bg);text-align:left;font-weight:600;font-size:11.5px;color:var(--mute);
+  text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid #1d2028;vertical-align:top}
+tr:hover td{background:#13151b}
+td .art{color:var(--mute);font-size:12.5px}
+.chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11.5px;margin:1px 4px 1px 0;border:1px solid var(--line);background:var(--panel2);white-space:nowrap;cursor:pointer}
+.chip:hover{border-color:var(--acid)}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.st:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.st.ok{color:var(--ok)} .st.inbox{color:var(--org)} .st.elsewhere{color:var(--info)} .st.dup{color:var(--mute)} .st.missing{color:var(--miss)}
+.path{color:var(--mute);font-size:12px;word-break:break-all;cursor:pointer}
+.path:hover{color:var(--text)}
+a.lnk{color:var(--acid);text-decoration:none;cursor:pointer;font-size:12px}
+.empty{padding:70px 20px;text-align:center;color:var(--mute)}
+.empty h3{color:var(--text);font-size:18px;margin:0 0 6px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:10;padding:20px}
+.modal-bg.show{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:min(640px,100%);max-height:88vh;overflow:auto;padding:22px 24px}
+.modal h3{margin:0 0 4px;font-size:18px}
+.modal p{color:var(--mute);margin:4px 0 14px}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+label.f{display:block;margin:12px 0 4px;font-size:12px;color:var(--mute)}
+input.t,textarea.t{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font:inherit}
+textarea.t{min-height:70px;font-family:"SF Mono",Menlo,monospace;font-size:12px}
+.box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0;font-size:12.5px}
+.box.warn{border-color:rgba(255,181,71,.5)}
+.box b{color:var(--text)}
+.frow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.frow .nm{flex:1;min-width:0}
+.frow .nm div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:6px 10px;font-size:12px}
+.seg button.on{background:var(--acid);color:#111;font-weight:650}
+.pick{display:flex;gap:8px;align-items:center}
+.pickpath{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
+.pickpath:hover{border-color:#3c4252}
+button.cp{padding:7px 11px;font-size:12.5px}
+button.cp.sp{border-color:rgba(200,245,60,.45);color:var(--acid)}
+button.cp.dz{border-color:rgba(167,139,250,.5);color:#a78bfa}
+button.cp:hover:not(:disabled){background:rgba(255,255,255,.04)}
+.vhead .sp{flex-wrap:wrap;justify-content:flex-end}
+button.xl{border-color:rgba(52,211,153,.45);color:#34d399}
+button.xl:hover{background:rgba(52,211,153,.1);border-color:#34d399}
+.toast{position:fixed;bottom:18px;right:18px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;max-width:420px;display:none;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.toast.show{display:block}
+.toast.err{border-color:var(--miss)}
+code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">Spoti<span>Sync</span></div>
+    <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span></div>
+    <button class="ghost" id="btnConn" onclick="connect()">Conectar Spotify</button>
+    <button onclick="openSettings()">Ajustes</button>
+    <button onclick="exportMissing()" id="btnExport" disabled>Exportar a Excel</button>
+    <button class="primary" onclick="analyze()" id="btnAnalyze">Analizar</button>
+    <button class="warn" onclick="askOrganize()" id="btnOrg" disabled>Organizar<span class="badge mono" id="orgBadge">0</span></button>
+  </header>
+  <div class="progress" id="prog"><div class="spin"></div><span id="progTxt">Listo.</span></div>
+  <div class="body">
+    <aside>
+      <div class="nav">
+        <a data-v="missing" onclick="show('missing')"><div class="row"><span class="name">Faltan por descargar</span><span class="cnt mono" id="nMissing">–</span></div></a>
+        <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
+        <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
+        <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
+        <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
+      </div>
+      <h4>Tus playlists</h4>
+      <div class="nav" id="plNav"></div>
+    </aside>
+    <main id="main"></main>
+  </div>
+</div>
+
+<div class="modal-bg" id="mbg"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let S = {analysis:null, foreign:{}, settings:{}, connected:false, view:'missing', q:''};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const jsq = s => esc(JSON.stringify(String(s ?? '')));
+const api = () => window.pywebview.api;
+// rutas de Mac (/) y de Windows (\)
+const short = p => { const h = S.home || ''; return (h && (p||'').startsWith(h)) ? '~' + p.slice(h.length) : (p||''); };
+const base = p => (p||'').split(/[\\/]/).pop();
+const folderOf = p => (p||'').split(/[\\/]/).slice(-2,-1)[0] || '';
+
+window.onProgress = msg => { $('progTxt').textContent = msg; };
+function busy(on, msg){ $('prog').classList.toggle('busy', on); if(msg) $('progTxt').textContent = msg;
+  ['btnAnalyze','btnOrg','btnConn'].forEach(id => $(id).disabled = on || (id==='btnOrg' && !orgCount())); }
+function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
+function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
+function closeModal(){ $('mbg').classList.remove('show'); }
+
+// ---------- datos derivados ----------
+function allRows(){ return (S.analysis||[]).flatMap(pl => pl.tracks.map(t => ({...t, pl}))); }
+function missingUnique(){
+  const m = new Map();
+  for (const r of allRows()) if (r.status==='missing'){
+    if(!m.has(r.id)) m.set(r.id, {...r, pls:[]});
+    m.get(r.id).pls.push(r.pl);
+  }
+  return [...m.values()];
+}
+// movimientos únicos (un archivo por canción) + descargas repetidas
+function toOrganize(){ const seen=new Set(); return allRows().filter(r => r.status==='inbox' && !seen.has(r.source) && seen.add(r.source)); }
+function dupList(){ const moves=new Set(toOrganize().map(r=>r.source)); const m=new Map();
+  for(const r of allRows()) for(const d of (r.inbox_dups||[])) if(!moves.has(d) && !m.has(d)) m.set(d, r); return [...m].map(([path,r])=>({path,r})); }
+function orgCount(){ return S.analysis ? toOrganize().length + dupList().length : 0; }
+function counts(pl){ const c={ok:0,elsewhere:0,inbox:0,missing:0}; pl.tracks.forEach(t=>c[t.status]=(c[t.status]||0)+1); return c; }
+function match(r){ if(!S.q) return true; const q=S.q.toLowerCase(); return (r.name+' '+r.artists.join(' ')).toLowerCase().includes(q); }
+
+// ---------- render ----------
+function render(){
+  $('dot').classList.toggle('on', S.connected);
+  $('connTxt').textContent = S.connected ? 'Spotify conectado' : 'Sin conectar';
+  $('btnConn').textContent = S.connected ? 'Desconectar' : 'Conectar Spotify';
+  const a = S.analysis;
+  const oc = orgCount();
+  $('orgBadge').textContent = oc; $('btnOrg').disabled = !oc;
+  $('btnExport').disabled = !a;
+  $('nMissing').textContent = a ? missingUnique().length : '–';
+  $('nOrg').textContent = a ? oc : '–';
+  const fl = Object.values(S.foreign||{});
+  $('nForeign').textContent = fl.length || '–';
+  $('nPct').textContent = a ? globalStats().pct + '%' : '–';
+  $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
+  $('plNav').innerHTML = (a||[]).map((pl,i) => {
+    const c = plStats(pl), n = c.total || 1;
+    return `<a data-v="pl:${i}" onclick="show('pl:${i}')"><div class="row"><span class="name">${pl.liked?'♥ ':''}${esc(pl.name)}</span>
+      <span class="cnt mono">${c.here+c.other}/${c.total}</span></div>
+      <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
+  }).join('');
+  document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('sel', el.dataset.v===S.view));
+  renderMain();
+}
+
+function cards(){
+  const rows = allRows(); const c={ok:0,org:0,miss:0};
+  rows.forEach(r => (r.status==='ok'||r.status==='elsewhere')?c.ok++:r.status==='missing'?c.miss++:c.org++);
+  return `<div class="cards">
+    <div class="card" onclick="show('missing')"><div class="k">Canciones en Spotify</div><div class="v mono">${rows.length}</div></div>
+    <div class="card ok"><div class="k">Ya las tienes</div><div class="v mono">${c.ok}</div></div>
+    <div class="card org" onclick="show('organize')"><div class="k">Por organizar</div><div class="v mono">${c.org}</div></div>
+    <div class="card miss" onclick="show('missing')"><div class="k">Faltan (únicas)</div><div class="v mono">${missingUnique().length}</div></div>
+  </div>`;
+}
+const searchBox = () => `<input class="search" placeholder="Buscar canción o artista…" value="${esc(S.q)}" oninput="S.q=this.value;renderTable()">`;
+
+function renderMain(){
+  const m = $('main');
+  if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
+  if(!S.connected && !S.analysis){
+    m.innerHTML = `<div class="empty"><h3>Conecta tu cuenta de Spotify</h3>
+      <p>Primero pon el Client ID de tu app de desarrollador en <b>Ajustes</b>, luego toca <b>Conectar Spotify</b>.</p>
+      <button class="primary" onclick="openSettings()">Abrir ajustes</button></div>`; return;
+  }
+  if(!S.analysis){
+    m.innerHTML = `<div class="empty"><h3>Todo listo</h3><p>Toca <b>Analizar</b> para comparar tus playlists con tu música local.</p></div>`; return;
+  }
+  if(S.view==='foreign'){ m.innerHTML = foreignView(); return; }
+  if(S.view==='stats'){ m.innerHTML = statsView(); return; }
+  let head = '';
+  if(S.view==='missing') head = `<h2>Faltan por descargar</h2><span class="sub">📁 = carpeta donde quedará el archivo · ♫ = otras playlists que lo usarán en Rekordbox.</span>`;
+  else if(S.view==='organize') head = `<h2>Listas para organizar</h2><span class="sub">Descargas que se mueven a su carpeta (un solo archivo por canción).</span>`;
+  else { const pl = S.analysis[+S.view.split(':')[1]]; if(!pl){S.view='missing';return renderMain();}
+    head = `<h2>${esc(pl.name)}</h2><span class="sub path" onclick="reveal(${jsq(pl.folder)})">📁 ${esc(short(pl.folder))}</span>${pl.report?`<a class="lnk" onclick="reveal(${jsq(pl.report)})">📄 Ver .txt de faltantes</a>`:''}`; }
+  let plBtn = '';
+  if(S.view.startsWith('pl:')){
+    const i = +S.view.split(':')[1];
+    plBtn = copyButtons(`pl:${i}`) + `<button class="xl" onclick="exportPlaylist(${i})">📊 Informe Excel</button>`;
+  } else if(S.view==='missing'){
+    plBtn = copyButtons('missing');
+  }
+  m.innerHTML = cards() + `<div class="vhead">${head}<div class="sp">${plBtn}${searchBox()}</div></div><div id="tbl"></div>`;
+  renderTable();
+}
+
+function renderTable(){
+  const t = $('tbl'); if(!t) return;
+  let html='';
+  if(S.view==='missing'){
+    const rows = missingUnique().filter(match);
+    if(!rows.length){ t.innerHTML = `<div class="empty"><h3>No te falta nada 🎉</h3></div>`; return; }
+    html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + rows.map((r,i)=>`<tr>
+      <td class="mono" style="color:var(--mute)">${i+1}</td>
+      <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td><span class="chip" onclick="reveal(${jsq(r.dest_dir)})" title="${esc(short(r.dest_dir))}">📁 ${esc(r.home_name)}</span>${r.pls.filter(p=>p.name!==r.home_name).map(p=>`<span class="chip" style="opacity:.7">♫ ${esc(p.name)}</span>`).join('')}</td>
+      <td style="white-space:nowrap">${links(r)}</td></tr>`).join('') + `</table>`;
+  } else if(S.view==='organize'){
+    const rows = toOrganize().filter(match), dups = dupList().filter(d=>match(d.r));
+    if(!rows.length && !dups.length){ t.innerHTML = `<div class="empty"><h3>Nada por organizar</h3><p>Descarga canciones a tu carpeta de descargas y vuelve a Analizar.</p></div>`; return; }
+    if(rows.length) html += `<table><tr><th>Canción</th><th>En descargas</th><th>Se mueve a</th></tr>` + rows.map(r=>`<tr>
+      <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td><div class="path" onclick="reveal(${jsq(r.source)})">${esc(base(r.source))}</div></td>
+      <td><span class="chip" onclick="reveal(${jsq(r.dest_dir)})">📁 ${esc(r.home_name)}</span></td></tr>`).join('') + `</table>`;
+    if(dups.length) html += `<div class="vhead" style="margin-top:26px"><h2 style="font-size:17px">Descargas repetidas</h2><span class="sub">Ya tienes estas canciones; se apartan en <code>_duplicados</code> para que las borres.</span></div>
+      <table><tr><th>Archivo descargado</th><th>Ya la tienes en</th></tr>` + dups.map(d=>`<tr>
+      <td><div class="path" onclick="reveal(${jsq(d.path)})">${esc(base(d.path))}</div></td>
+      <td><div class="path" onclick="reveal(${jsq(d.r.source)})">${esc(short(d.r.source))}</div></td></tr>`).join('') + `</table>`;
+  } else {
+    const pl = S.analysis[+S.view.split(':')[1]];
+    const lab = {here:'Aquí', elsewhere:'En otra carpeta', inbox:'En descargas', missing:'Falta'};
+    const ds = r => (r.status==='ok'||r.status==='elsewhere') ? (dirOf(r.source)===pl.folder?'here':'elsewhere') : r.status;
+    const rows = pl.tracks.filter(match);
+    html = `<table><tr><th>#</th><th>Canción</th><th>Estado</th><th>Archivo</th></tr>` + rows.map(r=>`<tr>
+      <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
+      <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td><span class="st ${ds(r)==='here'?'ok':ds(r)}">${lab[ds(r)]}</span></td>
+      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('') + `</table>`;
+  }
+  t.innerHTML = html;
+}
+
+function foreignView(){
+  const fl = Object.entries(S.foreign||{});
+  if(!fl.length) return `<div class="empty"><h3>No sigues playlists de otros</h3></div>`;
+  return `<div class="vhead"><h2>Playlists de otros</h2><span class="sub">Elige cuáles quieres integrar.</span></div>
+    <div class="box">Spotify no deja que apps personales lean las canciones de playlists ajenas. Las que marques como <b>Integrar</b> quedan <b>pendientes</b>:
+    en Spotify ábrela, selecciona todo (${S.win?'Ctrl+A':'⌘A'}) → clic derecho → <b>Añadir a playlist → Nueva playlist</b>. Esa copia ya es tuya y SpotiSync la sincroniza en el próximo Analizar.</div>
+    ${fl.map(([id,f])=>foreignRow(id,f)).join('')}`;
+}
+function foreignRow(id,f){
+  const c = f.choice||'preguntar';
+  const st = c==='integrar' ? (f.status==='integrada' ? '<span class="st ok">Integrada</span>' : '<span class="st inbox">Pendiente: cópiala a una playlist tuya</span>') : '';
+  return `<div class="frow"><div class="nm"><div>${esc(f.name)}</div><div class="art">de ${esc(f.owner||'?')} ${st}</div></div>
+    ${f.url?`<a class="lnk" onclick="openUrl(${jsq(f.url)})">Abrir ↗</a>`:''}
+    <div class="seg"><button class="${c==='integrar'?'on':''}" onclick="setForeign(${jsq(id)},'integrar')">Integrar</button>
+    <button class="${c==='preguntar'?'on':''}" onclick="setForeign(${jsq(id)},'preguntar')">Después</button>
+    <button class="${c==='no'?'on':''}" onclick="setForeign(${jsq(id)},'no')">No</button></div></div>`;
+}
+async function setForeign(id, choice){
+  await api().set_foreign_choice(id, choice); S.foreign[id].choice = choice;
+  if(S.view==='foreign') renderMain();
+  if($('mbg').classList.contains('show') && $('foreignAsk')) $('foreignAsk').innerHTML = askList();
+}
+let askIds = [];
+function askList(){ return askIds.map(id => foreignRow(id, S.foreign[id])).join(''); }
+function askForeign(ids){
+  askIds = ids; if(!ids.length) return;
+  modal(`<h3>Encontré ${ids.length} playlist${ids.length>1?'s':''} que no ${ids.length>1?'son tuyas':'es tuya'}</h3>
+    <p>¿Quieres integrarlas a tu música? Las que marques quedan apuntadas para hacerlo luego. Las que dejes en <b>Después</b> te las vuelvo a preguntar.</p>
+    <div id="foreignAsk">${askList()}</div>
+    <div class="actions"><button class="primary" onclick="closeModal();show('foreign')">Listo</button></div>`);
+}
+
+// ---------- estadísticas ----------
+const dirOf = p => (p||'').replace(/[\\/][^\\/]*$/, '');
+function plStats(pl){
+  const c={total:pl.tracks.length, here:0, other:0, inbox:0, missing:0};
+  for(const r of pl.tracks){
+    if((r.status==='ok'||r.status==='elsewhere') && r.source){ dirOf(r.source)===pl.folder ? c.here++ : c.other++; }
+    else if(r.status==='inbox') c.inbox++; else c.missing++;
+  }
+  c.pct = c.total ? Math.round((c.here+c.other)/c.total*100) : 100; return c;
+}
+function globalStats(){
+  const songs=new Map(), files=new Set(); let refs=0;
+  for(const r of allRows()){ songs.set(r.id, r.status); if((r.status==='ok'||r.status==='elsewhere') && r.source){ refs++; files.add(r.source); } }
+  const vals=[...songs.values()], owned=vals.filter(v=>v==='ok'||v==='elsewhere').length;
+  return {songs:songs.size, owned, inbox:vals.filter(v=>v==='inbox').length, missing:vals.filter(v=>v==='missing').length,
+          files:files.size, saved:refs-files.size, pct: songs.size?Math.round(owned/songs.size*100):100};
+}
+function statsView(){
+  const g = globalStats();
+  const rows = S.analysis.map((pl,i)=>({pl,i,c:plStats(pl)})).sort((a,b)=>a.c.pct-b.c.pct);
+  const origins = new Map();
+  for(const r of allRows()) if((r.status==='ok'||r.status==='elsewhere') && r.source) origins.set(dirOf(r.source), (origins.get(dirOf(r.source))||new Set()).add(r.source));
+  const top = [...origins].map(([d,set])=>[d,set.size]).sort((a,b)=>b[1]-a[1]).slice(0,12), max = top.length?top[0][1]:1;
+  return `<div class="cards">
+      <div class="card"><div class="k">Canciones únicas</div><div class="v mono">${g.songs}</div></div>
+      <div class="card ok"><div class="k">Biblioteca completa</div><div class="v mono">${g.pct}%</div></div>
+      <div class="card"><div class="k">Archivos en disco</div><div class="v mono">${g.files}</div></div>
+      <div class="card ok"><div class="k">Duplicados evitados</div><div class="v mono">${g.saved}</div></div></div>
+    <div class="vhead"><h2>Por playlist</h2><span class="sub">Aquí = el archivo está en la carpeta de la playlist · Otra carpeta = se usa desde donde está (ver el .txt de la carpeta).</span>
+      <div class="sp"><button class="xl" onclick="exportAllPlaylists()">📊 Informes de todas (uno por playlist)</button></div></div>
+    <table><tr><th>Playlist</th><th style="width:30%">Completa</th><th class="mono">Total</th><th>Aquí</th><th>Otra carpeta</th><th>Descargas</th><th>Faltan</th><th></th></tr>
+    ${rows.map(({pl,i,c})=>{ const n=c.total||1; return `<tr>
+      <td><a class="lnk" style="color:var(--text);font-size:13.5px" onclick="show('pl:${i}')">${pl.liked?'♥ ':''}${esc(pl.name)}</a></td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1;margin:0;height:7px">
+        <i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div>
+        <span class="mono" style="width:40px;text-align:right">${c.pct}%</span></div></td>
+      <td class="mono">${c.total}</td><td class="mono" style="color:var(--ok)">${c.here}</td><td class="mono" style="color:var(--info)">${c.other}</td>
+      <td class="mono" style="color:var(--org)">${c.inbox}</td><td class="mono" style="color:var(--miss)">${c.missing}</td>
+      <td style="white-space:nowrap">${pl.report?`<a class="lnk" onclick="reveal(${jsq(pl.report)})">📄 .txt</a>`:'<span class="art">completa</span>'}
+        <span style="color:var(--line)"> · </span><a class="lnk" style="color:#34d399" onclick="exportPlaylist(${i})">📊 Excel</a></td></tr>`; }).join('')}</table>
+    <div style="display:flex;gap:16px;margin:10px 0 0;font-size:12px;color:var(--mute)">
+      <span class="st ok">Aquí</span><span class="st elsewhere">Otra carpeta</span><span class="st inbox">En descargas</span><span class="st missing">Falta</span></div>
+    <div class="vhead" style="margin-top:28px"><h2>Dónde viven tus canciones</h2><span class="sub">Carpetas de donde salen los archivos que usan tus playlists.</span></div>
+    <table>${top.map(([d,nf])=>`<tr><td style="width:45%"><span class="path" onclick="reveal(${jsq(d)})">${esc(short(d))}</span></td>
+      <td><div class="bar" style="margin:6px 0 0;height:7px"><i style="width:${nf/max*100}%;background:var(--info)"></i></div></td><td class="mono" style="width:60px;text-align:right">${nf}</td></tr>`).join('')}</table>`;
+}
+
+function links(r){
+  const out=[];
+  if(r.url) out.push(`<a class="lnk" onclick="openUrl(${jsq(r.url)})">Spotify ↗</a>`);
+  if(r.deezer && r.deezer.url) out.push(`<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
+  return out.join('<span style="color:var(--line)"> · </span>');
+}
+async function exportPlaylist(i){
+  const pl = S.analysis[i];
+  busy(true, `Generando informe de ${pl.name}…`);
+  const r = await api().export_playlist_excel(i); busy(false, 'Listo.');
+  if(r.ok) toast(`Informe de <b>${esc(pl.name)}</b>: ${r.have}/${r.total} descargadas, faltan <b>${r.missing}</b>.<br><code>${esc(short(r.path))}</code>`);
+  else if(!r.cancelled) toast(esc(r.error), true);
+}
+async function exportAllPlaylists(){
+  busy(true, 'Elige la carpeta para los informes…');
+  const r = await api().export_all_playlists_excel(); busy(false, 'Listo.');
+  if(r.ok) toast(`<b>${r.count}</b> informes guardados en <code>${esc(short(r.path))}</code>` + (r.errors.length?`<br><span style="color:var(--miss)">${r.errors.length} con error</span>`:''), !!r.errors.length);
+  else if(!r.cancelled) toast(esc(r.error), true);
+}
+// ---------- unificar repetidos ----------
+let U = {plan:null, merges:new Set(), dups:new Set(), empty:true, q:'', rbOpen:false};
+const rel = p => { const d = U.plan ? U.plan.dest : ''; return (d && (p||'').startsWith(d)) ? p.slice(d.length+1) : (p||''); };
+const gb = n => (n/1e9).toFixed(2)+' GB';
+async function unifyReview(){
+  busy(true,'Revisando la carpeta de Spotify… (la primera vez lee la duración de las canciones)');
+  const r = await api().unify_plan(); busy(false);
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  U.plan = r.plan; U.rbOpen = r.rekordbox_running;
+  U.merges = new Set(r.plan.merges.map(m=>m.id)); U.dups = new Set(r.plan.dups.map(d=>d.id)); U.empty = true;
+  render();
+}
+function uToggle(kind,id,on){ (on?U[kind].add(id):U[kind].delete(id)); $('uCount').innerHTML = uSummary(); }
+function uAll(kind,on){ const list = kind==='dups'?U.plan.dups:U.plan.merges; list.forEach(x=>on?U[kind].add(x.id):U[kind].delete(x.id)); renderMain(); }
+function uSummary(){
+  const p=U.plan, ds=p.dups.filter(d=>U.dups.has(d.id));
+  const bytes = ds.reduce((a,d)=>a+(d.bytes||0),0);
+  const n = ds.reduce((a,d)=>a+d.remove.length,0);
+  return `<b>${U.merges.size}</b> carpetas a juntar · <b>${n}</b> copias repetidas a apartar · ${U.empty?`<b>${p.empty.length}</b> carpetas vacías a borrar`:'carpetas vacías: no se tocan'}`;
+}
+function unifyView(){
+  if(!U.plan) return `<div class="empty"><h3>Unificar repetidos</h3>
+    <p>Reviso <code>${esc(short(S.settings.dest_root))}</code> buscando carpetas repetidas (misma playlist escrita distinto),<br>
+    canciones repetidas en varias carpetas y carpetas vacías. <b>Revisar no mueve nada.</b></p>
+    <button class="primary" onclick="unifyReview()">Revisar</button></div>`;
+  const p=U.plan, q=U.q.toLowerCase();
+  const dups = p.dups.filter(d => !q || (d.song+' '+d.keep+' '+d.remove.join(' ')).toLowerCase().includes(q));
+  const ncopies = p.dups.reduce((a,d)=>a+d.remove.length,0);
+  return `<div class="cards">
+      <div class="card"><div class="k">Carpetas repetidas</div><div class="v mono">${p.merges.length}</div></div>
+      <div class="card org"><div class="k">Canciones repetidas</div><div class="v mono">${p.dups.length}</div></div>
+      <div class="card ok"><div class="k">Espacio a liberar</div><div class="v mono">${gb(p.bytes)}</div></div>
+      <div class="card"><div class="k">Carpetas vacías</div><div class="v mono">${p.empty.length}</div></div></div>
+    <div class="box">Nada se borra: las copias repetidas se apartan en <code>${esc(short(p.dest))}/_duplicados</code> (con un registro de qué se movió) para que las revises y borres tú.
+      ${p.rb_affected?` Hay <b>${p.rb_affected}</b> pistas de tu librería de Rekordbox involucradas: se corrigen sus rutas y las playlists pasan a la copia que se conserva (antes se hace respaldo).`:''}
+      ${p.rb_read?'':' <span style="color:var(--org)">No pude leer Rekordbox, así que no se tuvo en cuenta para elegir qué copia conservar.</span>'}</div>
+    ${U.rbOpen && p.rb_affected?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de unificar.</div>`:''}
+
+    <div class="vhead" style="margin-top:22px"><h2 style="font-size:18px">Carpetas repetidas</h2><span class="sub">Se juntan en la que tiene más música.</span>
+      <div class="sp"><button class="ghost" onclick="uAll('merges',true)">Todas</button><button class="ghost" onclick="uAll('merges',false)">Ninguna</button></div></div>
+    ${p.merges.length?`<table><tr><th style="width:34px"></th><th>Se queda</th><th>Se junta aquí</th></tr>${p.merges.map(m=>`<tr>
+      <td><input type="checkbox" ${U.merges.has(m.id)?'checked':''} onchange="uToggle('merges','${m.id}',this.checked)"></td>
+      <td><span class="path" onclick="reveal(${jsq(m.target)})">📁 ${esc(rel(m.target))}</span> <span class="art">(${m.target_audio})</span></td>
+      <td>${m.sources.map(s=>`<span class="path" onclick="reveal(${jsq(s.folder)})">📁 ${esc(rel(s.folder))}</span> <span class="art">(${s.audio} canciones)</span>`).join('<br>')}</td></tr>`).join('')}</table>`:'<div class="art">No hay.</div>'}
+
+    <div class="vhead" style="margin-top:26px"><h2 style="font-size:18px">Canciones repetidas</h2><span class="sub">Misma canción, misma versión y misma duración. Se conserva la verde.</span>
+      <div class="sp"><button class="ghost" onclick="uAll('dups',true)">Todas</button><button class="ghost" onclick="uAll('dups',false)">Ninguna</button>
+      <input class="search" placeholder="Buscar…" value="${esc(U.q)}" oninput="U.q=this.value;renderMain();this.focus();this.setSelectionRange(9e9,9e9)"></div></div>
+    ${dups.length?`<table><tr><th style="width:34px"></th><th>Canción</th><th>Se conserva</th><th>Se aparta en _duplicados</th></tr>${dups.map(d=>`<tr>
+      <td><input type="checkbox" ${U.dups.has(d.id)?'checked':''} onchange="uToggle('dups','${d.id}',this.checked)"></td>
+      <td><div>${esc(d.song)}</div><div class="art">${d.seconds?Math.floor(d.seconds/60)+':'+String(Math.round(d.seconds%60)).padStart(2,'0'):''}</div></td>
+      <td><div class="path" style="color:var(--ok)" onclick="reveal(${jsq(d.keep)})">✓ ${esc(rel(d.keep))}</div><div class="art">${esc(d.why)}</div></td>
+      <td>${d.remove.map(r=>`<div class="path" onclick="reveal(${jsq(r)})">${esc(rel(r))}</div>`).join('')}</td></tr>`).join('')}</table>`:'<div class="art">No hay.</div>'}
+
+    <div class="vhead" style="margin-top:26px"><h2 style="font-size:18px">Carpetas vacías</h2></div>
+    <label style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" ${U.empty?'checked':''} onchange="U.empty=this.checked;$('uCount').innerHTML=uSummary()">
+      Borrar las ${p.empty.length} carpetas que no tienen ningún archivo</label>
+    <details style="margin:8px 0 0"><summary class="art" style="cursor:pointer">Ver cuáles</summary>
+      <div class="art" style="columns:3;margin-top:6px">${p.empty.map(e=>esc(rel(e))).join('<br>')}</div></details>
+
+    <div style="position:sticky;bottom:-40px;background:var(--bg);border-top:1px solid var(--line);margin-top:24px;padding:14px 0 18px;display:flex;align-items:center;gap:12px">
+      <span id="uCount" style="flex:1;color:var(--mute)">${uSummary()}</span>
+      <button onclick="unifyReview()">Revisar de nuevo</button>
+      <button class="warn" onclick="unifyConfirm()">Unificar seleccionados</button></div>`;
+}
+function unifyConfirm(){
+  const p=U.plan, n=p.dups.filter(d=>U.dups.has(d.id)).reduce((a,d)=>a+d.remove.length,0);
+  modal(`<h3>Unificar</h3><p>Esto es lo que va a pasar:</p>
+    <div class="box">📁 Carpetas repetidas a juntar: <b>${U.merges.size}</b>.</div>
+    <div class="box">🗂️ <b>${n}</b> copias repetidas se mueven a <code>_duplicados</code>. No se borra música.</div>
+    ${U.empty?`<div class="box">🧹 Se borran <b>${p.empty.length}</b> carpetas vacías.</div>`:''}
+    ${p.rb_affected?`<div class="box warn">🎧 Se corrigen rutas en Rekordbox (antes se respalda). <b>Rekordbox tiene que estar cerrado.</b></div>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="unifyRun()">Unificar</button></div>`);
+}
+async function unifyRun(){
+  closeModal(); busy(true,'Unificando…');
+  const r = await api().unify_apply([...U.merges],[...U.dups],U.empty); busy(false);
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  const x=r.result; U.plan=null;
+  if(r.analysis) S.analysis=r.analysis;
+  render();
+  toast(`Listo: <b>${x.retired}</b> copias apartadas en _duplicados, ${x.moved} archivos movidos de carpeta, ${x.empty_removed} carpetas vacías borradas.`
+    + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:''));
+}
+// ---------- copiar links de lo que falta ----------
+function missingFor(scope){
+  if(scope==='missing') return missingUnique();
+  const pl = S.analysis[+scope.split(':')[1]];
+  return pl ? pl.tracks.filter(t=>t.status==='missing') : [];
+}
+function copyButtons(scope){
+  const m = missingFor(scope);
+  if(!m.length) return '';
+  const dz = m.filter(t=>t.deezer && t.deezer.found).length;
+  return `<button class="cp sp" onclick="copyLinks(${jsq(scope)},'spotify')" title="Copia los links de Spotify de las ${m.length} canciones que faltan, uno por línea">📋 Spotify <span class="badge mono">${m.length}</span></button>
+    <button class="cp dz" onclick="copyLinks(${jsq(scope)},'deezer')" title="Copia los links de Deezer encontrados, uno por línea" ${dz?'':'disabled'}>📋 Deezer <span class="badge mono">${dz}</span></button>`;
+}
+async function copyLinks(scope, svc){
+  const m = missingFor(scope);
+  let links, skipped = 0;
+  if(svc==='spotify'){ links = m.map(t=>t.url).filter(Boolean); }
+  else { links = m.filter(t=>t.deezer && t.deezer.found).map(t=>t.deezer.url); skipped = m.length - links.length; }
+  links = [...new Set(links)];
+  if(!links.length){ toast('No hay links para copiar.', true); return; }
+  const r = await api().copy_text(links.join('\n'));
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  toast(`Copiados <b>${links.length}</b> links de ${svc==='spotify'?'Spotify':'Deezer'}, uno por línea.` +
+    (skipped?`<br><span style="color:var(--org)">${skipped} sin link exacto en Deezer no se copiaron (búscalas a mano o usa Spotify).</span>`:''));
+}
+function show(v){ S.view=v; S.q=''; render(); }
+
+// ---------- acciones ----------
+async function connect(){
+  if(S.connected){ await api().disconnect(); S.connected=false; render(); return; }
+  if(!S.settings.client_id){ openSettings(); toast('Primero pega el Client ID de tu app de Spotify.', true); return; }
+  busy(true, 'Se abrió Spotify en tu navegador: autoriza y vuelve aquí…');
+  const r = await api().connect(); busy(false, r.ok ? 'Conectado.' : 'Listo.');
+  if(r.ok){ S.connected=true; toast(`Conectado como <b>${esc(r.user)}</b>. Ahora toca Analizar.`); } else toast(esc(r.error), true);
+  render();
+}
+async function analyze(){
+  if(!S.connected){ return connect(); }
+  busy(true, 'Leyendo Spotify…');
+  const r = await api().analyze(); busy(false);
+  if(!r.ok){ toast(esc(r.error), true); $('progTxt').textContent='Error.'; return; }
+  S.analysis = r.analysis; S.foreign = r.foreign || {};
+  render();
+  toast(`Análisis listo: faltan <b>${missingUnique().length}</b> canciones y hay <b>${orgCount()}</b> por organizar.`);
+  askForeign(r.ask_foreign || []);
+}
+async function askOrganize(){
+  const st = await api().get_state();
+  const rows = toOrganize(), dups = dupList();
+  const dests = new Set(rows.map(r=>r.dest_dir)).size;
+  modal(`<h3>Organizar</h3>
+    <p>Sin duplicar archivos. Esto es lo que va a pasar:</p>
+    <div class="box">📁 Se <b>mueven</b> ${rows.length} descarga${rows.length!==1?'s':''} a ${dests} carpeta${dests!==1?'s':''} dentro de <code>${esc(short(S.settings.dest_root))}</code>. Cada canción queda en una sola carpeta (la de su primera playlist).</div>
+    ${dups.length?`<div class="box">🗂️ ${dups.length} descarga${dups.length!==1?'s':''} que ya tenías se aparta${dups.length!==1?'n':''} en <code>${esc(base(S.settings.inbox))}/_duplicados</code> para que la${dups.length!==1?'s':''} borres.</div>`:''}
+    <div class="box">🎧 Las canciones que ya tienes en otras carpetas no se tocan: Rekordbox las usa donde están, con tus cues.</div>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="chkRb" checked style="margin-top:3px">
+      <span>Actualizar Rekordbox: carpeta de playlists <b>${esc(S.settings.rekordbox_folder)}</b> con el mismo orden de Spotify. Antes se respalda tu librería.</span></label>
+    ${st.rekordbox_running?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de continuar o la parte de Rekordbox no se aplicará.</div>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="organize()">Organizar</button></div>`);
+}
+async function organize(){
+  const rb = $('chkRb') ? $('chkRb').checked : true; closeModal();
+  busy(true, 'Organizando…');
+  const r = await api().organize(rb); busy(false);
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  S.analysis = r.analysis; render();
+  const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
+  if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
+  if(r.rekordbox) msg += `<br>Rekordbox: ${r.rekordbox.playlists_updated} playlists actualizadas, ${r.rekordbox.tracks_added} pistas nuevas (respaldo ${esc(r.rekordbox.backup)}). Al abrir Rekordbox, analiza las pistas nuevas.`;
+  if(r.rekordbox_error) msg += `<br><span style="color:var(--org)">Rekordbox: ${esc(r.rekordbox_error)}</span>`;
+  toast(msg, !!r.rekordbox_error);
+}
+async function exportMissing(){
+  const r = await api().export_excel();
+  if(r.ok) toast(`Excel con <b>${r.count}</b> canciones faltantes guardado en <code>${esc(short(r.path))}</code>`);
+  else if(!r.cancelled) toast(esc(r.error), true);
+}
+function reveal(p){ api().reveal(p); }
+function openUrl(u){ api().open_url(u); }
+
+function openSettings(){
+  const s = S.settings;
+  modal(`<h3>Ajustes</h3>
+    <div class="box"><b>App de Spotify:</b> en <code>developer.spotify.com/dashboard</code> crea una app (Web API), agrega como Redirect URI
+      <code>${esc(s.redirect_uri)}</code> y pega aquí su Client ID. No necesitas el Client Secret.</div>
+    <label class="f">Client ID</label><input class="t mono" id="sClient" value="${esc(s.client_id)}" placeholder="32 caracteres">
+    <label class="f">Carpeta espejo de Spotify (una subcarpeta por playlist)</label>${folderField('sDest', s.dest_root)}
+    <label class="f">Carpeta de descargas por organizar</label>${folderField('sInbox', s.inbox)}
+    <label class="f">Otras carpetas donde ya tienes música</label>
+    <div id="rootsList"></div>
+    <button onclick="addRoot()" style="margin-top:6px">＋ Agregar carpeta…</button>
+    <label class="f">Nombre de la carpeta de playlists en Rekordbox</label><input class="t" id="sRb" value="${esc(s.rekordbox_folder)}">
+    <label class="f">Canciones que te gustan</label>
+    <div style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="sLiked" ${s.include_liked?'checked':''}>
+      <span>Incluir como playlist llamada</span><input class="t" id="sLikedName" value="${esc(s.liked_name)}" style="width:180px"></div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="saveSettings()">Guardar</button></div>`);
+  draftRoots = [...(s.library_roots||[])]; renderRoots();
+}
+// ---------- selector de carpetas (Finder) ----------
+let draftRoots = [];
+function folderField(id, val){
+  return `<div class="pick"><div class="pickpath" id="${id}" data-path="${esc(val)}" title="${esc(val)}" onclick="pickInto('${id}')">📁 ${esc(short(val)||'Sin elegir')}</div>
+    <button onclick="pickInto('${id}')">Elegir…</button></div>`;
+}
+async function pickInto(id){
+  const el=$(id); const p = await api().pick_folder(el.dataset.path);
+  if(p){ el.dataset.path=p; el.title=p; el.textContent='📁 '+short(p); }
+}
+function renderRoots(){
+  $('rootsList').innerHTML = draftRoots.length ? draftRoots.map((r,i)=>`<div class="pick" style="margin-top:6px">
+    <div class="pickpath" title="${esc(r)}">📁 ${esc(short(r))}</div><button onclick="draftRoots.splice(${i},1);renderRoots()" title="Quitar">✕</button></div>`).join('')
+    : '<div class="art" style="padding:4px 0">Ninguna</div>';
+}
+async function addRoot(){
+  const p = await api().pick_folder(draftRoots[draftRoots.length-1]||'');
+  if(p && !draftRoots.includes(p)){ draftRoots.push(p); renderRoots(); }
+}
+async function saveSettings(){
+  const s = {client_id:$('sClient').value, dest_root:$('sDest').dataset.path, inbox:$('sInbox').dataset.path,
+    library_roots:draftRoots, rekordbox_folder:$('sRb').value, include_liked:$('sLiked').checked, liked_name:$('sLikedName').value};
+  await api().save_settings(s); const st = await api().get_state(); S.settings = st.settings; closeModal(); render(); toast('Ajustes guardados.');
+}
+
+window.addEventListener('pywebviewready', async () => {
+  const st = await api().get_state();
+  S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.foreign = st.foreign || {};
+  S.home = st.home || ''; S.win = !!st.win;
+  render();
+  if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
+  const pend = Object.entries(S.foreign).filter(([,f]) => (f.choice||'preguntar')==='preguntar').map(([id])=>id);
+  if(pend.length) askForeign(pend);
+});
+$('mbg').addEventListener('click', e => { if(e.target.id==='mbg') closeModal(); });
+</script>
+</body>
+</html>
