@@ -107,6 +107,7 @@ class Api:
             "foreign": self._cfg.get("foreign", {}),
             "rekordbox_running": rekordbox_sync.rekordbox_running(),
             "home": str(Path.home()),
+            "pinned": self._cfg.get("pinned_paths", []),
             "version": actualizador.local_version(),
             "win": plataforma.IS_WIN,
         }
@@ -349,6 +350,46 @@ class Api:
             self._progress("Organización terminada.")
             return {"files": files, "rekordbox": rb, "rekordbox_error": rb_error, "analysis": analysis}
         return self._wrap(run)
+
+    # ---------- reorganizar por playlist ----------
+    def relocate(self, pid, moves, keep, remember=True):
+        """moves: [{src, dest}] archivos a mover; keep: rutas que se dejan donde están."""
+        def run():
+            analysis = _read_json(CACHE_ANALYSIS, None) or []
+            pl = next((p for p in analysis if p["id"] == pid), None)
+            if not pl:
+                raise SpotifyError("No encontré esa playlist. Vuelve a analizarla.")
+            valid_src = {r["source"] for r in pl["tracks"] if r.get("source") and r["status"] in ("ok", "elsewhere")}
+            allowed = {a["folder"] for a in analysis} | {r["dest_dir"] for r in pl["tracks"] if r.get("dest_dir")}
+            ops, seen = [], set()
+            for m in moves or []:
+                src, dest = m.get("src"), m.get("dest")
+                if src in valid_src and dest in allowed and src not in seen and str(Path(src).parent) != dest:
+                    ops.append((src, dest))
+                    seen.add(src)
+            res = organizador.relocate(ops, self._cfg, self._progress) if ops else \
+                {"moved": 0, "skipped": [], "rekordbox": None, "backup": None, "changes": {}}
+            pinned = set(self._cfg.get("pinned_paths", []))
+            if remember:
+                pinned |= {p for p in (keep or []) if p in valid_src}
+                # lo que moviste a una carpeta que no es "su" carpeta también queda fijado
+                home = {r["source"]: r.get("dest_dir") for r in pl["tracks"] if r.get("source")}
+                for src, new in res["changes"].items():
+                    if str(Path(new).parent) != home.get(src):
+                        pinned.add(new)
+            pinned -= set(res["changes"])  # las rutas viejas ya no existen
+            self._cfg["pinned_paths"] = sorted(pinned)
+            config.save(self._cfg)
+            data = self._load_sp()
+            analysis = self._build_analysis(data, focus={pid})
+            res.pop("changes", None)
+            return {"result": res, "analysis": analysis, "pinned": self._cfg["pinned_paths"]}
+        return self._wrap(run)
+
+    def unpin(self, paths):
+        self._cfg["pinned_paths"] = sorted(set(self._cfg.get("pinned_paths", [])) - set(paths or []))
+        config.save(self._cfg)
+        return {"ok": True, "pinned": self._cfg["pinned_paths"]}
 
     # ---------- vigilante de la carpeta de descargas ----------
     def _inbox_signature(self):
