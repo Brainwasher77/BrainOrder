@@ -52,17 +52,39 @@ class Api:
     def _sp(self):
         return Spotify(self._cfg.get("client_id", ""), self._cfg["redirect_uri"])
 
-    def _progress(self, msg):
-        config.log(msg)
+    # Progreso: cada etapa ocupa un tramo [lo, hi] de 0-100 %; las funciones informan su avance
+    # dentro de la etapa (0..1) y aquí se convierte al porcentaje total.
+    _stage = (0.0, 100.0)
+    _last_pct = None
+
+    def _set_stage(self, lo, hi, send=True):
+        self._stage = (float(lo), float(hi))
+        if send:
+            self._send(None, lo)
+
+    def _progress(self, msg, frac=None):
+        lo, hi = self._stage
+        pct = None if frac is None else lo + (hi - lo) * max(0.0, min(1.0, float(frac)))
+        if msg:
+            config.log(msg)
+        self._send(msg, pct)
+
+    def _send(self, msg, pct):
+        if pct is not None:
+            pct = round(pct)
+            if pct == self._last_pct and msg is None:
+                return
+            self._last_pct = pct
         if self._window:
             try:
-                self._window.evaluate_js(f"window.onProgress && onProgress({json.dumps(msg)})")
+                self._window.evaluate_js(f"window.onProgress && onProgress({json.dumps(msg)}, {json.dumps(pct)})")
             except Exception:
                 pass
 
     def _wrap(self, fn, *a):
         if not self._lock.acquire(blocking=False):
             return {"ok": False, "error": "Ya hay una tarea en curso, espera a que termine."}
+        self._stage, self._last_pct = (0.0, 100.0), None
         try:
             return {"ok": True, **(fn(*a) or {})}
         except (SpotifyError, rekordbox_sync.RekordboxError, unificar.UnifyError) as e:
@@ -177,7 +199,12 @@ class Api:
                   if p.get("tracks") is not None and (include_liked or p["id"] != "liked")]
         loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
                   for p in loaded] + list(sp_data.get("foreign_ok", []))
+        staged = not quiet and not light
+        if staged:
+            self._set_stage(self._stage[0], self._stage[0] + (self._stage[1] - self._stage[0]) * 0.45)
         result = biblioteca.analyze(loaded, self._cfg, None if quiet else self._progress)
+        if staged:
+            self._set_stage(self._stage[1], 97)
         by_id = {a["id"]: a for a in result}
 
         if light:
@@ -185,11 +212,13 @@ class Api:
         elif focus:
             sel = [a for a in result if a["id"] in focus]
             deezer.add_links(sel, self._progress)
+            self._set_stage(97, 100)
             deezer.add_links([a for a in result if a["id"] not in focus], offline=True)
             self._progress("Escribiendo la lista de faltantes en la carpeta…")
             reportes.write_reports(sel, self._cfg)
         else:
             deezer.add_links(result, self._progress)
+            self._set_stage(97, 100)
             self._progress("Escribiendo listas de faltantes en cada carpeta…")
             reportes.write_reports(result, self._cfg)
 
@@ -243,16 +272,19 @@ class Api:
             entry = next((p for p in data["playlists"] if p["id"] == pid), None)
             if entry is None:
                 raise SpotifyError("No encontré esa playlist. Dale a ⟳ para recargar la lista.")
-            self._progress(f"Leyendo «{entry['name']}» de Spotify…")
+            self._set_stage(0, 40)
+            self._progress(f"Leyendo «{entry['name']}» de Spotify…", 0)
             if pid == "liked":
                 entry.update(self._liked_meta(sp))
                 entry["tracks"] = sp.liked(self._progress)
             else:
-                entry["tracks"] = sp.playlist_tracks(pid)
+                entry["tracks"] = sp.playlist_tracks(pid, self._progress, entry.get("total"))
+            self._set_stage(40, 100)
             entry["analyzed_snapshot"] = entry.get("snapshot")
             _write_json(CACHE_SPOTIFY, data)
             analysis = self._build_analysis(data, focus={pid})
-            self._progress(f"«{entry['name']}» analizada.")
+            self._progress(f"«{entry['name']}» analizada.", 1)
+            self._set_stage(0, 100, send=False)
             return {"analysis": analysis}
         return self._wrap(run)
 
@@ -260,6 +292,7 @@ class Api:
         """Analizar todo: todas tus playlists y Me gusta."""
         def run():
             sp = self._sp()
+            self._set_stage(0, 45)
             playlists = sp.my_playlists(self._progress)
             for p in playlists:
                 p["analyzed_snapshot"] = p.get("snapshot")
@@ -283,8 +316,10 @@ class Api:
             config.save(self._cfg)
             sp_data = {"playlists": playlists, "foreign_ok": foreign_ok}
             _write_json(CACHE_SPOTIFY, sp_data)
+            self._set_stage(45, 100)
             analysis = self._build_analysis(sp_data)
-            self._progress("Análisis listo.")
+            self._progress("Análisis listo.", 1)
+            self._set_stage(0, 100, send=False)
             return {"analysis": analysis, "foreign": known,
                     "ask_foreign": [pid for pid, f in known.items() if f.get("choice") == "preguntar"]}
         return self._wrap(run)

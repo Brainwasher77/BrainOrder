@@ -201,12 +201,13 @@ def parse_file(p: Path):
 def scan(roots, progress=None):
     files = []
     seen = set()
-    for root in roots:
+    roots = list(roots)
+    for ri, root in enumerate(roots):
         root = Path(root)
         if not root.exists():
             continue
         if progress:
-            progress(f"Escaneando {root.name}…")
+            progress(f"Revisando tus carpetas: {root.name}…", 0.35 * ri / max(1, len(roots)))
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             for fn in filenames:
@@ -284,7 +285,9 @@ def analyze(playlists, cfg, progress=None):
             str(dest_root / "_duplicados"), str(dest_root / "_Informes")}
     files = [f for f in scan(roots, progress) if not any(f.path.startswith(s + os.sep) for s in skip)]
     if progress:
-        progress(f"{len(files)} archivos locales. Cruzando con Spotify…")
+        progress(f"{len(files)} archivos locales. Cruzando con Spotify…", 0.35)
+    total_tracks = sum(len(p["tracks"]) for p in playlists) or 1
+    done_tracks = 0
     idx = Index(files)
     inbox_s = str(inbox) + os.sep
     dest_s = str(dest_root) + os.sep
@@ -304,6 +307,9 @@ def analyze(playlists, cfg, progress=None):
         folder_s = folders[pl["id"]]
         rows = []
         for pos, t in enumerate(pl["tracks"]):
+            done_tracks += 1
+            if progress and done_tracks % 20 == 0:
+                progress(f"Cruzando canciones: {done_tracks}/{total_tracks}", 0.35 + 0.65 * done_tracks / total_tracks)
             matches = idx.find(t)
             ex = extras(t["name"])
             rank = lambda f, ex=ex: (f.extras != ex, not f.path.startswith(dest_s)) + _rank(f)
