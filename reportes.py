@@ -21,6 +21,8 @@ def write_reports(analysis, cfg):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     written = 0
     for pl in analysis:
+        if pl.get("pending"):
+            continue  # playlist todavía sin analizar: no tocar su .txt
         folder = Path(pl["folder"])
         txt = folder / TXT_NAME
         here = [r for r in pl["tracks"] if r["status"] == "ok" and r["source"]

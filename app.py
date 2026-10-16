@@ -136,38 +136,139 @@ class Api:
         return {"ok": True}
 
     # ---------- análisis ----------
-    def _build_analysis(self, sp_data):
-        playlists = list(sp_data["playlists"])
-        if self._cfg.get("include_liked") and sp_data.get("liked") is not None:
-            playlists.append({"id": "liked", "name": self._cfg.get("liked_name", "Me gusta"),
-                              "tracks": sp_data["liked"], "liked": True})
-        for fp in sp_data.get("foreign_ok", []):
-            playlists.append(fp)
-        analysis = biblioteca.analyze(playlists, self._cfg, self._progress)
-        deezer.add_links(analysis, self._progress)
-        self._progress("Escribiendo listas de faltantes en cada carpeta…")
-        reportes.write_reports(analysis, self._cfg)
+    # ---------- datos de Spotify en caché ----------
+    def _load_sp(self):
+        """Caché de Spotify: {"playlists": [{id, name, snapshot, analyzed_snapshot, tracks|None, liked?}], "foreign_ok": [...]}"""
+        data = _read_json(CACHE_SPOTIFY, None) or {}
+        pls = list(data.get("playlists") or [])
+        if data.get("liked") is not None and not any(p.get("id") == "liked" for p in pls):  # caché antiguo
+            pls.append({"id": "liked", "name": self._cfg.get("liked_name", "Me gusta"), "liked": True,
+                        "tracks": data["liked"]})
+        for p in pls:
+            if p.get("tracks") is not None and "analyzed_snapshot" not in p:
+                p["analyzed_snapshot"] = p.get("snapshot")
+        return {"playlists": pls, "foreign_ok": data.get("foreign_ok") or []}
+
+    def _liked_meta(self, sp):
+        try:
+            total = sp.get("/me/tracks", {"limit": 1}).get("total", 0)
+        except SpotifyError:
+            total = None
+        return {"id": "liked", "name": self._cfg.get("liked_name", "Me gusta"), "liked": True,
+                "snapshot": f"n{total}" if total is not None else None, "total": total}
+
+    def _register_foreign(self, sp):
+        known = self._cfg.setdefault("foreign", {})
+        for f in sp.foreign:
+            if f["id"] not in known:
+                known[f["id"]] = {**f, "choice": "preguntar"}
+            else:
+                known[f["id"]].update(name=f["name"], owner=f["owner"], url=f["url"])
+        config.save(self._cfg)
+        return known
+
+    def _build_analysis(self, sp_data, focus=None, light=False, quiet=False):
+        """Cruza la caché de Spotify con tus archivos.
+        focus: ids de playlists a las que se les buscan links de Deezer y se les escribe el .txt
+               (None = todas). light=True: solo cruce local, sin Deezer ni .txt (rápido)."""
+        include_liked = self._cfg.get("include_liked")
+        meta = {p["id"]: p for p in sp_data["playlists"]}
+        loaded = [p for p in sp_data["playlists"]
+                  if p.get("tracks") is not None and (include_liked or p["id"] != "liked")]
+        loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
+                  for p in loaded] + list(sp_data.get("foreign_ok", []))
+        result = biblioteca.analyze(loaded, self._cfg, None if quiet else self._progress)
+        by_id = {a["id"]: a for a in result}
+
+        if light:
+            deezer.add_links(result, offline=True)
+        elif focus:
+            sel = [a for a in result if a["id"] in focus]
+            deezer.add_links(sel, self._progress)
+            deezer.add_links([a for a in result if a["id"] not in focus], offline=True)
+            self._progress("Escribiendo la lista de faltantes en la carpeta…")
+            reportes.write_reports(sel, self._cfg)
+        else:
+            deezer.add_links(result, self._progress)
+            self._progress("Escribiendo listas de faltantes en cada carpeta…")
+            reportes.write_reports(result, self._cfg)
+
+        analysis = []
+        for p in sp_data["playlists"]:
+            if p["id"] == "liked" and not include_liked:
+                continue
+            a = by_id.get(p["id"])
+            if a is None:  # todavía sin analizar
+                name = self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]
+                a = {"id": p["id"], "name": name, "tracks": [], "pending": True, "liked": p["id"] == "liked",
+                     "folder": str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name))}
+            a["snapshot"] = p.get("snapshot")
+            a["analyzed_snapshot"] = p.get("analyzed_snapshot")
+            a["total"] = p.get("total")
+            analysis.append(a)
+        analysis += [a for a in result if a["id"] not in meta]  # playlists ajenas integradas
         for pl in analysis:
             txt = Path(pl["folder"]) / reportes.TXT_NAME
             pl["report"] = str(txt) if txt.exists() else None
         _write_json(CACHE_ANALYSIS, analysis)
         return analysis
 
+    # ---------- analizar ----------
+    def list_playlists(self):
+        """Trae solo la lista de tus playlists (sin canciones). Rápido."""
+        def run():
+            sp = self._sp()
+            self._progress("Leyendo la lista de tus playlists…")
+            own = sp.list_mine()
+            data = self._load_sp()
+            old = {p["id"]: p for p in data["playlists"]}
+            new = []
+            for m in own + ([self._liked_meta(sp)] if self._cfg.get("include_liked") else []):
+                o = old.get(m["id"]) or {}
+                new.append({**m, "tracks": o.get("tracks"), "analyzed_snapshot": o.get("analyzed_snapshot")})
+            data["playlists"] = new
+            known = self._register_foreign(sp)
+            _write_json(CACHE_SPOTIFY, data)
+            analysis = self._build_analysis(data, light=True)
+            self._progress(f"{len(own)} playlists. Elige una y dale Analizar, o Analizar todo.")
+            return {"analysis": analysis, "foreign": known,
+                    "ask_foreign": [pid for pid, f in known.items() if f.get("choice") == "preguntar"]}
+        return self._wrap(run)
+
+    def analyze_playlist(self, pid):
+        """Lee de Spotify SOLO esta playlist y la cruza con tus archivos."""
+        def run():
+            sp = self._sp()
+            data = self._load_sp()
+            entry = next((p for p in data["playlists"] if p["id"] == pid), None)
+            if entry is None:
+                raise SpotifyError("No encontré esa playlist. Dale a ⟳ para recargar la lista.")
+            self._progress(f"Leyendo «{entry['name']}» de Spotify…")
+            if pid == "liked":
+                entry.update(self._liked_meta(sp))
+                entry["tracks"] = sp.liked(self._progress)
+            else:
+                entry["tracks"] = sp.playlist_tracks(pid)
+            entry["analyzed_snapshot"] = entry.get("snapshot")
+            _write_json(CACHE_SPOTIFY, data)
+            analysis = self._build_analysis(data, focus={pid})
+            self._progress(f"«{entry['name']}» analizada.")
+            return {"analysis": analysis}
+        return self._wrap(run)
+
     def analyze(self):
+        """Analizar todo: todas tus playlists y Me gusta."""
         def run():
             sp = self._sp()
             playlists = sp.my_playlists(self._progress)
-            liked = sp.liked(self._progress) if self._cfg.get("include_liked") else None
-
-            # playlists ajenas: registrar nuevas y leer las que elegiste integrar
-            known = self._cfg.setdefault("foreign", {})
-            new = []
-            for f in sp.foreign:
-                if f["id"] not in known:
-                    known[f["id"]] = {**f, "choice": "preguntar"}
-                    new.append(f["id"])
-                else:
-                    known[f["id"]].update(name=f["name"], owner=f["owner"], url=f["url"])
+            for p in playlists:
+                p["analyzed_snapshot"] = p.get("snapshot")
+            if self._cfg.get("include_liked"):
+                lm = self._liked_meta(sp)
+                lm["tracks"] = sp.liked(self._progress)
+                lm["analyzed_snapshot"] = lm["snapshot"]
+                playlists.append(lm)
+            known = self._register_foreign(sp)
             foreign_ok = []
             for pid, f in known.items():
                 if f.get("choice") != "integrar":
@@ -180,8 +281,7 @@ class Api:
                 else:
                     f["status"] = "pendiente"  # Spotify no deja leerla: hay que copiarla a una propia
             config.save(self._cfg)
-
-            sp_data = {"playlists": playlists, "liked": liked, "foreign_ok": foreign_ok}
+            sp_data = {"playlists": playlists, "foreign_ok": foreign_ok}
             _write_json(CACHE_SPOTIFY, sp_data)
             analysis = self._build_analysis(sp_data)
             self._progress("Análisis listo.")
@@ -190,24 +290,91 @@ class Api:
         return self._wrap(run)
 
     # ---------- organizar ----------
-    def organize(self, include_rekordbox=True):
+    def organize(self, include_rekordbox=True, pid=None):
+        """Organiza todo, o solo una playlist (pid)."""
         def run():
-            sp_data = _read_json(CACHE_SPOTIFY, None)
+            sp_data = self._load_sp()
             analysis = _read_json(CACHE_ANALYSIS, None)
-            if not sp_data or not analysis:
+            if not sp_data["playlists"] or not analysis:
                 raise SpotifyError("Primero dale a Analizar.")
-            files = organizador.organize(analysis, self._cfg, self._progress)
+            subset = [p for p in analysis if p["id"] == pid] if pid else analysis
+            if pid and not subset:
+                raise SpotifyError("No encontré esa playlist.")
+            files = organizador.organize(subset, self._cfg, self._progress)
             self._progress("Re-escaneando tu música…")
-            analysis = self._build_analysis(sp_data)
+            analysis = self._build_analysis(sp_data, focus={pid} if pid else None)
             rb, rb_error = None, None
             if include_rekordbox:
                 try:
-                    rb = rekordbox_sync.sync(analysis, self._cfg, self._progress)
+                    target = [p for p in analysis if p["id"] == pid] if pid else analysis
+                    rb = rekordbox_sync.sync(target, self._cfg, self._progress)
                 except rekordbox_sync.RekordboxError as e:
                     rb_error = str(e)
+            self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
             self._progress("Organización terminada.")
             return {"files": files, "rekordbox": rb, "rekordbox_error": rb_error, "analysis": analysis}
-        return self._wrap(run, )
+        return self._wrap(run)
+
+    # ---------- vigilante de la carpeta de descargas ----------
+    def _inbox_signature(self):
+        inbox = Path(self._cfg["inbox"])
+        skip = {self._cfg.get("inbox_done", "_organizadas"), "_duplicados"}
+        sig = []
+        if not inbox.is_dir():
+            return (), 0
+        for dirpath, dirnames, filenames in os.walk(inbox):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip]
+            for fn in filenames:
+                if fn.startswith(".") or Path(fn).suffix.lower() not in config.AUDIO_EXT:
+                    continue
+                try:
+                    st = os.stat(os.path.join(dirpath, fn))
+                except OSError:
+                    continue
+                sig.append((os.path.join(dirpath, fn), st.st_size, int(st.st_mtime)))
+        sig.sort()
+        return tuple(sig), len(sig)
+
+    def _watch_inbox(self):
+        """Cada pocos segundos mira la carpeta de descargas. Si cambió (y el archivo terminó
+        de copiarse), recalcula lo que hay por organizar y avisa a la ventana."""
+        import time
+        self._inbox_sig = None
+        last_seen, stable = None, 0
+        while True:
+            time.sleep(4)
+            try:
+                sig, n = self._inbox_signature()
+                if sig != last_seen:          # algo cambió: esperar a que deje de cambiar (descarga en curso)
+                    last_seen, stable = sig, 0
+                    continue
+                stable += 1
+                if sig == self._inbox_sig or stable < 1:
+                    continue
+                prev = set(p for p, _, _ in (self._inbox_sig or ()))
+                nuevos = [p for p, _, _ in sig if p not in prev] if self._inbox_sig is not None else []
+                if not self._lock.acquire(blocking=False):
+                    continue  # hay otra tarea en curso; se reintenta
+                try:
+                    self._inbox_sig = sig
+                    data = self._load_sp()
+                    if any(p.get("tracks") is not None for p in data["playlists"]):
+                        self._build_analysis(data, light=True, quiet=True)
+                finally:
+                    self._lock.release()
+                if self._window:
+                    payload = json.dumps({"count": n, "new": [Path(p).name for p in nuevos][:20],
+                                          "new_count": len(nuevos)})
+                    self._window.evaluate_js(f"window.onInboxChange && onInboxChange({payload})")
+            except Exception as e:
+                config.log(f"vigilante de descargas: {e!r}")
+
+    def start_watch(self):
+        if getattr(self, "_watching", False):
+            return {"ok": True}
+        self._watching = True
+        threading.Thread(target=self._watch_inbox, daemon=True).start()
+        return {"ok": True}
 
     # ---------- utilidades de UI ----------
     def reveal(self, path):
@@ -379,10 +546,11 @@ class Api:
             res = unificar.apply(pl, self._cfg, merge_ids or [], dup_ids or [], bool(remove_empty), self._progress)
             self._unify_plan = None
             analysis = None
-            sp_data = _read_json(CACHE_SPOTIFY, None)
-            if sp_data:
+            sp_data = self._load_sp()
+            if any(p.get("tracks") is not None for p in sp_data["playlists"]):
                 self._progress("Actualizando el análisis…")
-                analysis = self._build_analysis(sp_data)
+                analysis = self._build_analysis(sp_data, light=True)
+                reportes.write_reports(analysis, self._cfg)
             self._progress("Unificación terminada.")
             return {"result": res, "analysis": analysis}
         return self._wrap(run)

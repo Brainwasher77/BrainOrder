@@ -55,8 +55,9 @@ def _lookup(row):
     return None
 
 
-def add_links(analysis, progress=None):
-    """Pone row['deezer'] = {url, found, exact} en cada canción que falta."""
+def add_links(analysis, progress=None, offline=False):
+    """Pone row['deezer'] = {url, found, exact} en cada canción que falta.
+    offline=True: solo usa lo que ya está guardado (no consulta Deezer)."""
     try:
         cache = json.loads(CACHE.read_text("utf-8"))
     except Exception:
@@ -66,7 +67,7 @@ def add_links(analysis, progress=None):
         for r in pl["tracks"]:
             if r["status"] == "missing":
                 missing.setdefault(r["id"], r)
-    todo = [r for i, r in missing.items() if i not in cache]
+    todo = [] if offline else [r for i, r in missing.items() if i not in cache]
     offline = False
     for n, r in enumerate(todo, 1):
         if progress and (n == 1 or n % 10 == 0):
