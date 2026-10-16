@@ -184,7 +184,21 @@ def parse_file(p: Path):
     stem = re.sub(r"\s*\(\d+\)$", "", stem)  # "Canción (2)" -> copia duplicada
     if " - " in stem:
         artist, title = stem.split(" - ", 1)
-        return artist.strip(), title.strip()
+        artist, title = artist.strip(), title.strip()
+        if not re.fullmatch(r"\d{1,3}", artist):
+            return artist, title
+        # "01 - Canción.mp3" (álbum/EP): el número es la pista, no el artista
+        tag_a = ""
+        if mutagen:
+            try:
+                f = mutagen.File(str(p), easy=True)
+                if f and f.tags:
+                    tag_a = (f.tags.get("artist") or [""])[0]
+                    title = (f.tags.get("title") or [title])[0] or title
+            except Exception:
+                pass
+        folder = p.parent.name
+        return (tag_a or (folder.split(" - ", 1)[0].strip() if " - " in folder else "")), title
     if mutagen:
         try:
             f = mutagen.File(str(p), easy=True)

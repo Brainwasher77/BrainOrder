@@ -5,6 +5,7 @@
 - Los archivos que ya están en otras carpetas de tu biblioteca no se tocan.
 - Nunca se borra nada.
 """
+import os
 import shutil
 from pathlib import Path
 
@@ -136,3 +137,57 @@ def relocate(ops, cfg, progress=None):
         raise rekordbox_sync.RekordboxError(f"No se pudo reorganizar; se deshicieron los cambios. Detalle: {e}")
     log(f"Reorganizar: {len(moved)} movidos, {len(skipped)} saltados, rekordbox={rb_stats}")
     return {"moved": len(moved), "skipped": skipped, "rekordbox": rb_stats, "backup": backup, "changes": changes}
+
+
+def move_unmatched(groups, files, cfg, progress=None):
+    """Descargas que no coinciden con ninguna playlist analizada.
+
+    groups: [(carpeta_en_descargas, carpeta_destino)] -> se mueven todos sus audios al destino
+            y se borra la subcarpeta si queda vacía.
+    files:  [(archivo, carpeta_destino)] elegidos a mano.
+    Si en el destino ya hay un archivo con ese nombre, la descarga va a <descargas>/_duplicados.
+    """
+    from config import AUDIO_EXT
+    inbox = Path(cfg["inbox"])
+    dup_dir = inbox / "_duplicados"
+    ops = []
+    for folder, dest in groups:
+        for p in sorted(Path(folder).rglob("*")):
+            if p.is_file() and p.suffix.lower() in AUDIO_EXT and not p.name.startswith("."):
+                ops.append((p, Path(dest)))
+    ops += [(Path(f), Path(d)) for f, d in files]
+    moved, to_dups, errors = 0, 0, []
+    for n, (src, dest) in enumerate(ops, 1):
+        if progress:
+            progress(f"Moviendo {n}/{len(ops)}: {src.name}", n / max(1, len(ops)))
+        try:
+            if not src.exists():
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            target = dest / src.name
+            if target.exists():
+                rel = src.relative_to(inbox) if inbox in src.parents else Path(src.name)
+                t = _unique(dup_dir / rel)
+                t.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(t))
+                to_dups += 1
+            else:
+                shutil.move(str(src), str(target))
+                moved += 1
+        except Exception as e:
+            errors.append(f"{src.name}: {e}")
+            log(f"Error moviendo {src} -> {dest}: {e}")
+    # borrar subcarpetas que quedaron vacías (solo con .DS_Store)
+    for folder, _ in groups:
+        root = Path(folder)
+        for d in sorted((x for x in root.rglob("*") if x.is_dir()), key=lambda x: -len(x.parts)) + [root]:
+            try:
+                left = [e.name for e in os.scandir(d)]
+                if all(x in (".DS_Store", "Thumbs.db") for x in left):
+                    for x in left:
+                        (d / x).unlink()
+                    d.rmdir()
+            except OSError:
+                pass
+    log(f"Organizar sin playlist: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
+    return {"moved": moved, "duplicates": to_dups, "errors": errors}

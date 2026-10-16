@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
-  "build": 6,
-  "notes": "Ordena y filtra cada playlist por estado (Falta, En descargas, En otra carpeta, Aquí)."
+  "version": "1.6.0",
+  "build": 7,
+  "notes": "Organizar arreglado: cuenta todo lo que hay en descargas y te deja ubicar también lo que no coincide con ninguna playlist."
 }

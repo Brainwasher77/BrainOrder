@@ -129,6 +129,8 @@ th.sortable.on{color:var(--acid)}
 .chipf.inbox.on{background:var(--org);border-color:var(--org)}
 .chipf.elsewhere.on{background:var(--info);border-color:var(--info)}
 .chipf.here.on{background:var(--ok);border-color:var(--ok)}
+.oxrow{display:flex;gap:10px;align-items:flex-start;padding:7px 4px;cursor:pointer;border-bottom:1px solid #1d2028}
+.oxrow input{margin-top:3px}
 button.cp{padding:7px 11px;font-size:12.5px}
 button.cp.sp{border-color:rgba(200,245,60,.45);color:var(--acid)}
 button.cp.dz{border-color:rgba(167,139,250,.5);color:#a78bfa}
@@ -151,7 +153,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
     <button onclick="openSettings()">Ajustes</button>
     <button onclick="exportMissing()" id="btnExport" disabled>Exportar a Excel</button>
     <button class="primary" onclick="analyze()" id="btnAnalyze" title="Lee todas tus playlists de Spotify (tarda más)">Analizar todo</button>
-    <button class="warn" onclick="askOrganize()" id="btnOrg" title="Organizar las descargas de todas las playlists analizadas" disabled>Organizar<span class="badge mono" id="orgBadge">0</span></button>
+    <button class="warn" onclick="askOrganize()" id="btnOrg" title="Archivos en tu carpeta de descargas" disabled>Organizar<span class="badge mono" id="orgBadge">0</span></button>
   </header>
   <div class="progress" id="prog"><div class="spin"></div><span id="progTxt">Listo.</span>
     <div class="pbar" id="pbar"><i id="pfill"></i></div><span class="mono" id="ppct"></span></div>
@@ -201,7 +203,7 @@ window.onProgress = (msg, pct) => {
 function busy(on, msg){ $('prog').classList.toggle('busy', on); if(msg) $('progTxt').textContent = msg;
   if(on){ S.pct = 0; $('pfill').style.width='0%'; $('ppct').textContent='0%'; $('prog').style.setProperty('--p','0%'); }
   else { S.pct = null; S.analyzing = null; $('prog').classList.remove('haspct'); }
-  ['btnAnalyze','btnOrg','btnConn'].forEach(id => $(id).disabled = on || (id==='btnOrg' && !orgCount())); }
+  ['btnAnalyze','btnOrg','btnConn'].forEach(id => $(id).disabled = on || (id==='btnOrg' && !orgAvail())); }
 function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
 function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
 function closeModal(){ $('mbg').classList.remove('show'); }
@@ -222,6 +224,7 @@ function rowsOf(pid){ return pid ? allRows().filter(r=>r.pl.id===pid) : allRows(
 function toOrganize(pid){ const seen=new Set(); return rowsOf(pid).filter(r => r.status==='inbox' && !seen.has(r.source) && seen.add(r.source)); }
 function dupList(pid){ const moves=new Set(toOrganize(pid).map(r=>r.source)); const m=new Map();
   for(const r of rowsOf(pid)) for(const d of (r.inbox_dups||[])) if(!moves.has(d) && !m.has(d)) m.set(d, r); return [...m].map(([path,r])=>({path,r})); }
+function orgAvail(){ return (S.inboxCount||0) > 0 || orgCount() > 0; }
 function orgCount(pid){ return S.analysis ? toOrganize(pid).length + dupList(pid).length : 0; }
 const changed = pl => !pl.pending && pl.snapshot && pl.analyzed_snapshot && pl.snapshot !== pl.analyzed_snapshot;
 function counts(pl){ const c={ok:0,elsewhere:0,inbox:0,missing:0}; pl.tracks.forEach(t=>c[t.status]=(c[t.status]||0)+1); return c; }
@@ -234,7 +237,9 @@ function render(){
   $('btnConn').textContent = S.connected ? 'Desconectar' : 'Conectar Spotify';
   const a = S.analysis;
   const oc = orgCount();
-  $('orgBadge').textContent = oc; $('btnOrg').disabled = !oc;
+  // el botón cuenta los archivos que hay en descargas (no solo los que coinciden con una playlist)
+  $('orgBadge').textContent = Math.max(S.inboxCount||0, oc); $('btnOrg').disabled = !orgAvail();
+  $('btnOrg').title = (S.inboxCount||0) ? `${S.inboxCount} archivo${S.inboxCount!==1?'s':''} en descargas · ${oc} listos para su playlist` : 'No hay archivos en descargas';
   $('btnExport').disabled = !a;
   $('nMissing').textContent = a ? missingUnique().length : '–';
   $('nOrg').textContent = a ? oc : '–';
@@ -724,6 +729,7 @@ window.onInboxChange = async (info) => {
   try{
     const st = await api().get_state();
     if(st.analysis) S.analysis = st.analysis;
+    S.inboxCount = (info && info.count !== undefined) ? info.count : (st.inbox_count || 0);
     render();
     if(info && info.new_count){
       const oc = orgCount();
@@ -736,6 +742,7 @@ window.onInboxChange = async (info) => {
 };
 async function askOrganize(pid){
   orgPid = pid || null;
+  if(!orgPid) return askOrganizeAll();
   const st = await api().get_state();
   const rows = toOrganize(orgPid), dups = dupList(orgPid);
   const plName = orgPid ? (S.analysis.find(p=>p.id===orgPid)||{}).name : null;
@@ -751,13 +758,58 @@ async function askOrganize(pid){
     ${st.rekordbox_running?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de continuar o la parte de Rekordbox no se aplicará.</div>`:''}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="organize()">Organizar</button></div>`);
 }
+// ---------- organizar general: lo que coincide + lo que no coincide con ninguna playlist ----------
+let OX = {st:null, groups:new Set(), loose:new Set(), dest:null};
+async function askOrganizeAll(){
+  busy(true, 'Revisando la carpeta de descargas…');
+  const [st, ib] = await Promise.all([api().get_state(), api().inbox_status()]); busy(false);
+  OX = {st, ib, groups:new Set(), loose:new Set(), dest:null};
+  S.inboxCount = ib.count; render();
+  const rows = toOrganize(), dups = dupList(), dests = new Set(rows.map(r=>r.dest_dir)).size;
+  const unmatched = ib.groups.reduce((a,g)=>a+g.count,0) + ib.loose.length;
+  modal(`<h3>Organizar descargas</h3>
+    <p><b>${ib.count}</b> archivo${ib.count!==1?'s':''} en <code>${esc(base(S.settings.inbox))}</code>.</p>
+    <div class="box">✅ <b>${rows.length}</b> coinciden con canciones de tus playlists analizadas: se mueven a su carpeta (${dests} carpeta${dests!==1?'s':''}).
+      ${dups.length?`<br>🗂️ <b>${dups.length}</b> ya las tenías: se apartan en <code>_duplicados</code>.`:''}</div>
+    ${unmatched?`<div class="box warn">❓ <b>${unmatched}</b> no coinciden con ninguna playlist analizada${ib.pending?` (tienes <b>${ib.pending}</b> playlists sin analizar; puede que sean de ahí)`:''}.
+        <div style="margin-top:8px"><button onclick="closeModal();analyze()">Analizar todo para ubicarlas</button></div></div>
+      ${ib.groups.length?`<div style="margin:10px 0 4px;font-weight:650">Subcarpetas de descargas <span class="art">— márcalas para moverlas como carpeta de playlist</span></div>
+        ${ib.groups.map((g,k)=>`<label class="oxrow"><input type="checkbox" onchange="this.checked?OX.groups.add(${jsq(g.name)}):OX.groups.delete(${jsq(g.name)});oxSum()">
+          <div style="min-width:0"><div><b>${esc(g.name)}</b> <span class="art">(${g.count})</span> → 📁 ${esc(short(g.dest))}${g.dest_exists?' <span class="art">(ya existe: se juntan)</span>':''}</div>
+          <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.sample.map(esc).join(' · ')}${g.count>g.sample.length?' …':''}</div></div></label>`).join('')}`:''}
+      ${ib.loose.length?`<div style="margin:12px 0 4px;font-weight:650;display:flex;align-items:center;gap:8px">Sueltos <span class="art">(${ib.loose.length})</span>
+          <span style="margin-left:auto;display:flex;gap:6px"><button class="ghost" onclick="oxAllLoose(true)">Todos</button><button class="ghost" onclick="oxAllLoose(false)">Ninguno</button></span></div>
+        <div style="max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px">${ib.loose.map(f=>`<label class="oxrow" style="padding:5px 10px"><input type="checkbox" class="oxl" data-f="${esc(f)}" onchange="this.checked?OX.loose.add(this.dataset.f):OX.loose.delete(this.dataset.f);oxSum()"> <span>${esc(base(f))}</span></label>`).join('')}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><button onclick="oxPickDest()">📁 Carpeta para los marcados…</button><span class="art" id="oxDest">sin elegir</span></div>`:''}`:''}
+    <label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="chkRb" checked style="margin-top:3px">
+      <span>Actualizar Rekordbox: carpeta de playlists <b>${esc(S.settings.rekordbox_folder)}</b> con el mismo orden de Spotify. Antes se respalda tu librería.</span></label>
+    ${st.rekordbox_running?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de continuar o la parte de Rekordbox no se aplicará.</div>`:''}
+    <div class="actions"><span id="oxSum" class="art" style="margin-right:auto;align-self:center"></span><button onclick="closeModal()">Cancelar</button><button class="warn" id="oxGo" onclick="organize()">Organizar</button></div>`);
+  oxSum();
+}
+function oxAllLoose(on){ document.querySelectorAll('input.oxl').forEach(c=>{ c.checked=on; on?OX.loose.add(c.dataset.f):OX.loose.delete(c.dataset.f); }); oxSum(); }
+async function oxPickDest(){ const p = await api().pick_folder(OX.dest || S.settings.dest_root); if(p){ OX.dest=p; $('oxDest').textContent = short(p); oxSum(); } }
+function oxSum(){
+  const rows = toOrganize().length + dupList().length;
+  const g = OX.ib ? OX.ib.groups.filter(x=>OX.groups.has(x.name)).reduce((a,x)=>a+x.count,0) : 0;
+  const l = OX.dest ? OX.loose.size : 0;
+  const n = rows + g + l, el = $('oxSum'), b = $('oxGo');
+  if(el) el.innerHTML = n ? `Se moverán <b>${n}</b> archivo${n!==1?'s':''}` + (OX.loose.size && !OX.dest ? ' · <span style="color:var(--org)">elige carpeta para los sueltos</span>' : '') : 'Marca algo para mover';
+  if(b) b.disabled = !n;
+}
 async function organize(){
-  const rb = $('chkRb') ? $('chkRb').checked : true; closeModal();
+  const rb = $('chkRb') ? $('chkRb').checked : true;
+  const extra = orgPid ? null : {groups:[...OX.groups], files: OX.dest ? [...OX.loose].map(f=>({src:f, dest:OX.dest})) : []};
+  closeModal();
   busy(true, 'Organizando…');
-  const r = await api().organize(rb, orgPid); busy(false);
+  const r = await api().organize(rb, orgPid, extra); busy(false);
   if(!r.ok){ toast(esc(r.error), true); return; }
-  S.analysis = r.analysis; render();
+  if(r.analysis) S.analysis = r.analysis;
+  try{ const st = await api().get_state(); S.inboxCount = st.inbox_count || 0; }catch(e){}
+  render();
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
+  if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
   if(r.rekordbox) msg += `<br>Rekordbox: ${r.rekordbox.playlists_updated} playlists actualizadas, ${r.rekordbox.tracks_added} pistas nuevas (respaldo ${esc(r.rekordbox.backup)}). Al abrir Rekordbox, analiza las pistas nuevas.`;
   if(r.rekordbox_error) msg += `<br><span style="color:var(--org)">Rekordbox: ${esc(r.rekordbox_error)}</span>`;
@@ -817,7 +869,7 @@ async function saveSettings(){
 window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.foreign = st.foreign || {};
-  S.home = st.home || ''; S.win = !!st.win; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
+  S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   setTimeout(checkUpdates, 1500);
   try{ api().start_watch(); }catch(e){}
   render();

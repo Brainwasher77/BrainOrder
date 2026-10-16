@@ -108,6 +108,7 @@ class Api:
             "rekordbox_running": rekordbox_sync.rekordbox_running(),
             "home": str(Path.home()),
             "pinned": self._cfg.get("pinned_paths", []),
+            "inbox_count": self._inbox_signature()[1],
             "version": actualizador.local_version(),
             "win": plataforma.IS_WIN,
         }
@@ -326,17 +327,38 @@ class Api:
         return self._wrap(run)
 
     # ---------- organizar ----------
-    def organize(self, include_rekordbox=True, pid=None):
-        """Organiza todo, o solo una playlist (pid)."""
+    def organize(self, include_rekordbox=True, pid=None, extra=None):
+        """Organiza todo, o solo una playlist (pid).
+        extra (solo en el general): {"groups": [nombres de subcarpetas de descargas],
+                                     "files": [{"src", "dest"}]} para descargas sin playlist."""
         def run():
             sp_data = self._load_sp()
-            analysis = _read_json(CACHE_ANALYSIS, None)
-            if not sp_data["playlists"] or not analysis:
-                raise SpotifyError("Primero dale a Analizar.")
+            analysis = _read_json(CACHE_ANALYSIS, None) or []
             subset = [p for p in analysis if p["id"] == pid] if pid else analysis
             if pid and not subset:
                 raise SpotifyError("No encontré esa playlist.")
-            files = organizador.organize(subset, self._cfg, self._progress)
+            files = organizador.organize(subset, self._cfg, self._progress) if subset else \
+                {"moved": 0, "duplicates": 0, "errors": []}
+            extra_res = None
+            if extra and not pid:
+                inbox = Path(self._cfg["inbox"]).resolve()
+                dest_root = Path(self._cfg["dest_root"])
+                groups = []
+                for name in extra.get("groups") or []:
+                    folder = (inbox / name).resolve()
+                    if folder.parent == inbox and folder.is_dir() and not name.startswith("_"):
+                        groups.append((str(folder), str(biblioteca.resolve_folder(dest_root, name.strip()))))
+                sel = []
+                for it in extra.get("files") or []:
+                    src, dest = Path(it.get("src", "")).resolve(), Path(it.get("dest", ""))
+                    if inbox in src.parents and src.is_file() and dest.is_dir():
+                        sel.append((str(src), str(dest)))
+                if groups or sel:
+                    extra_res = organizador.move_unmatched(groups, sel, self._cfg, self._progress)
+            if not sp_data["playlists"] or not analysis:
+                self._inbox_sig = None
+                return {"files": files, "extra": extra_res, "rekordbox": None, "rekordbox_error": None,
+                        "analysis": analysis or None}
             self._progress("Re-escaneando tu música…")
             analysis = self._build_analysis(sp_data, focus={pid} if pid else None)
             rb, rb_error = None, None
@@ -348,7 +370,8 @@ class Api:
                     rb_error = str(e)
             self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
             self._progress("Organización terminada.")
-            return {"files": files, "rekordbox": rb, "rekordbox_error": rb_error, "analysis": analysis}
+            return {"files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
+                    "analysis": analysis}
         return self._wrap(run)
 
     # ---------- reorganizar por playlist ----------
@@ -390,6 +413,44 @@ class Api:
         self._cfg["pinned_paths"] = sorted(set(self._cfg.get("pinned_paths", [])) - set(paths or []))
         config.save(self._cfg)
         return {"ok": True, "pinned": self._cfg["pinned_paths"]}
+
+    def inbox_status(self):
+        """Qué hay en descargas: listos para su playlist, repetidos y sin playlist (por subcarpeta)."""
+        sig, n = self._inbox_signature()
+        files = [p for p, _, _ in sig]
+        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        ready, dups = set(), set()
+        for pl in analysis:
+            for r in pl["tracks"]:
+                if r["status"] == "inbox" and r.get("source"):
+                    ready.add(r["source"])
+                dups.update(r.get("inbox_dups") or [])
+        dups -= ready
+        inbox = Path(self._cfg["inbox"])
+        dest_root = Path(self._cfg["dest_root"])
+        groups, loose = {}, []
+        for f in files:
+            if f in ready or f in dups:
+                continue
+            try:
+                rel = Path(f).relative_to(inbox)
+            except ValueError:
+                continue
+            if len(rel.parts) > 1:
+                groups.setdefault(rel.parts[0], []).append(f)
+            else:
+                loose.append(f)
+        out_groups = []
+        for name, fs in sorted(groups.items(), key=lambda x: -len(x[1])):
+            dest = biblioteca.resolve_folder(dest_root, name.strip())
+            out_groups.append({"name": name, "path": str(inbox / name), "count": len(fs),
+                               "dest": str(dest), "dest_exists": dest.exists(),
+                               "sample": [Path(x).name for x in fs[:4]]})
+        fset = set(files)
+        return {"count": n, "ready": len(ready & fset), "dups": len(dups & fset),
+                "groups": out_groups, "loose": loose,
+                "analyzed": sum(1 for p in analysis if not p.get("pending")),
+                "pending": sum(1 for p in analysis if p.get("pending"))}
 
     # ---------- vigilante de la carpeta de descargas ----------
     def _inbox_signature(self):
