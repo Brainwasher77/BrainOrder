@@ -1,5 +1,6 @@
 """Configuración y rutas de SpotiSync."""
 import json
+import threading
 import os
 from pathlib import Path
 
@@ -48,9 +49,17 @@ def load():
     return cfg
 
 
+_SAVE_LOCK = threading.Lock()
+
+
 def save(cfg):
-    SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
+    """Guardado atómico y de a uno (varias tareas pueden guardar ajustes a la vez)."""
+    with _SAVE_LOCK:
+        SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(cfg, indent=2, ensure_ascii=False)
+        tmp = CONFIG_FILE.with_name(f".{CONFIG_FILE.name}.tmp")
+        tmp.write_text(data, "utf-8")
+        os.replace(tmp, CONFIG_FILE)
 
 
 def safe_name(name: str) -> str:

@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
-  "build": 8,
-  "notes": "Todo sigue a la carpeta de descargas que elijas en Ajustes, al instante."
+  "version": "1.7.0",
+  "build": 9,
+  "notes": "Multitarea: analiza varias playlists, organiza y exporta a la vez, cada una con su propio porcentaje."
 }
