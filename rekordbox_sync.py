@@ -93,6 +93,7 @@ def sync(analysis, cfg, progress=None):
                 artist_cache[name] = a.ID
             return artist_cache[name]
 
+        analysis = [p for p in analysis if not p.get("pending")]  # sin analizar: no se tocan
         for i, pl in enumerate(analysis, 1):
             if progress:
                 progress(f"Rekordbox {i}/{len(analysis)}: {pl['name']}")

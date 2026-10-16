@@ -196,30 +196,46 @@ class Spotify:
             "isrc": ((raw.get("external_ids") or {}).get("isrc") or ""),
         }
 
-    def my_playlists(self, progress=None):
-        """Playlists propias y colaborativas con sus canciones, en orden."""
+    def list_mine(self):
+        """Solo la LISTA de tus playlists (sin canciones): rápido.
+        Devuelve [{id, name, snapshot, total}] y deja las ajenas en self.foreign."""
         me = self.me()
         my_id = me.get("id")
-        result = []
         pls = [p for p in self.paged("/me/playlists", {"limit": 50}) if p]
-        own = [p for p in pls if (p.get("owner") or {}).get("id") == my_id or p.get("collaborative")]
-        self.foreign = [{"id": p["id"], "name": p.get("name") or "Sin nombre",
-                         "owner": (p.get("owner") or {}).get("display_name") or (p.get("owner") or {}).get("id", ""),
-                         "url": (p.get("external_urls") or {}).get("spotify", "")}
-                        for p in pls if p not in own]
+        own, self.foreign = [], []
+        for p in pls:
+            owner = p.get("owner") or {}
+            if owner.get("id") == my_id or p.get("collaborative"):
+                box = p.get("items") or p.get("tracks") or {}
+                own.append({"id": p["id"], "name": p.get("name") or "Sin nombre",
+                            "snapshot": p.get("snapshot_id"), "total": box.get("total")})
+            else:
+                self.foreign.append({"id": p["id"], "name": p.get("name") or "Sin nombre",
+                                     "owner": owner.get("display_name") or owner.get("id", ""),
+                                     "url": (p.get("external_urls") or {}).get("spotify", "")})
+        return own
+
+    def playlist_tracks(self, pid):
+        tracks = []
+        for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"}):
+            t = self._track(it.get("item") or it.get("track"))
+            if t:
+                tracks.append(t)
+        return tracks
+
+    def my_playlists(self, progress=None):
+        """Playlists propias y colaborativas con sus canciones, en orden."""
+        result = []
+        own = self.list_mine()
         for i, p in enumerate(own, 1):
             if progress:
-                progress(f"Leyendo playlist {i}/{len(own)}: {p.get('name')}")
-            tracks = []
+                progress(f"Leyendo playlist {i}/{len(own)}: {p['name']}")
             try:
-                for it in self.paged(f"/playlists/{p['id']}/items", {"limit": 100, "additional_types": "track"}):
-                    t = self._track(it.get("item") or it.get("track"))
-                    if t:
-                        tracks.append(t)
+                tracks = self.playlist_tracks(p["id"])
             except SpotifyError as e:
-                log(f"No se pudo leer {p.get('name')}: {e}")
+                log(f"No se pudo leer {p['name']}: {e}")
                 continue
-            result.append({"id": p["id"], "name": p.get("name") or "Sin nombre", "tracks": tracks})
+            result.append({**p, "tracks": tracks})
         return result
 
     def liked(self, progress=None):
