@@ -70,8 +70,8 @@ def add_links(analysis, progress=None, offline=False):
     todo = [] if offline else [r for i, r in missing.items() if i not in cache]
     offline = False
     for n, r in enumerate(todo, 1):
-        if progress and (n == 1 or n % 10 == 0):
-            progress(f"Buscando links de Deezer {n}/{len(todo)}…")
+        if progress:
+            progress(f"Buscando links de Deezer: {n}/{len(todo)}", n / len(todo))
         try:
             res = _lookup(r)
             cache[r["id"]] = res or {"url": None}

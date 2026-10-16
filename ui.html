@@ -31,7 +31,16 @@ header *{-webkit-app-region:no-drag}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--miss)}
 .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
 .badge{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;border-radius:10px;background:rgba(0,0,0,.25);font-size:11.5px;text-align:center}
-.progress{height:34px;display:flex;align-items:center;gap:10px;padding:0 20px;color:var(--mute);font-size:12.5px;border-bottom:1px solid var(--line);background:var(--panel)}
+.progress{height:34px;display:flex;align-items:center;gap:10px;padding:0 20px;color:var(--mute);font-size:12.5px;border-bottom:1px solid var(--line);background:var(--panel);position:relative}
+#progTxt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbar{display:none;width:260px;height:8px;border-radius:5px;background:var(--line);overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acid),var(--ok));border-radius:5px;transition:width .25s ease}
+#ppct{display:none;width:42px;text-align:right;color:var(--text);font-weight:650}
+.progress.haspct .pbar,.progress.haspct #ppct{display:block}
+.progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
+.pcard{max-width:520px;margin:60px auto;text-align:center}
+.pcard .big{font-size:56px;font-weight:800;letter-spacing:-.03em;color:var(--acid)}
+.pcard .pbar{display:block;width:100%;height:12px;margin:14px 0 10px}
 .spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--acid);border-radius:50%;animation:s .8s linear infinite;display:none}
 .busy .spin{display:block}
 @keyframes s{to{transform:rotate(360deg)}}
@@ -125,7 +134,8 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
     <button class="primary" onclick="analyze()" id="btnAnalyze" title="Lee todas tus playlists de Spotify (tarda más)">Analizar todo</button>
     <button class="warn" onclick="askOrganize()" id="btnOrg" title="Organizar las descargas de todas las playlists analizadas" disabled>Organizar<span class="badge mono" id="orgBadge">0</span></button>
   </header>
-  <div class="progress" id="prog"><div class="spin"></div><span id="progTxt">Listo.</span></div>
+  <div class="progress" id="prog"><div class="spin"></div><span id="progTxt">Listo.</span>
+    <div class="pbar" id="pbar"><i id="pfill"></i></div><span class="mono" id="ppct"></span></div>
   <div class="body">
     <aside>
       <div class="nav">
@@ -157,8 +167,21 @@ const short = p => { const h = S.home || ''; return (h && (p||'').startsWith(h))
 const base = p => (p||'').split(/[\\/]/).pop();
 const folderOf = p => (p||'').split(/[\\/]/).slice(-2,-1)[0] || '';
 
-window.onProgress = msg => { $('progTxt').textContent = msg; };
+// progreso en vivo: mensaje + porcentaje (0-100)
+S.pct = null;
+window.onProgress = (msg, pct) => {
+  if(msg) $('progTxt').textContent = msg;
+  if(pct !== null && pct !== undefined && $('prog').classList.contains('busy')){
+    S.pct = pct;
+    $('prog').classList.add('haspct'); $('prog').style.setProperty('--p', pct+'%');
+    $('pfill').style.width = pct+'%'; $('ppct').textContent = pct+'%';
+    const big = $('pcBig'); if(big){ big.textContent = pct+'%'; $('pcFill').style.width = pct+'%'; if(msg) $('pcMsg').textContent = msg; }
+    const ab = $('btnPlAnalyze'); if(ab) ab.textContent = `Analizando ${pct}%`;
+  } else if(msg && $('pcMsg')) $('pcMsg').textContent = msg;
+};
 function busy(on, msg){ $('prog').classList.toggle('busy', on); if(msg) $('progTxt').textContent = msg;
+  if(on){ S.pct = 0; $('pfill').style.width='0%'; $('ppct').textContent='0%'; $('prog').style.setProperty('--p','0%'); }
+  else { S.pct = null; S.analyzing = null; $('prog').classList.remove('haspct'); }
   ['btnAnalyze','btnOrg','btnConn'].forEach(id => $(id).disabled = on || (id==='btnOrg' && !orgCount())); }
 function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
 function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
@@ -198,7 +221,7 @@ function render(){
   $('nOrg').textContent = a ? oc : '–';
   const fl = Object.values(S.foreign||{});
   $('nForeign').textContent = fl.length || '–';
-  $('nPct').textContent = a ? globalStats().pct + '%' : '–';
+  $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
   $('plNav').innerHTML = (a||[]).map((pl,i) => {
     if(pl.pending) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Sin analizar"><div class="row">
@@ -245,6 +268,7 @@ function renderMain(){
   if(S.view==='missing') head = `<h2>Faltan por descargar</h2><span class="sub">📁 = carpeta donde quedará el archivo · ♫ = otras playlists que lo usarán en Rekordbox.</span>`;
   else if(S.view==='organize') head = `<h2>Listas para organizar</h2><span class="sub">Descargas que se mueven a su carpeta (un solo archivo por canción).</span>`;
   else { const pl = S.analysis[+S.view.split(':')[1]]; if(!pl){S.view='missing';return renderMain();}
+    if(pl.pending && S.analyzing===pl.id){ m.innerHTML = progressCard(pl.name); return; }
     if(pl.pending){ m.innerHTML = `<div class="empty"><h3>${pl.liked?'♥ ':''}${esc(pl.name)}</h3>
       <p>Esta playlist todavía no se ha analizado${pl.total!=null?` (${pl.total} canci${pl.total===1?'ón':'ones'} en Spotify)`:''}.</p>
       <button class="primary" onclick="analyzePlaylist(${jsq(pl.id)})">🔄 Analizar esta playlist</button></div>`; return; }
@@ -253,7 +277,7 @@ function renderMain(){
   if(S.view.startsWith('pl:')){
     const i = +S.view.split(':')[1];
     const pl = S.analysis[i], oc = orgCount(pl.id);
-    plBtn = `<button class="pa${changed(pl)?' chg':''}" onclick="analyzePlaylist(${jsq(pl.id)})" title="${changed(pl)?'Cambió en Spotify: vuelve a analizarla':'Vuelve a leer esta playlist de Spotify y tus archivos'}">🔄 Analizar${changed(pl)?' ●':''}</button>`
+    plBtn = `<button id="btnPlAnalyze" class="pa${changed(pl)?' chg':''}" onclick="analyzePlaylist(${jsq(pl.id)})" title="${changed(pl)?'Cambió en Spotify: vuelve a analizarla':'Vuelve a leer esta playlist de Spotify y tus archivos'}">🔄 Analizar${changed(pl)?' ●':''}</button>`
       + (oc?`<button class="warn" onclick="askOrganize(${jsq(pl.id)})">Organizar <span class="badge mono">${oc}</span></button>`:'')
       + copyButtons(`pl:${i}`) + `<button class="xl" onclick="exportPlaylist(${i})">📊 Informe Excel</button>`;
   } else if(S.view==='missing'){
@@ -524,6 +548,12 @@ async function restartApp(){
   const r = await api().restart();
   if(!r.ok) toast(esc(r.error), true); else busy(true, 'Reiniciando…');
 }
+function progressCard(name){
+  return `<div class="pcard"><div class="art">Analizando</div><h3 style="margin:4px 0 0">${esc(name)}</h3>
+    <div class="big mono" id="pcBig">${S.pct??0}%</div>
+    <div class="pbar"><i id="pcFill" style="width:${S.pct??0}%"></i></div>
+    <div class="art" id="pcMsg">${esc($('progTxt').textContent)}</div></div>`;
+}
 function show(v){ S.view=v; S.q=''; render(); }
 
 // ---------- acciones ----------
@@ -538,6 +568,7 @@ async function connect(){
 async function analyze(){
   if(!S.connected){ return connect(); }
   busy(true, 'Leyendo Spotify…');
+  if(!S.analysis || !S.analysis.some(p=>!p.pending)) $('main').innerHTML = progressCard('todas tus playlists');
   const r = await api().analyze(); busy(false);
   if(!r.ok){ toast(esc(r.error), true); $('progTxt').textContent='Error.'; return; }
   S.analysis = r.analysis; S.foreign = r.foreign || {};
@@ -557,7 +588,12 @@ async function loadPlaylists(){
   askForeign(r.ask_foreign || []);
 }
 async function analyzePlaylist(pid){
+  S.analyzing = pid;
+  const i0 = S.analysis.findIndex(p=>p.id===pid);
+  if(i0>=0 && S.analysis[i0].pending){ S.view='pl:'+i0; render(); }
   busy(true, 'Analizando playlist…');
+  const b = $('btnPlAnalyze'); if(b){ b.disabled = true; b.textContent = 'Analizando 0%'; }
+  const pc = $('main').querySelector('.empty button.primary'); if(pc && S.analysis[i0] && S.analysis[i0].pending) $('main').innerHTML = progressCard(S.analysis[i0].name);
   const r = await api().analyze_playlist(pid); busy(false);
   if(!r.ok){ toast(esc(r.error), true); return; }
   S.analysis = r.analysis;

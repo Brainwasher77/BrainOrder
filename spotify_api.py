@@ -167,10 +167,15 @@ class Spotify:
                 return self.get(path_or_url, params, _retry - 1)
             raise SpotifyError(f"Error {e.code} en {url.split('?')[0]}: {e.read().decode(errors='ignore')[:200]}")
 
-    def paged(self, path, params):
+    def paged(self, path, params, on_page=None):
         data = self.get(path, params)
+        seen = 0
         while True:
-            for it in data.get("items", []):
+            items = data.get("items", [])
+            seen += len(items)
+            if on_page:
+                on_page(seen, data.get("total"))
+            for it in items:
                 yield it
             nxt = data.get("next")
             if not nxt:
@@ -215,9 +220,15 @@ class Spotify:
                                      "url": (p.get("external_urls") or {}).get("spotify", "")})
         return own
 
-    def playlist_tracks(self, pid):
+    def playlist_tracks(self, pid, progress=None, total=None, base=0.0, span=1.0):
         tracks = []
-        for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"}):
+
+        def on_page(n, tot):
+            tot = tot or total
+            if progress and tot:
+                progress(f"Leyendo de Spotify: {n}/{tot} canciones", base + span * n / tot)
+
+        for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"}, on_page):
             t = self._track(it.get("item") or it.get("track"))
             if t:
                 tracks.append(t)
@@ -229,9 +240,11 @@ class Spotify:
         own = self.list_mine()
         for i, p in enumerate(own, 1):
             if progress:
-                progress(f"Leyendo playlist {i}/{len(own)}: {p['name']}")
+                progress(f"Playlist {i}/{len(own)}: {p['name']}", (i - 1) / len(own))
             try:
-                tracks = self.playlist_tracks(p["id"])
+                tracks = self.playlist_tracks(
+                    p["id"], (lambda m, f, i=i, name=p["name"]: progress(f"Playlist {i}/{len(own)} «{name}»: {m.split(': ',1)[-1]}", f)) if progress else None,
+                    p.get("total"), (i - 1) / len(own), 1 / len(own))
             except SpotifyError as e:
                 log(f"No se pudo leer {p['name']}: {e}")
                 continue
@@ -240,9 +253,14 @@ class Spotify:
 
     def liked(self, progress=None):
         if progress:
-            progress("Leyendo tus Me gusta…")
+            progress("Leyendo tus Me gusta…", 0)
         tracks = []
-        for it in self.paged("/me/tracks", {"limit": 50}):
+
+        def on_page(n, tot):
+            if progress and tot:
+                progress(f"Leyendo tus Me gusta: {n}/{tot}", n / tot)
+
+        for it in self.paged("/me/tracks", {"limit": 50}, on_page):
             t = self._track(it.get("track") or it.get("item"))
             if t:
                 tracks.append(t)
