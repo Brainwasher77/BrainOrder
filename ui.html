@@ -22,7 +22,7 @@ button.warn{background:var(--org);color:#111;border-color:var(--org);font-weight
 button.ghost{background:transparent;border-color:transparent;color:var(--mute)}
 button.ghost:hover{color:var(--text);background:var(--panel2)}
 .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
-.app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
+.app{display:grid;grid-template-rows:auto auto auto 1fr;height:100vh}
 header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
 header *{-webkit-app-region:no-drag}
 .logo{font-weight:800;letter-spacing:-.02em;font-size:18px;margin-right:6px}
@@ -39,6 +39,15 @@ header *{-webkit-app-region:no-drag}
 .progress.haspct .pbar,.progress.haspct #ppct{display:block}
 .progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
 .pcard{max-width:520px;margin:60px auto;text-align:center}
+#tasks{display:none;flex-direction:column;gap:4px;padding:6px 20px 8px;border-bottom:1px solid var(--line);background:var(--panel);max-height:140px;overflow:auto}
+#tasks.on{display:flex}
+.trow{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--mute)}
+.trow b{color:var(--text);font-weight:650;white-space:nowrap}
+.trow .tm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .pbar{display:block;width:200px;height:6px}
+.trow .tp{width:40px;text-align:right;color:var(--text);font-weight:650}
+.trow.queued b::after{content:" · en cola";color:var(--org);font-weight:500}
+.trow.queued .pbar i{background:var(--line)}
 .pcard .big{font-size:56px;font-weight:800;letter-spacing:-.03em;color:var(--acid)}
 .pcard .pbar{display:block;width:100%;height:12px;margin:14px 0 10px}
 .spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--acid);border-radius:50%;animation:s .8s linear infinite;display:none}
@@ -157,6 +166,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
   </header>
   <div class="progress" id="prog"><div class="spin"></div><span id="progTxt">Listo.</span>
     <div class="pbar" id="pbar"><i id="pfill"></i></div><span class="mono" id="ppct"></span></div>
+  <div id="tasks"></div>
   <div class="body">
     <aside>
       <div class="nav">
@@ -188,22 +198,56 @@ const short = p => { const h = S.home || ''; return (h && (p||'').startsWith(h))
 const base = p => (p||'').split(/[\\/]/).pop();
 const folderOf = p => (p||'').split(/[\\/]/).slice(-2,-1)[0] || '';
 
-// progreso en vivo: mensaje + porcentaje (0-100)
-S.pct = null;
-window.onProgress = (msg, pct) => {
-  if(msg) $('progTxt').textContent = msg;
-  if(pct !== null && pct !== undefined && $('prog').classList.contains('busy')){
-    S.pct = pct;
-    $('prog').classList.add('haspct'); $('prog').style.setProperty('--p', pct+'%');
-    $('pfill').style.width = pct+'%'; $('ppct').textContent = pct+'%';
-    const big = $('pcBig'); if(big){ big.textContent = pct+'%'; $('pcFill').style.width = pct+'%'; if(msg) $('pcMsg').textContent = msg; }
-    const ab = $('btnPlAnalyze'); if(ab) ab.textContent = `Analizando ${pct}%`;
-  } else if(msg && $('pcMsg')) $('pcMsg').textContent = msg;
+// ---------- multitarea ----------
+// Cada tarea del programa (analizar una playlist, organizar, unificar…) llega con su propio % por onTask.
+// Varias pueden correr a la vez; las que mueven archivos esperan su turno ("en cola").
+const T = {};   // clave -> {id,label,msg,pct,state}
+const running = k => !!T[k];
+window.onTask = ev => {
+  if(ev.state==='done'){ if(T[ev.key] && T[ev.key].id===ev.id) delete T[ev.key]; }
+  else {
+    const t = T[ev.key] && T[ev.key].id===ev.id ? T[ev.key] : (T[ev.key] = {id:ev.id, label:ev.label, msg:'', pct:0, state:'start'});
+    if(ev.msg) t.msg = ev.msg;
+    if(ev.pct !== null && ev.pct !== undefined) t.pct = ev.pct;
+    t.state = ev.state;
+  }
+  paintTasks();
 };
-function busy(on, msg){ $('prog').classList.toggle('busy', on); if(msg) $('progTxt').textContent = msg;
-  if(on){ S.pct = 0; $('pfill').style.width='0%'; $('ppct').textContent='0%'; $('prog').style.setProperty('--p','0%'); }
-  else { S.pct = null; S.analyzing = null; $('prog').classList.remove('haspct'); }
-  ['btnAnalyze','btnOrg','btnConn'].forEach(id => $(id).disabled = on || (id==='btnOrg' && !orgAvail())); }
+function paintTasks(){
+  const keys = Object.keys(T), box = $('tasks');
+  box.classList.toggle('on', keys.length>0);
+  $('prog').classList.toggle('busy', keys.length>0);
+  if(keys.length) $('progTxt').textContent = keys.length===1 ? 'Trabajando…' : `${keys.length} tareas en curso`;
+  box.innerHTML = keys.map(k => { const t=T[k];
+    return `<div class="trow${t.state==='queued'?' queued':''}"><b>${esc(t.label)}</b><span class="tm">${esc(t.msg||'')}</span>
+      <div class="pbar"><i style="width:${t.pct||0}%"></i></div><span class="tp mono">${t.state==='queued'?'–':(t.pct||0)+'%'}</span></div>`; }).join('');
+  // botones y tarjetas que muestran el % de su propia tarea
+  document.querySelectorAll('[data-task]').forEach(el => {
+    const t = T[el.dataset.task], kind = el.dataset.kind;
+    if(kind==='btn'){ el.disabled = !!t; el.textContent = t ? `${el.dataset.busy||'Trabajando'} ${t.state==='queued'?'(en cola)':(t.pct||0)+'%'}` : el.dataset.idle; }
+    else if(kind==='card' && t){ el.querySelector('.big').textContent=(t.pct||0)+'%'; el.querySelector('.pbar i').style.width=(t.pct||0)+'%'; if(t.msg) el.querySelector('.art:last-child').textContent=t.msg; }
+  });
+  const a = $('btnAnalyze'); if(a){ const t=T['analyze:all']; a.disabled=!!t; a.textContent = t?`Analizando ${t.pct||0}%`:'Analizar todo'; }
+  const c = $('btnConn'); if(c) c.disabled = running('connect');
+}
+// Mensaje de estado para acciones cortas (no bloquea nada).
+function busy(on, msg){ if(msg && !Object.keys(T).length) $('progTxt').textContent = msg; }
+// Aplicar un análisis nuevo sin pisar uno más reciente que trajo otra tarea, y sin perder la vista actual.
+async function applyAnalysis(r){
+  if(!r || !r.analysis) return;
+  if(r.rev !== undefined && r.rev !== null && S.rev !== undefined && r.rev < S.rev){
+    try{ const st = await api().get_state(); if(st.analysis && st.rev >= S.rev){ setAnalysis(st.analysis, st.rev); } }catch(e){}
+    return;
+  }
+  setAnalysis(r.analysis, r.rev);
+}
+function setAnalysis(analysis, rev){
+  const m = /^(pl|reorg):(\d+)$/.exec(S.view||''), id = m && S.analysis && S.analysis[+m[2]] ? S.analysis[+m[2]].id : null;
+  S.analysis = analysis; if(rev !== undefined && rev !== null) S.rev = rev;
+  if(id){ const i = analysis.findIndex(p=>p.id===id); S.view = i>=0 ? `${m[1]}:${i}` : 'missing'; if(m[1]==='reorg' && i>=0) RG.i = i; }
+}
+const plIdx = id => (S.analysis||[]).findIndex(p=>p.id===id);
+function taskErr(r){ if(r.dup) toast(esc(r.error)); else toast(esc(r.error), true); }
 function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
 function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
 function closeModal(){ $('mbg').classList.remove('show'); }
@@ -231,7 +275,8 @@ function counts(pl){ const c={ok:0,elsewhere:0,inbox:0,missing:0}; pl.tracks.for
 function match(r){ if(!S.q) return true; const q=S.q.toLowerCase(); return (r.name+' '+r.artists.join(' ')).toLowerCase().includes(q); }
 
 // ---------- render ----------
-function render(){
+function render(){ renderCore(); paintTasks(); }
+function renderCore(){
   $('dot').classList.toggle('on', S.connected);
   $('connTxt').textContent = S.connected ? 'Spotify conectado' : 'Sin conectar';
   $('btnConn').textContent = S.connected ? 'Desconectar' : 'Conectar Spotify';
@@ -294,7 +339,7 @@ function renderMain(){
   if(S.view==='missing') head = `<h2>Faltan por descargar</h2><span class="sub">📁 = carpeta donde quedará el archivo · ♫ = otras playlists que lo usarán en Rekordbox.</span>`;
   else if(S.view==='organize') head = `<h2>Listas para organizar</h2><span class="sub">Descargas que se mueven a su carpeta (un solo archivo por canción).</span>`;
   else { const pl = S.analysis[+S.view.split(':')[1]]; if(!pl){S.view='missing';return renderMain();}
-    if(pl.pending && S.analyzing===pl.id){ m.innerHTML = progressCard(pl.name); return; }
+    if(pl.pending && running('analyze:'+pl.id)){ m.innerHTML = progressCard(pl.name, 'analyze:'+pl.id); return; }
     if(pl.pending){ m.innerHTML = `<div class="empty"><h3>${pl.liked?'♥ ':''}${esc(pl.name)}</h3>
       <p>Esta playlist todavía no se ha analizado${pl.total!=null?` (${pl.total} canci${pl.total===1?'ón':'ones'} en Spotify)`:''}.</p>
       <button class="primary" onclick="analyzePlaylist(${jsq(pl.id)})">🔄 Analizar esta playlist</button></div>`; return; }
@@ -303,7 +348,8 @@ function renderMain(){
   if(S.view.startsWith('pl:')){
     const i = +S.view.split(':')[1];
     const pl = S.analysis[i], oc = orgCount(pl.id);
-    plBtn = `<button id="btnPlAnalyze" class="pa${changed(pl)?' chg':''}" onclick="analyzePlaylist(${jsq(pl.id)})" title="${changed(pl)?'Cambió en Spotify: vuelve a analizarla':'Vuelve a leer esta playlist de Spotify y tus archivos'}">🔄 Analizar${changed(pl)?' ●':''}</button>`
+    const ak = 'analyze:'+pl.id, at = T[ak], idle = `🔄 Analizar${changed(pl)?' ●':''}`;
+    plBtn = `<button id="btnPlAnalyze" class="pa${changed(pl)?' chg':''}" data-task="${esc(ak)}" data-kind="btn" data-busy="Analizando" data-idle="${esc(idle)}" ${at?'disabled':''} onclick="analyzePlaylist(${jsq(pl.id)})" title="${changed(pl)?'Cambió en Spotify: vuelve a analizarla':'Vuelve a leer esta playlist de Spotify y tus archivos'}">${at?`Analizando ${at.pct||0}%`:idle}</button>`
       + (oc?`<button class="warn" onclick="askOrganize(${jsq(pl.id)})">Organizar <span class="badge mono">${oc}</span></button>`:'')
       + (reorgRows(pl).length?`<button class="ro" onclick="openReorg(${i})" title="Elige si mover a su carpeta las canciones que ya tienes en otras carpetas">📂 Reorganizar <span class="badge mono">${reorgRows(pl).length}</span></button>`:'')
       + copyButtons(`pl:${i}`) + `<button class="xl" onclick="exportPlaylist(${i})">📊 Informe Excel</button>`;
@@ -455,25 +501,22 @@ function links(r){
 }
 async function exportPlaylist(i){
   const pl = S.analysis[i];
-  busy(true, `Generando informe de ${pl.name}…`);
-  const r = await api().export_playlist_excel(i); busy(false, 'Listo.');
+  const r = await api().export_playlist_excel(i);
   if(r.ok) toast(`Informe de <b>${esc(pl.name)}</b>: ${r.have}/${r.total} descargadas, faltan <b>${r.missing}</b>.<br><code>${esc(short(r.path))}</code>`);
   else if(!r.cancelled) toast(esc(r.error), true);
 }
 async function exportAllPlaylists(){
-  busy(true, 'Elige la carpeta para los informes…');
-  const r = await api().export_all_playlists_excel(); busy(false, 'Listo.');
+  const r = await api().export_all_playlists_excel();
   if(r.ok) toast(`<b>${r.count}</b> informes guardados en <code>${esc(short(r.path))}</code>` + (r.errors.length?`<br><span style="color:var(--miss)">${r.errors.length} con error</span>`:''), !!r.errors.length);
-  else if(!r.cancelled) toast(esc(r.error), true);
+  else if(!r.cancelled) taskErr(r);
 }
 // ---------- unificar repetidos ----------
 let U = {plan:null, merges:new Set(), dups:new Set(), empty:true, q:'', rbOpen:false};
 const rel = p => { const d = U.plan ? U.plan.dest : ''; return (d && (p||'').startsWith(d)) ? p.slice(d.length+1) : (p||''); };
 const gb = n => (n/1e9).toFixed(2)+' GB';
 async function unifyReview(){
-  busy(true,'Revisando la carpeta de Spotify… (la primera vez lee la duración de las canciones)');
-  const r = await api().unify_plan(); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
+  const r = await api().unify_plan();
+  if(!r.ok){ taskErr(r); return; }
   U.plan = r.plan; U.rbOpen = r.rekordbox_running;
   U.merges = new Set(r.plan.merges.map(m=>m.id)); U.dups = new Set(r.plan.dups.map(d=>d.id)); U.empty = true;
   render();
@@ -541,11 +584,11 @@ function unifyConfirm(){
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="unifyRun()">Unificar</button></div>`);
 }
 async function unifyRun(){
-  closeModal(); busy(true,'Unificando…');
-  const r = await api().unify_apply([...U.merges],[...U.dups],U.empty); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
+  closeModal();
+  const r = await api().unify_apply([...U.merges],[...U.dups],U.empty);
+  if(!r.ok){ taskErr(r); return; }
   const x=r.result; U.plan=null;
-  if(r.analysis) S.analysis=r.analysis;
+  await applyAnalysis(r);
   render();
   toast(`Listo: <b>${x.retired}</b> copias apartadas en _duplicados, ${x.moved} archivos movidos de carpeta, ${x.empty_removed} carpetas vacías borradas.`
     + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:''));
@@ -590,14 +633,16 @@ async function checkUpdates(){
   }catch(e){}
 }
 async function restartApp(){
+  if(Object.keys(T).length){ toast('Espera a que terminen las tareas en curso para reiniciar.', true); return; }
   const r = await api().restart();
   if(!r.ok) toast(esc(r.error), true); else busy(true, 'Reiniciando…');
 }
-function progressCard(name){
-  return `<div class="pcard"><div class="art">Analizando</div><h3 style="margin:4px 0 0">${esc(name)}</h3>
-    <div class="big mono" id="pcBig">${S.pct??0}%</div>
-    <div class="pbar"><i id="pcFill" style="width:${S.pct??0}%"></i></div>
-    <div class="art" id="pcMsg">${esc($('progTxt').textContent)}</div></div>`;
+function progressCard(name, key){
+  const t = T[key] || {};
+  return `<div class="pcard" data-task="${esc(key)}" data-kind="card"><div class="art">Analizando</div><h3 style="margin:4px 0 0">${esc(name)}</h3>
+    <div class="big mono">${t.pct||0}%</div>
+    <div class="pbar"><i style="width:${t.pct||0}%"></i></div>
+    <div class="art">${esc(t.msg||'Empezando…')}</div></div>`;
 }
 // ---------- reorganizar por playlist ----------
 // canciones de la playlist que ya tienes pero cuyo archivo NO está en la carpeta de esta playlist
@@ -662,12 +707,13 @@ async function rgApply(){
   const moves=[], keep=[];
   rows.forEach(r=>{ const c=RG.choice[r.source]||'keep'; if(c==='keep') keep.push(r.source); else moves.push({src:r.source, dest:rgDest(pl,r,c)}); });
   if(!moves.length && !RG.remember){ toast('No elegiste nada para mover.'); return; }
-  busy(true, moves.length?`Moviendo ${moves.length} archivo${moves.length!==1?'s':''}…`:'Guardando…');
-  const r = await api().relocate(pl.id, moves, keep, RG.remember); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
-  S.analysis = r.analysis; S.pinned = new Set(r.pinned||[]);
-  const i = S.analysis.findIndex(p=>p.id===pl.id); S.view = 'pl:'+(i>=0?i:RG.i); render();
-  const x=r.result; let msg = `<b>${x.moved}</b> movida${x.moved!==1?'s':''}` + (keep.length&&RG.remember?`, ${keep.length} se quedan donde están (no te las vuelvo a proponer)`:'');
+  const wasHere = S.view==='reorg:'+RG.i, remember = RG.remember;
+  if(wasHere){ S.view='pl:'+RG.i; render(); }
+  toast(moves.length?`Moviendo ${moves.length} archivo${moves.length!==1?'s':''}… puedes seguir usando la app.`:'Guardando…');
+  const r = await api().relocate(pl.id, moves, keep, remember);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); S.pinned = new Set(r.pinned||[]); render();
+  const x=r.result; let msg = `<b>${x.moved}</b> movida${x.moved!==1?'s':''}` + (keep.length&&remember?`, ${keep.length} se quedan donde están (no te las vuelvo a proponer)`:'');
   if(x.skipped.length) msg += `<br><span style="color:var(--org)">${x.skipped.length} no se movieron: ${x.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${x.skipped.length>2?'…':''}</span>`;
   if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
   toast(msg, !!x.skipped.length);
@@ -681,18 +727,19 @@ function show(v){ S.view=v; S.q=''; render(); }
 async function connect(){
   if(S.connected){ await api().disconnect(); S.connected=false; render(); return; }
   if(!S.settings.client_id){ openSettings(); toast('Primero pega el Client ID de tu app de Spotify.', true); return; }
-  busy(true, 'Se abrió Spotify en tu navegador: autoriza y vuelve aquí…');
-  const r = await api().connect(); busy(false, r.ok ? 'Conectado.' : 'Listo.');
-  if(r.ok){ S.connected=true; toast(`Conectado como <b>${esc(r.user)}</b>.`); render(); loadPlaylists(); return; } else toast(esc(r.error), true);
+  toast('Se abrió Spotify en tu navegador: autoriza y vuelve aquí…');
+  const r = await api().connect();
+  if(r.ok){ S.connected=true; toast(`Conectado como <b>${esc(r.user)}</b>.`); render(); loadPlaylists(); return; } else taskErr(r);
   render();
 }
 async function analyze(){
   if(!S.connected){ return connect(); }
-  busy(true, 'Leyendo Spotify…');
-  if(!S.analysis || !S.analysis.some(p=>!p.pending)) $('main').innerHTML = progressCard('todas tus playlists');
-  const r = await api().analyze(); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); $('progTxt').textContent='Error.'; return; }
-  S.analysis = r.analysis; S.foreign = r.foreign || {};
+  if(running('analyze:all')) return;
+  const p = api().analyze();
+  if(!S.analysis || !S.analysis.some(p=>!p.pending)) setTimeout(()=>{ if(running('analyze:all')) $('main').innerHTML = progressCard('todas tus playlists','analyze:all'); }, 150);
+  const r = await p;
+  if(!r.ok){ taskErr(r); render(); return; }
+  await applyAnalysis(r); S.foreign = r.foreign || {};
   render();
   toast(`Análisis listo: faltan <b>${missingUnique().length}</b> canciones y hay <b>${orgCount()}</b> por organizar.`);
   askForeign(r.ask_foreign || []);
@@ -700,27 +747,22 @@ async function analyze(){
 let orgPid = null;
 async function loadPlaylists(){
   if(!S.connected){ return connect(); }
-  busy(true, 'Leyendo la lista de tus playlists…');
-  const r = await api().list_playlists(); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
-  S.analysis = r.analysis; S.foreign = r.foreign || {}; render();
+  const r = await api().list_playlists();
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); S.foreign = r.foreign || {}; render();
   const pend = r.analysis.filter(p=>p.pending).length, ch = r.analysis.filter(changed).length;
   toast(`${r.analysis.length} playlists.` + (pend?` <b>${pend}</b> sin analizar.`:'') + (ch?` <b>${ch}</b> cambiaron en Spotify (●).`:'') + ' Elige una y dale <b>🔄 Analizar</b>.');
   askForeign(r.ask_foreign || []);
 }
 async function analyzePlaylist(pid){
-  S.analyzing = pid;
-  const i0 = S.analysis.findIndex(p=>p.id===pid);
-  if(i0>=0 && S.analysis[i0].pending){ S.view='pl:'+i0; render(); }
-  busy(true, 'Analizando playlist…');
-  const b = $('btnPlAnalyze'); if(b){ b.disabled = true; b.textContent = 'Analizando 0%'; }
-  const pc = $('main').querySelector('.empty button.primary'); if(pc && S.analysis[i0] && S.analysis[i0].pending) $('main').innerHTML = progressCard(S.analysis[i0].name);
-  const r = await api().analyze_playlist(pid); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
-  S.analysis = r.analysis;
-  const i = S.analysis.findIndex(p=>p.id===pid); if(i>=0) S.view = 'pl:'+i;
+  if(running('analyze:'+pid)) return;
+  const p = api().analyze_playlist(pid);
+  setTimeout(render, 120);  // muestra su % apenas arranca (la tarea ya avisó por onTask)
+  const r = await p;
+  if(!r.ok){ taskErr(r); render(); return; }
+  await applyAnalysis(r);
   render();
-  const pl = S.analysis[i]; if(!pl) return;
+  const pl = S.analysis[plIdx(pid)]; if(!pl) return;
   const c = plStats(pl), oc = orgCount(pid);
   toast(`<b>${esc(pl.name)}</b>: ${c.here+c.other}/${c.total} las tienes, faltan <b>${c.missing}</b>` + (oc?`, <b>${oc}</b> en <code>${esc(base(S.settings.inbox))}</code> para organizar.`:'.'));
 }
@@ -728,7 +770,7 @@ async function analyzePlaylist(pid){
 window.onInboxChange = async (info) => {
   try{
     const st = await api().get_state();
-    if(st.analysis) S.analysis = st.analysis;
+    if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
     S.inboxCount = (info && info.count !== undefined) ? info.count : (st.inbox_count || 0);
     render();
     if(info && info.new_count){
@@ -761,8 +803,7 @@ async function askOrganize(pid){
 // ---------- organizar general: lo que coincide + lo que no coincide con ninguna playlist ----------
 let OX = {st:null, groups:new Set(), loose:new Set(), dest:null};
 async function askOrganizeAll(){
-  busy(true, 'Revisando la carpeta de descargas…');
-  const [st, ib] = await Promise.all([api().get_state(), api().inbox_status()]); busy(false);
+  const [st, ib] = await Promise.all([api().get_state(), api().inbox_status()]);
   OX = {st, ib, groups:new Set(), loose:new Set(), dest:null};
   S.inboxCount = ib.count; render();
   const rows = toOrganize(), dups = dupList(), dests = new Set(rows.map(r=>r.dest_dir)).size;
@@ -801,11 +842,11 @@ function oxSum(){
 async function organize(){
   const rb = $('chkRb') ? $('chkRb').checked : true;
   const extra = orgPid ? null : {groups:[...OX.groups], files: OX.dest ? [...OX.loose].map(f=>({src:f, dest:OX.dest})) : []};
+  const pid = orgPid;
   closeModal();
-  busy(true, 'Organizando…');
-  const r = await api().organize(rb, orgPid, extra); busy(false);
-  if(!r.ok){ toast(esc(r.error), true); return; }
-  if(r.analysis) S.analysis = r.analysis;
+  const r = await api().organize(rb, pid, extra);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r);
   try{ const st = await api().get_state(); S.inboxCount = st.inbox_count || 0; }catch(e){}
   render();
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
@@ -866,14 +907,14 @@ async function saveSettings(){
   const r = await api().save_settings(s);
   if(r && r.ok===false){ toast(esc(r.error), true); return; }
   const st = await api().get_state(); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
-  if(r && r.analysis) S.analysis = r.analysis; else if(st.analysis) S.analysis = st.analysis;
+  if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();
   toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).`);
 }
 
 window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
-  S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.foreign = st.foreign || {};
+  S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   setTimeout(checkUpdates, 1500);
   try{ api().start_watch(); }catch(e){}

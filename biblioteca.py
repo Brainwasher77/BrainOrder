@@ -1,6 +1,7 @@
 """Escaneo de la música local y cruce con Spotify."""
 import difflib
 import json
+import threading
 import os
 import re
 import unicodedata
@@ -77,13 +78,20 @@ def load_durations(path):
         pass
 
 
+_DUR_LOCK = threading.Lock()
+
+
 def save_durations():
     if _DUR_FILE[0] and _DUR_DIRTY[0]:
-        try:
-            _DUR_FILE[0].write_text(json.dumps(_DUR), "utf-8")
-            _DUR_DIRTY[0] = False
-        except Exception:
-            pass
+        with _DUR_LOCK:
+            try:
+                data = json.dumps(dict(_DUR))
+                tmp = _DUR_FILE[0].with_name(f".{_DUR_FILE[0].name}.tmp")
+                tmp.write_text(data, "utf-8")
+                os.replace(tmp, _DUR_FILE[0])
+                _DUR_DIRTY[0] = False
+            except Exception:
+                pass
 
 
 def duration(path: str):

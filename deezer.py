@@ -6,6 +6,8 @@
 Los resultados se guardan en caché para no repetir consultas.
 """
 import json
+import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -55,34 +57,49 @@ def _lookup(row):
     return None
 
 
+_LOCK = threading.Lock()
+_MEM = {}
+_LOADED = [False]
+
+
+def _cache():
+    """Caché compartido por todas las tareas (varias pueden buscar links a la vez)."""
+    with _LOCK:
+        if not _LOADED[0]:
+            try:
+                _MEM.update(json.loads(CACHE.read_text("utf-8")))
+            except Exception:
+                pass
+            _LOADED[0] = True
+    return _MEM
+
+
 def add_links(analysis, progress=None, offline=False):
     """Pone row['deezer'] = {url, found, exact} en cada canción que falta.
     offline=True: solo usa lo que ya está guardado (no consulta Deezer)."""
-    try:
-        cache = json.loads(CACHE.read_text("utf-8"))
-    except Exception:
-        cache = {}
+    cache = _cache()
     missing = {}
     for pl in analysis:
         for r in pl["tracks"]:
             if r["status"] == "missing":
                 missing.setdefault(r["id"], r)
     todo = [] if offline else [r for i, r in missing.items() if i not in cache]
-    offline = False
     for n, r in enumerate(todo, 1):
         if progress:
             progress(f"Buscando links de Deezer: {n}/{len(todo)}", n / len(todo))
+        if r["id"] in cache:  # otra tarea ya lo buscó mientras tanto
+            continue
         try:
             res = _lookup(r)
-            cache[r["id"]] = res or {"url": None}
+            with _LOCK:
+                cache[r["id"]] = res or {"url": None}
         except Exception as e:
             log(f"Deezer no respondió ({e}); se usan links de búsqueda")
-            offline = True
             break
         if n % 50 == 0:
-            _save(cache)
-    if todo and not offline:
-        _save(cache)
+            _save()
+    if todo:
+        _save()
     for pl in analysis:
         for r in pl["tracks"]:
             if r["status"] != "missing":
@@ -95,9 +112,13 @@ def add_links(analysis, progress=None, offline=False):
     return analysis
 
 
-def _save(cache):
+def _save():
     try:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(cache), "utf-8")
+        with _LOCK:
+            data = json.dumps(_MEM)
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CACHE.with_name(f".{CACHE.name}.{threading.get_ident()}.tmp")
+            tmp.write_text(data, "utf-8")
+            os.replace(tmp, CACHE)
     except Exception:
         pass
