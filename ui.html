@@ -117,6 +117,18 @@ details.rgg summary{display:flex;align-items:center;gap:10px;padding:10px 14px;c
 details.rgg summary::-webkit-details-marker{display:none}
 details.rgg summary .rg{margin-left:auto}
 details.rgg table{margin:0 0 6px}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--text)}
+th.sortable.on{color:var(--acid)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.chipf{padding:5px 11px;border-radius:20px;font-size:12px;background:var(--panel);border:1px solid var(--line);color:var(--mute)}
+.chipf .mono{margin-left:4px;opacity:.8}
+.chipf.on{color:#111;font-weight:650}
+.chipf.all.on{background:var(--text);border-color:var(--text)}
+.chipf.missing.on{background:var(--miss);border-color:var(--miss)}
+.chipf.inbox.on{background:var(--org);border-color:var(--org)}
+.chipf.elsewhere.on{background:var(--info);border-color:var(--info)}
+.chipf.here.on{background:var(--ok);border-color:var(--ok)}
 button.cp{padding:7px 11px;font-size:12.5px}
 button.cp.sp{border-color:rgba(200,245,60,.45);color:var(--acid)}
 button.cp.dz{border-color:rgba(167,139,250,.5);color:#a78bfa}
@@ -322,13 +334,31 @@ function renderTable(){
   } else {
     const pl = S.analysis[+S.view.split(':')[1]];
     const lab = {here:'Aquí', elsewhere:'En otra carpeta', inbox:'En descargas', missing:'Falta'};
+    const cls = {here:'ok', elsewhere:'elsewhere', inbox:'inbox', missing:'missing'};
     const ds = r => (r.status==='ok'||r.status==='elsewhere') ? (dirOf(r.source)===pl.folder?'here':'elsewhere') : r.status;
-    const rows = pl.tracks.filter(match);
-    html = `<table><tr><th>#</th><th>Canción</th><th>Estado</th><th>Archivo</th></tr>` + rows.map(r=>`<tr>
+    // filtro por estado (chips con conteo) + orden por columna
+    const cnt = {all:pl.tracks.length, here:0, elsewhere:0, inbox:0, missing:0};
+    pl.tracks.forEach(r=>cnt[ds(r)]++);
+    if(SO.filter!=='all' && !cnt[SO.filter]) SO.filter='all';
+    let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || ds(r)===SO.filter);
+    const rank = {missing:0, inbox:1, elsewhere:2, here:3};
+    const key = {
+      pos: r => r.pos,
+      name: r => (r.name||'').toLowerCase(),
+      artist: r => (r.artists[0]||'').toLowerCase(),
+      status: r => rank[ds(r)]*1e5 + r.pos,
+      file: r => (r.source ? short(r.source) : '\uffff').toLowerCase(),
+    }[SO.col] || (r=>r.pos);
+    rows = rows.slice().sort((a,b)=>{ const x=key(a), y=key(b); return (x<y?-1:x>y?1:0) * SO.dir; });
+    const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
+    const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
+    html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}</div>
+      <table><tr>${th('pos','#')}${th('name','Canción')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? rows.map(r=>`<tr>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
-      <td><span class="st ${ds(r)==='here'?'ok':ds(r)}">${lab[ds(r)]}</span></td>
-      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('') + `</table>`;
+      <td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>
+      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('')
+      : `<tr><td colspan="4" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`;
   }
   t.innerHTML = html;
 }
@@ -637,6 +667,9 @@ async function rgApply(){
   if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
   toast(msg, !!x.skipped.length);
 }
+// orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
+let SO = {col:'pos', dir:1, filter:'all'};
+function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
 function show(v){ S.view=v; S.q=''; render(); }
 
 // ---------- acciones ----------

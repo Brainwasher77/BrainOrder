@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
-  "build": 5,
-  "notes": "Reorganizar por playlist: eliges si mover cada canción a su carpeta o dejarla donde está."
+  "version": "1.5.0",
+  "build": 6,
+  "notes": "Ordena y filtra cada playlist por estado (Falta, En descargas, En otra carpeta, Aquí)."
 }
