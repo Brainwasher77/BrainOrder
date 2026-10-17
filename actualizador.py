@@ -14,10 +14,30 @@ from pathlib import Path
 
 from config import SUPPORT_DIR, log
 
-REPO = "Brainwasher77/BrainOrder"
+# El repositorio se llamaba SpotiSync; se prueba primero el nombre nuevo y, si aún no existe, el viejo.
+REPOS = ["Brainwasher77/BrainOrder", "Brainwasher77/SpotiSync"]
 BRANCH = "main"
-VERSION_URL = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/version.json"
-ZIP_URL = f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}"
+_repo = [None]  # el que respondió
+
+
+def _version_url(repo):
+    return f"https://raw.githubusercontent.com/{repo}/{BRANCH}/version.json"
+
+
+def _zip_url(repo):
+    return f"https://codeload.github.com/{repo}/zip/refs/heads/{BRANCH}"
+
+
+def _remote_version(timeout=8):
+    last = None
+    for repo in REPOS:
+        try:
+            data = json.loads(_get(_version_url(repo), timeout=timeout))
+            _repo[0] = repo
+            return data
+        except Exception as e:
+            last = e
+    raise last
 HERE = Path(__file__).resolve().parent
 UPDATE = SUPPORT_DIR / "update"
 
@@ -53,7 +73,7 @@ def check_and_download(progress=None):
     if not installed_layout():
         return {"status": "dev", "current": cur}
     try:
-        remote = json.loads(_get(VERSION_URL, timeout=8))
+        remote = _remote_version()
     except Exception as e:
         log(f"actualizador: no pude revisar versiones ({e})")
         return {"status": "error", "current": cur}
@@ -65,7 +85,7 @@ def check_and_download(progress=None):
     try:
         if progress:
             progress(f"Descargando BrainOrder {remote.get('version')}…")
-        data = _get(ZIP_URL, timeout=60)
+        data = _get(_zip_url(_repo[0] or REPOS[0]), timeout=60)
         with tempfile.TemporaryDirectory() as tmp:
             zipfile.ZipFile(io.BytesIO(data)).extractall(tmp)
             roots = [d for d in Path(tmp).iterdir() if d.is_dir()]
