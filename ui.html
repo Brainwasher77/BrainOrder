@@ -175,6 +175,11 @@ th.sortable.on{color:var(--acid)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
 .chipf{padding:5px 11px;border-radius:20px;font-size:12px;background:var(--panel);border:1px solid var(--line);color:var(--mute)}
 .chipf .mono{margin-left:4px;opacity:.8}
+.kc{display:inline-block;min-width:34px;text-align:center;padding:2px 6px;border-radius:6px;color:#fff;font-size:12px;font-weight:650}
+.kc sup{font-size:9px;opacity:.8}
+.eb{display:inline-block;width:46px;height:6px;border-radius:4px;background:var(--line);overflow:hidden;vertical-align:middle;margin-right:6px}
+.eb i{display:block;height:100%}
+.chipf.nomik.on{background:#b48cff;border-color:#b48cff}
 .chipf.on{color:#111;font-weight:650}
 .chipf.all.on{background:var(--text);border-color:var(--text)}
 .chipf.missing.on{background:var(--miss);border-color:var(--miss)}
@@ -318,7 +323,21 @@ function orgAvail(){ return (S.inboxCount||0) > 0 || orgCount() > 0; }
 function orgCount(pid){ return S.analysis ? toOrganize(pid).length + dupList(pid).length : 0; }
 const changed = pl => !pl.pending && pl.snapshot && pl.analyzed_snapshot && pl.snapshot !== pl.analyzed_snapshot;
 function counts(pl){ const c={ok:0,elsewhere:0,inbox:0,missing:0}; pl.tracks.forEach(t=>c[t.status]=(c[t.status]||0)+1); return c; }
-function match(r){ if(!S.q) return true; const q=S.q.toLowerCase(); return (r.name+' '+r.artists.join(' ')).toLowerCase().includes(q); }
+function match(r){ if(!S.q) return true; const q=S.q.toLowerCase().trim();
+  if(/^\d{1,2}[ab]$/.test(q)) return (r.key||'').toLowerCase()===q;  // buscar «8A» = canciones en esa key
+  return (r.name+' '+r.artists.join(' ')+' '+(r.key||'')).toLowerCase().includes(q); }
+// ---------- key (Camelot) y energía: lo que dejó Mixed In Key ----------
+const CAM_HUE = n => ((n-1)*30 + 150) % 360;
+function keyChip(r){
+  if(!r.key) return r.source ? '<span class="art" title="Sin key: pásala por Mixed In Key">—</span>' : '';
+  const n = parseInt(r.key), minor = r.key.endsWith('A');
+  return `<span class="kc mono" style="background:hsl(${CAM_HUE(n)} 70% ${minor?38:48}% / .9)" title="${r.mik?'Key de Mixed In Key':'Key de otro programa (no de MIK)'}">${esc(r.key)}${r.mik?'':'<sup>*</sup>'}</span>`;
+}
+function energyBar(e){
+  if(!e) return '';
+  return `<span class="eb" title="Energía ${e} de 10"><i style="width:${e*10}%;background:hsl(${120-e*12} 75% 52%)"></i></span><span class="mono" style="font-size:11.5px;color:var(--mute)">${e}</span>`;
+}
+const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2 + (m[2]==='B'?1:0) : 999; };
 
 // ---------- render ----------
 function render(){ renderCore(); paintTasks(); }
@@ -449,10 +468,10 @@ function renderTable(){
     const cls = {here:'ok', elsewhere:'elsewhere', inbox:'inbox', missing:'missing'};
     const ds = r => (r.status==='ok'||r.status==='elsewhere') ? (dirOf(r.source)===pl.folder?'here':'elsewhere') : r.status;
     // filtro por estado (chips con conteo) + orden por columna
-    const cnt = {all:pl.tracks.length, here:0, elsewhere:0, inbox:0, missing:0};
-    pl.tracks.forEach(r=>cnt[ds(r)]++);
+    const cnt = {all:pl.tracks.length, here:0, elsewhere:0, inbox:0, missing:0, nomik:0};
+    pl.tracks.forEach(r=>{ cnt[ds(r)]++; if(r.source && !r.mik) cnt.nomik++; });
     if(SO.filter!=='all' && !cnt[SO.filter]) SO.filter='all';
-    let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || ds(r)===SO.filter);
+    let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || (SO.filter==='nomik' ? (r.source && !r.mik) : ds(r)===SO.filter));
     const rank = {missing:0, inbox:1, elsewhere:2, here:3};
     const key = {
       pos: r => r.pos,
@@ -460,17 +479,24 @@ function renderTable(){
       artist: r => (r.artists[0]||'').toLowerCase(),
       status: r => rank[ds(r)]*1e5 + r.pos,
       file: r => (r.source ? short(r.source) : '\uffff').toLowerCase(),
+      key: r => camRank(r.key)*1e5 + r.pos,
+      energy: r => (r.energy ? 11-r.energy : 99)*1e5 + r.pos,
+      bpm: r => (r.bpm || 999)*1e5 + r.pos,
     }[SO.col] || (r=>r.pos);
     rows = rows.slice().sort((a,b)=>{ const x=key(a), y=key(b); return (x<y?-1:x>y?1:0) * SO.dir; });
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
     const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
-    html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}</div>
-      <table><tr>${th('pos','#')}${th('name','Canción')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? rows.map(r=>`<tr>
+    html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}</div>
+      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? rows.map(r=>`<tr>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td>${keyChip(r)}</td>
+      <td style="white-space:nowrap">${energyBar(r.energy)}</td>
+      <td class="mono" style="color:var(--mute)">${r.bpm?Math.round(r.bpm):''}</td>
       <td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>
       <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('')
-      : `<tr><td colspan="4" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`;
+      : `<tr><td colspan="7" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`
+      + `<div class="art" style="margin-top:8px">Key y energía salen de las etiquetas que deja Mixed In Key (Camelot). <sup>*</sup> = key de otro programa. Escribe <b>8A</b> en el buscador para ver solo esa key.</div>`;
   }
   t.innerHTML = html;
 }
@@ -524,6 +550,9 @@ function globalStats(){
   return {songs:songs.size, owned, inbox:vals.filter(v=>v==='inbox').length, missing:vals.filter(v=>v==='missing').length,
           files:files.size, saved:refs-files.size, pct: songs.size?Math.round(owned/songs.size*100):100};
 }
+function mikStats(){ const seen=new Set(); let owned=0, mik=0;
+  for(const r of allRows()) if(r.source && !seen.has(r.source)){ seen.add(r.source); owned++; if(r.mik) mik++; }
+  return {owned, mik, pct: owned? Math.round(mik/owned*100) : 0}; }
 function statsView(){
   const g = globalStats();
   const rows = S.analysis.map((pl,i)=>({pl,i,c:plStats(pl)})).filter(x=>!x.pl.pending).sort((a,b)=>a.c.pct-b.c.pct);
@@ -534,7 +563,8 @@ function statsView(){
       <div class="card"><div class="k">Canciones únicas</div><div class="v mono">${g.songs}</div></div>
       <div class="card ok"><div class="k">Biblioteca completa</div><div class="v mono">${g.pct}%</div></div>
       <div class="card"><div class="k">Archivos en disco</div><div class="v mono">${g.files}</div></div>
-      <div class="card ok"><div class="k">Duplicados evitados</div><div class="v mono">${g.saved}</div></div></div>
+      <div class="card ok"><div class="k">Duplicados evitados</div><div class="v mono">${g.saved}</div></div>
+      <div class="card" title="Canciones que ya tienes con key y energía de Mixed In Key. En cada playlist, el filtro «Sin Mixed In Key» muestra las que faltan."><div class="k">Con Mixed In Key</div><div class="v mono">${mikStats().pct}%</div><div class="art">${mikStats().mik}/${mikStats().owned}</div></div></div>
     <div class="vhead"><h2>Por playlist</h2><span class="sub">Aquí = el archivo está en la carpeta de la playlist · Otra carpeta = se usa desde donde está (ver el .txt de la carpeta).</span>
       <div class="sp"><button class="xl" onclick="exportAllPlaylists()">📊 Informes de todas (uno por playlist)</button></div></div>
     <table><tr><th>Playlist</th><th style="width:30%">Completa</th><th class="mono">Total</th><th>Aquí</th><th>Otra carpeta</th><th>Descargas</th><th>Faltan</th><th></th></tr>

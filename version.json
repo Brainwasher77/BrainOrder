@@ -1,5 +1,5 @@
 {
-  "version": "2.0.1",
-  "build": 15,
-  "notes": "SpotiSync ahora se llama BrainOrder. Conserva tu configuración, historial y conexiones."
+  "version": "2.1.0",
+  "build": 16,
+  "notes": "Key (Camelot), energía y BPM de Mixed In Key en cada playlist, con orden, filtro «Sin Mixed In Key» y búsqueda por key."
 }

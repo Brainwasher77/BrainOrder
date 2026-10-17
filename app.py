@@ -56,6 +56,8 @@ class Api:
         self._window = None
         self._cfg = config.load()
         biblioteca.load_durations(config.SUPPORT_DIR / "durations.json")
+        import armonia
+        armonia.load(config.SUPPORT_DIR / "armonia.json")
         # Multitarea segura:
         #  _state: cachés de Spotify y análisis. Se toma solo en tramos cortos (leer/cruzar/escribir),
         #          así varias tareas avanzan a la vez y nunca se pisan los resultados.

@@ -308,6 +308,15 @@ def _rank(f: LocalFile):
     return (q, size)
 
 
+def _harm(src):
+    """Key / energía / BPM del archivo (Mixed In Key u otro programa)."""
+    if src is None:
+        return {}
+    import armonia
+    h = armonia.info(src.path)
+    return {"key": h.get("key"), "energy": h.get("energy"), "bpm": h.get("bpm"), "mik": h.get("mik")}
+
+
 def analyze(playlists, cfg, progress=None):
     """Cruza playlists de Spotify con los archivos locales, sin duplicar archivos.
 
@@ -389,8 +398,11 @@ def analyze(playlists, cfg, progress=None):
                 "dest_dir": hdir,
                 "home_name": home_name[hk(t)],
                 "inbox_dups": [d.path for d in dups],
+                **_harm(src),
             })
         out.append({"id": pl["id"], "name": pl["name"], "folder": folder_s, "tracks": rows,
                     "liked": pl.get("liked", False)})
     save_durations()
+    import armonia
+    armonia.save()
     return out
