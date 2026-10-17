@@ -56,6 +56,16 @@ Carpetas por defecto (se cambian en Ajustes con el selector de carpetas):
 - Música por playlist: `Música/Spotify playlists/<playlist>`
 - Descargas por organizar: `Música/descargas para organizar`
 
+## Conexiones: fuentes y programas de DJ
+En la barra lateral, **Conexiones**:
+- **Fuentes de playlists** (se pueden usar varias a la vez; la misma canción en dos fuentes se une por ISRC):
+  - **Spotify**: tus playlists y Me gusta (Client ID de tu app de desarrollador).
+  - **Deezer**: playlists públicas de tu perfil y links sueltos, sin login.
+  - **Archivos exportados**: una carpeta donde cada `.m3u`, `.csv` o `.txt` es una playlist. Sirve para Apple Music (Archivo → Biblioteca → Exportar playlist), SoundCloud, Tidal o YouTube Music (exporta con TuneMyMusic o Soundiiz) y Exportify.
+- **Programas de DJ** (se actualizan al Organizar; cada uno con respaldo y cerrado):
+  - **Rekordbox** (master.db) y **Traktor Pro** (collection.nml). Al Reorganizar o Unificar también se corrigen sus rutas.
+  - **Playlists M3U** para Serato, VirtualDJ, Engine DJ, djay, Mixxx…
+
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:
 - **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que SpotiSync nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.

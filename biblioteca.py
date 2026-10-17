@@ -339,12 +339,14 @@ def analyze(playlists, cfg, progress=None):
     # (por defecto: orden de Spotify y Me gusta al final)
     ordered = reglas.ordered_playlists(playlists, rules)
     folders = {pl["id"]: str(resolve_folder(dest_root, pl["name"])) for pl in playlists}
+    # la misma canción puede venir de varias fuentes (Spotify, Deezer, archivos): se une por ISRC
+    hk = lambda t: ("isrc:" + t["isrc"].upper()) if t.get("isrc") else t["id"]
     home, home_name = {}, {}
     for pl in ordered:
         folder = folders[pl["id"]]
         for t in pl["tracks"]:
-            if t["id"] not in home:
-                home[t["id"]], home_name[t["id"]] = folder, pl["name"]
+            if hk(t) not in home:
+                home[hk(t)], home_name[hk(t)] = folder, pl["name"]
 
     out = []
     for pl in playlists:
@@ -357,7 +359,7 @@ def analyze(playlists, cfg, progress=None):
             matches = idx.find(t)
             ex = extras(t["name"])
             rank = lambda f, ex=ex: (f.extras != ex, not f.path.startswith(dest_s)) + _rank(f)
-            hdir = home[t["id"]]
+            hdir = home[hk(t)]
             in_inbox = [m for m in matches if m.path.startswith(inbox_s)]
             owned = [m for m in matches if m not in in_inbox]
             in_home = [m for m in owned if m.dir == hdir]
@@ -385,7 +387,7 @@ def analyze(playlists, cfg, progress=None):
                 "status": status,
                 "source": src.path if src else None,
                 "dest_dir": hdir,
-                "home_name": home_name[t["id"]],
+                "home_name": home_name[hk(t)],
                 "inbox_dups": [d.path for d in dups],
             })
         out.append({"id": pl["id"], "name": pl["name"], "folder": folder_s, "tracks": rows,

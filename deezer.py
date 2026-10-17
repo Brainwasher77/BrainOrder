@@ -83,6 +83,10 @@ def add_links(analysis, progress=None, offline=False):
         for r in pl["tracks"]:
             if r["status"] == "missing":
                 missing.setdefault(r["id"], r)
+    for i, r in missing.items():  # canciones que vienen de Deezer: ya traen su link
+        if i.startswith("dz:") and r.get("url") and i not in cache:
+            with _LOCK:
+                cache[i] = {"url": r["url"], "exact": True}
     todo = [] if offline else [r for i, r in missing.items() if i not in cache]
     for n, r in enumerate(todo, 1):
         if progress:

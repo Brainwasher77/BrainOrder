@@ -30,6 +30,13 @@ DEFAULTS = {
     "rekordbox_folder": "Spotify",
     # Subcarpeta dentro de la bandeja a donde van los originales ya organizados
     "inbox_done": "_organizadas",
+    # Fuentes de playlists y programas de DJ (pantalla Conexiones)
+    "sources": {"spotify": {"enabled": True},
+                "deezer": {"enabled": False, "user": "", "playlists": [], "include_loved": True},
+                "archivos": {"enabled": False, "folder": ""}},
+    "destinations": {"rekordbox": {"enabled": True},
+                     "traktor": {"enabled": False, "nml": ""},
+                     "m3u": {"enabled": False, "folder": ""}},
     # Playlists que no son tuyas: {id: {"name","owner","url","choice": "integrar"|"no"}}
     "foreign": {},
 }
