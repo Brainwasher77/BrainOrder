@@ -40,6 +40,7 @@ def organize(analysis, cfg, progress=None):
     inbox = Path(cfg["inbox"])
     dup_dir = inbox / "_duplicados"
     moved, to_dups, errors = 0, 0, []
+    journal = []  # (origen, destino) para poder deshacer
     total = len(moves) + len(dups)
     n = 0
 
@@ -48,6 +49,7 @@ def organize(analysis, cfg, progress=None):
         target = _unique(dup_dir / rel)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_p), str(target))
+        journal.append((str(src_p), str(target)))
 
     for src, dest_dir in moves.items():
         n += 1
@@ -66,6 +68,7 @@ def organize(analysis, cfg, progress=None):
                 to_dups += 1
             else:
                 shutil.move(str(src_p), str(dst))
+                journal.append((str(src_p), str(dst)))
                 moved += 1
         except Exception as e:
             errors.append(f"{src_p.name}: {e}")
@@ -85,7 +88,7 @@ def organize(analysis, cfg, progress=None):
             log(f"Error moviendo duplicado {src}: {e}")
 
     log(f"Organizar: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
-    return {"moved": moved, "duplicates": to_dups, "errors": errors}
+    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal}
 
 
 def relocate(ops, cfg, progress=None):
@@ -158,6 +161,7 @@ def move_unmatched(groups, files, cfg, progress=None):
             ops.append((Path(p), Path(dest)))
     ops += [(Path(f), Path(d)) for f, d in files]
     moved, to_dups, errors = 0, 0, []
+    journal = []
     for n, (src, dest) in enumerate(ops, 1):
         if progress:
             progress(f"Moviendo {n}/{len(ops)}: {src.name}", n / max(1, len(ops)))
@@ -171,9 +175,11 @@ def move_unmatched(groups, files, cfg, progress=None):
                 t = _unique(dup_dir / rel)
                 t.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(t))
+                journal.append((str(src), str(t)))
                 to_dups += 1
             else:
                 shutil.move(str(src), str(target))
+                journal.append((str(src), str(target)))
                 moved += 1
         except Exception as e:
             errors.append(f"{src.name}: {e}")
@@ -191,4 +197,4 @@ def move_unmatched(groups, files, cfg, progress=None):
             except OSError:
                 pass
     log(f"Organizar sin playlist: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
-    return {"moved": moved, "duplicates": to_dups, "errors": errors}
+    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal}
