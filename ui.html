@@ -39,6 +39,28 @@ header *{-webkit-app-region:no-drag}
 .progress.haspct .pbar,.progress.haspct #ppct{display:block}
 .progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
 .pcard{max-width:520px;margin:60px auto;text-align:center}
+.rules{max-width:860px}
+.rules section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin:0 0 16px}
+.rules h3{margin:0 0 4px;font-size:15px}
+.rules .hint{color:var(--mute);font-size:12.5px;margin:0 0 12px}
+.rules textarea,.rules input[type=number]{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+.rules textarea{width:100%;min-height:86px;font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:12.5px}
+.rules input[type=number]{width:80px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chipx{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:4px 6px 4px 10px;font-size:12.5px;max-width:100%}
+.chipx span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chipx button{padding:0 6px;border:0;background:none;color:var(--mute)}
+.prow{display:flex;align-items:center;gap:10px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:5px;background:var(--panel2)}
+.prow.ign{opacity:.5}
+.prow.drag{outline:2px dashed var(--acid)}
+.prow .hd{cursor:grab;color:var(--mute);user-select:none}
+.prow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ix{width:26px;color:var(--mute);text-align:right}
+.prow button{padding:2px 8px}
+.prow select{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit}
+.fmt{display:flex;gap:6px;flex-wrap:wrap}
+.fmt .chipx{padding:4px 6px}
+.rbar{position:sticky;bottom:-40px;background:var(--bg);border-top:1px solid var(--line);padding:14px 0 18px;display:flex;gap:10px;align-items:center}
 #tasks{display:none;flex-direction:column;gap:4px;padding:6px 20px 8px;border-bottom:1px solid var(--line);background:var(--panel);max-height:140px;overflow:auto}
 #tasks.on{display:flex}
 .trow{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--mute)}
@@ -174,6 +196,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
+        <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
       </div>
       <h4 style="display:flex;align-items:center;justify-content:space-between">Tus playlists
@@ -291,8 +314,12 @@ function renderCore(){
   const fl = Object.values(S.foreign||{});
   $('nForeign').textContent = fl.length || '–';
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
+  const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
+  $('nRules').textContent = nr ? nr : '–';
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
   $('plNav').innerHTML = (a||[]).map((pl,i) => {
+    if(pl.ignored) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Ignorada en Reglas"><div class="row">
+      <span class="name" style="color:var(--mute);text-decoration:line-through">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">ignorada</span></div></a>`;
     if(pl.pending) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Sin analizar"><div class="row">
       <span class="name" style="color:var(--mute)">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">${pl.total ?? '—'}</span></div>
       <div class="bar" style="opacity:.4"></div></a>`;
@@ -321,6 +348,7 @@ const searchBox = () => `<input class="search" placeholder="Buscar canción o ar
 function renderMain(){
   const m = $('main');
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
+  if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(!S.connected && !S.analysis){
     m.innerHTML = `<div class="empty"><h3>Conecta tu cuenta de Spotify</h3>
       <p>Primero pon el Client ID de tu app de desarrollador en <b>Ajustes</b>, luego toca <b>Conectar Spotify</b>.</p>
@@ -340,6 +368,9 @@ function renderMain(){
   else if(S.view==='organize') head = `<h2>Listas para organizar</h2><span class="sub">Descargas que se mueven a su carpeta (un solo archivo por canción).</span>`;
   else { const pl = S.analysis[+S.view.split(':')[1]]; if(!pl){S.view='missing';return renderMain();}
     if(pl.pending && running('analyze:'+pl.id)){ m.innerHTML = progressCard(pl.name, 'analyze:'+pl.id); return; }
+    if(pl.ignored){ m.innerHTML = `<div class="empty"><h3>${pl.liked?'♥ ':''}${esc(pl.name)}</h3>
+      <p>Esta playlist está <b>ignorada</b> en Reglas: no se analiza, no tiene carpeta y no se toca en Rekordbox.</p>
+      <button class="primary" onclick="unignore(${jsq(pl.id)})">Volver a incluirla</button></div>`; return; }
     if(pl.pending){ m.innerHTML = `<div class="empty"><h3>${pl.liked?'♥ ':''}${esc(pl.name)}</h3>
       <p>Esta playlist todavía no se ha analizado${pl.total!=null?` (${pl.total} canci${pl.total===1?'ón':'ones'} en Spotify)`:''}.</p>
       <button class="primary" onclick="analyzePlaylist(${jsq(pl.id)})">🔄 Analizar esta playlist</button></div>`; return; }
@@ -721,7 +752,113 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ S.view=v; S.q=''; render(); }
+function show(v){ if(v==='rules' && S.view!=='rules') rulesInit(); S.view=v; S.q=''; render(); }
+
+// ---------- reglas ----------
+// Borrador editable; se guarda con «Guardar y aplicar».
+let RL = null;
+const FMT_LABEL = {aiff:'AIFF', wav:'WAV', flac:'FLAC', alac:'ALAC', m4a:'M4A', aac:'AAC', mp3:'MP3', ogg:'OGG'};
+function rulesInit(){
+  const r = JSON.parse(JSON.stringify(S.rules||{}));
+  RL = {r, dirty:false, preview:null};
+  r.exclude_dirs = r.exclude_dirs||[]; r.exclude_patterns = r.exclude_patterns||[]; r.playlist_mode = r.playlist_mode||{};
+  r.playlist_order = rlOrder(r.playlist_order||[]);
+}
+// todas las playlists, en el orden de prioridad (las nuevas al final; Me gusta última salvo que la hayas movido)
+function rlOrder(order){
+  const pls = (S.analysis||[]).map(p=>p.id), known = order.filter(id=>pls.includes(id));
+  const rest = pls.filter(id=>!known.includes(id));
+  return known.concat(rest.filter(id=>id!=='liked'), rest.filter(id=>id==='liked'));
+}
+const plName = id => { const p=(S.analysis||[]).find(x=>x.id===id); return p ? (p.liked?'♥ ':'')+p.name : id; };
+function rlDirty(){ RL.dirty = true; RL.preview = null; const b=$('rlSave'); if(b) b.disabled=false; const p=$('rlPrev'); if(p) p.innerHTML=''; }
+function rulesView(){
+  if(!RL) rulesInit();
+  const r = RL.r, pv = RL.preview;
+  r.playlist_order = rlOrder(r.playlist_order);  // por si llegaron playlists nuevas
+  const order = r.playlist_order;
+  return `<div class="rules"><h2 style="margin-top:0">Reglas</h2>
+  <p class="hint" style="margin-top:-6px">Tus reglas para ordenar la música. Nada se mueve al guardar: solo cambia cómo se calcula qué te falta y dónde va cada canción.</p>
+
+  <section><h3>🚫 Exclusiones</h3>
+    <p class="hint">Lo excluido nunca se lee, se mueve, se cuenta ni se toca en Rekordbox. Sirve para samples, stems, sets grabados, packs…</p>
+    <div style="font-weight:600;margin-bottom:6px">Carpetas</div>
+    <div class="chips">${r.exclude_dirs.map((d,k)=>`<div class="chipx" title="${esc(d)}"><span>📁 ${esc(short(d))}</span><button onclick="rlDelDir(${k})" title="Quitar">✕</button></div>`).join('') || '<span class="hint" style="margin:0">Ninguna.</span>'}</div>
+    <button onclick="rlAddDir()">＋ Agregar carpeta…</button>
+    <div style="font-weight:600;margin:14px 0 6px">Patrones <span class="hint">— uno por línea, sin importar mayúsculas</span></div>
+    <textarea id="rlPats" oninput="RL.r.exclude_patterns=this.value.split('\n').map(x=>x.trim()).filter(Boolean);rlDirty()" placeholder="Samples&#10;*stem*&#10;*.wav&#10;*/Sets grabados/*">${esc(r.exclude_patterns.join('\n'))}</textarea>
+    <div class="hint" style="margin:6px 0 0"><code>Samples</code> cualquier carpeta con ese nombre · <code>*stem*</code> nombres que contengan «stem» · <code>*.wav</code> por extensión · <code>*/Sets/*</code> por ruta</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px">Ignorar audios de menos de
+      <input type="number" min="0" max="600" step="5" value="${r.min_seconds||0}" oninput="RL.r.min_seconds=+this.value||0;rlDirty()"> segundos
+      <span class="hint" style="margin:0">(0 = no. Útil para one-shots; la primera vez tarda porque lee cada archivo)</span></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px"><button onclick="rlPreview()" ${running('rules_preview')?'disabled':''}>🔍 Probar</button>
+      <span class="hint" style="margin:0">Cuenta cuántos archivos quedarían fuera, sin guardar nada.</span></div>
+    <div id="rlPrev">${pv?rlPreviewHtml(pv):''}</div>
+  </section>
+
+  <section><h3>🏠 Prioridad de playlists</h3>
+    <p class="hint">Cuando una canción está en varias playlists, su archivo vive en la carpeta de la <b>primera</b> de esta lista. Arrastra o usa las flechas. «Ignorar» la saca de todo.</p>
+    ${order.length ? order.map((id,k)=>{ const ign=(r.playlist_mode[id]==='ignorar'); return `<div class="prow${ign?' ign':''}" draggable="true" data-k="${k}"
+        ondragstart="RL.drag=${k};this.classList.add('drag')" ondragend="this.classList.remove('drag')"
+        ondragover="event.preventDefault()" ondrop="event.preventDefault();rlMove(RL.drag,${k})">
+        <span class="hd">⋮⋮</span><span class="ix mono">${k+1}</span><span class="nm">${esc(plName(id))}</span>
+        <button class="ghost" onclick="rlMove(${k},${k-1})" ${k===0?'disabled':''} title="Subir">↑</button>
+        <button class="ghost" onclick="rlMove(${k},${k+1})" ${k===order.length-1?'disabled':''} title="Bajar">↓</button>
+        <select onchange="rlMode(${jsq(id)},this.value)"><option value="organizar"${ign?'':' selected'}>Organizar</option><option value="ignorar"${ign?' selected':''}>Ignorar</option></select></div>`; }).join('')
+      : '<div class="hint">Carga tus playlists (⟳ en la barra lateral) para ordenarlas.</div>'}
+  </section>
+
+  <section><h3>🎚️ Comparación</h3>
+    <p class="hint">Cómo decide si un archivo es la misma grabación que la canción de Spotify, y qué copia se queda cuando hay repetidos.</p>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Misma canción si la duración difiere hasta
+      <input type="number" min="0" max="60" step="1" value="${r.dur_tol_s??6}" oninput="RL.r.dur_tol_s=+this.value;rlDirty()"> s
+      o hasta <input type="number" min="0" max="20" step="0.5" value="${r.dur_tol_pct??3}" oninput="RL.r.dur_tol_pct=+this.value;rlDirty()"> %
+      <span class="hint" style="margin:0">(gana el mayor). Más bajo = más estricto con edits y extended.</span></div>
+    <div style="font-weight:600;margin:14px 0 6px">Formato preferido <span class="hint">— el primero gana</span></div>
+    <div class="fmt">${(r.format_order||[]).map((f,k)=>`<div class="chipx"><span class="mono">${k+1}. ${FMT_LABEL[f]||f}</span>
+      <button onclick="rlFmt(${k},-1)" ${k===0?'disabled':''} title="Antes">←</button><button onclick="rlFmt(${k},1)" ${k===r.format_order.length-1?'disabled':''} title="Después">→</button></div>`).join('')}</div>
+  </section>
+
+  <div class="rbar"><button class="primary" id="rlSave" onclick="rlSave()" ${RL.dirty&&!running('rules')?'':'disabled'}>Guardar y aplicar</button>
+    <button onclick="rulesInit();render()" ${RL.dirty?'':'disabled'}>Descartar cambios</button>
+    <span style="flex:1"></span><button class="ghost" onclick="rlDefaults()">Restaurar valores por defecto</button></div>
+  </div>`;
+}
+function rlPreviewHtml(pv){
+  return `<div class="box" style="margin-top:12px">Con estas reglas: <b>${pv.in}</b> archivos se usan y <b style="color:var(--org)">${pv.out}</b> quedan fuera.
+    ${pv.roots.map(x=>`<div class="hint" style="margin:4px 0 0">📁 ${esc(short(x.root))}: ${x.exists?`${x.in} dentro · ${x.out} fuera`:'no existe'}</div>`).join('')}
+    ${pv.sample.length?`<div style="margin-top:8px;font-weight:600">Ejemplos de lo que queda fuera</div>${pv.sample.map(p=>`<div class="hint mono" style="margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(short(p))}</div>`).join('')}`:''}
+    ${(pv.warnings||[]).map(w=>`<div style="color:var(--miss);margin-top:6px">${esc(w)}</div>`).join('')}</div>`;
+}
+async function rlAddDir(){ const p = await api().pick_folder(S.settings.dest_root); if(p && !RL.r.exclude_dirs.includes(p)){ RL.r.exclude_dirs.push(p); rlDirty(); render(); } }
+function rlDelDir(k){ RL.r.exclude_dirs.splice(k,1); rlDirty(); render(); }
+function rlMove(a,b){ const o=RL.r.playlist_order; if(a==null||b<0||b>=o.length||a===b) return; const [x]=o.splice(a,1); o.splice(b,0,x); rlDirty(); render(); }
+function rlMode(id,v){ if(v==='ignorar') RL.r.playlist_mode[id]='ignorar'; else delete RL.r.playlist_mode[id]; rlDirty(); render(); }
+function rlFmt(k,d){ const o=RL.r.format_order, j=k+d; [o[k],o[j]]=[o[j],o[k]]; rlDirty(); render(); }
+function rlDefaults(){ RL.r = {exclude_dirs:[], exclude_patterns:[], min_seconds:0, dur_tol_s:6, dur_tol_pct:3,
+  format_order:['aiff','wav','flac','m4a','mp3'], playlist_order:rlOrder([]), playlist_mode:{}}; rlDirty(); render(); }
+async function rlPreview(){
+  const r = await api().preview_rules(RL.r);
+  if(!r.ok){ taskErr(r); return; }
+  RL.preview = r; if(S.view==='rules') render();
+}
+async function rlSave(){
+  const draft = JSON.parse(JSON.stringify(RL.r));
+  const r = await api().save_rules(draft);
+  if(!r.ok){ taskErr(r); return; }
+  S.rules = r.rules; S.inboxCount = r.inbox_count ?? S.inboxCount;
+  await applyAnalysis(r);
+  if(S.view==='rules') rulesInit();
+  render();
+  toast('Reglas guardadas y aplicadas.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:''), !!(r.warnings||[]).length);
+}
+async function unignore(id){
+  const rules = JSON.parse(JSON.stringify(S.rules||{})); rules.playlist_mode = {...(rules.playlist_mode||{})}; delete rules.playlist_mode[id];
+  const r = await api().save_rules(rules);
+  if(!r.ok){ taskErr(r); return; }
+  S.rules = r.rules; await applyAnalysis(r); render();
+  toast(`<b>${esc(plName(id))}</b> vuelve a estar incluida. Dale 🔄 Analizar para leerla.`);
+}
 
 // ---------- acciones ----------
 async function connect(){
@@ -750,7 +887,7 @@ async function loadPlaylists(){
   const r = await api().list_playlists();
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r); S.foreign = r.foreign || {}; render();
-  const pend = r.analysis.filter(p=>p.pending).length, ch = r.analysis.filter(changed).length;
+  const pend = r.analysis.filter(p=>p.pending && !p.ignored).length, ch = r.analysis.filter(changed).length;
   toast(`${r.analysis.length} playlists.` + (pend?` <b>${pend}</b> sin analizar.`:'') + (ch?` <b>${ch}</b> cambiaron en Spotify (●).`:'') + ' Elige una y dale <b>🔄 Analizar</b>.');
   askForeign(r.ask_foreign || []);
 }
@@ -916,6 +1053,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
+  S.rules = st.rules || {}; S.formats = st.formats || [];
   setTimeout(checkUpdates, 1500);
   try{ api().start_watch(); }catch(e){}
   render();

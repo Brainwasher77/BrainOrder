@@ -16,6 +16,7 @@ sys.path.insert(0, str(HERE))
 
 import config  # noqa: E402
 import biblioteca  # noqa: E402
+import reglas  # noqa: E402
 import organizador  # noqa: E402
 import plataforma  # noqa: E402
 import rekordbox_sync  # noqa: E402
@@ -186,6 +187,8 @@ class Api:
             "home": str(Path.home()),
             "pinned": self._cfg.get("pinned_paths", []),
             "inbox_count": self._inbox_signature()[1],
+            "rules": reglas.get(self._cfg),
+            "formats": reglas.FORMATS,
             "version": actualizador.local_version(),
             "win": plataforma.IS_WIN,
         }
@@ -301,8 +304,10 @@ class Api:
         sp_data = self._load_sp()
         include_liked = self._cfg.get("include_liked")
         meta = {p["id"]: p for p in sp_data["playlists"]}
+        rules = reglas.get(self._cfg)
         loaded = [p for p in sp_data["playlists"]
-                  if p.get("tracks") is not None and (include_liked or p["id"] != "liked")]
+                  if p.get("tracks") is not None and (include_liked or p["id"] != "liked")
+                  and not reglas.ignored(rules, p["id"])]
         loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
                   for p in loaded] + list(sp_data.get("foreign_ok", []))
         result = biblioteca.analyze(loaded, self._cfg, progress)
@@ -313,10 +318,11 @@ class Api:
             if p["id"] == "liked" and not include_liked:
                 continue
             a = by_id.get(p["id"])
-            if a is None:  # todavía sin analizar
+            if a is None:  # todavía sin analizar, o ignorada en Reglas (se trata igual: no se toca)
                 name = self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]
                 a = {"id": p["id"], "name": name, "tracks": [], "pending": True, "liked": p["id"] == "liked",
-                     "folder": str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name))}
+                     "folder": str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)),
+                     "ignored": reglas.ignored(rules, p["id"])}
             a["snapshot"] = p.get("snapshot")
             a["analyzed_snapshot"] = p.get("analyzed_snapshot")
             a["total"] = p.get("total")
@@ -384,6 +390,8 @@ class Api:
     def analyze_playlist(self, pid):
         """Lee de Spotify SOLO esta playlist y la cruza con tus archivos."""
         def run():
+            if reglas.ignored(reglas.get(self._cfg), pid):
+                raise SpotifyError("Esta playlist está ignorada en Reglas. Actívala allí para analizarla.")
             sp = self._sp()
             entry = dict(next((p for p in self._load_sp()["playlists"] if p["id"] == pid), None) or {})
             if not entry:
@@ -451,6 +459,66 @@ class Api:
             return {"analysis": analysis, "foreign": known,
                     "ask_foreign": [pid for pid, f in known.items() if f.get("choice") == "preguntar"]}
         return self._task(run, "analyze:all", "Analizar todo")
+
+    # ---------- reglas ----------
+    def _roots(self):
+        out = []
+        for r in [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or []):
+            if r and r not in out:
+                out.append(r)
+        return out
+
+    def preview_rules(self, rules):
+        """«Probar»: cuántos archivos quedan fuera con estas reglas (no guarda nada)."""
+        r, errs = reglas.clean(rules or {})
+
+        def run():
+            ex = reglas.Excluder(r)
+            roots = self._roots()
+            out, total_in, total_out, sample = [], 0, 0, []
+            for i, root in enumerate(roots):
+                self._progress(f"Revisando {Path(root).name}…", i / max(1, len(roots)))
+                if not Path(root).is_dir():
+                    out.append({"root": root, "exists": False, "in": 0, "out": 0})
+                    continue
+                n_in = n_out = 0
+                for dirpath, dirnames, filenames in os.walk(root):
+                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                    dir_out = ex.dir_excluded(dirpath) if dirpath != root else False
+                    for fn in filenames:
+                        if fn.startswith(".") or Path(fn).suffix.lower() not in config.AUDIO_EXT:
+                            continue
+                        p = os.path.join(dirpath, fn)
+                        if dir_out or ex.file_excluded(p, biblioteca.duration):
+                            n_out += 1
+                            if len(sample) < 12:
+                                sample.append(p)
+                        else:
+                            n_in += 1
+                out.append({"root": root, "exists": True, "in": n_in, "out": n_out})
+                total_in += n_in
+                total_out += n_out
+            biblioteca.save_durations()
+            return {"roots": out, "in": total_in, "out": total_out, "sample": sample, "warnings": errs}
+        return self._task(run, "rules_preview", "Probar reglas")
+
+    def save_rules(self, rules):
+        r, errs = reglas.clean(rules or {})
+
+        def run():
+            self._cfg["rules"] = r
+            config.save(self._cfg)
+            self._inbox_sig = None
+            analysis = None
+            if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
+                self._progress("Aplicando las reglas a tu música…", 0)
+                analysis = self._build_analysis(light=True)
+                with self._state:
+                    reportes.write_reports(analysis, self._cfg)
+            self._progress("Reglas guardadas.", 1)
+            return {"rules": r, "warnings": errs, "analysis": analysis,
+                    "inbox_count": self._inbox_signature()[1]}
+        return self._task(run, "rules", "Aplicar reglas")
 
     # ---------- organizar ----------
     def organize(self, include_rekordbox=True, pid=None, extra=None):
@@ -585,19 +653,23 @@ class Api:
         return {"count": n, "ready": len(ready & fset), "dups": len(dups & fset),
                 "groups": out_groups, "loose": loose,
                 "analyzed": sum(1 for p in analysis if not p.get("pending")),
-                "pending": sum(1 for p in analysis if p.get("pending"))}
+                "pending": sum(1 for p in analysis if p.get("pending") and not p.get("ignored"))}
 
     # ---------- vigilante de la carpeta de descargas ----------
     def _inbox_signature(self):
         inbox = Path(self._cfg["inbox"])
         skip = {self._cfg.get("inbox_done", "_organizadas"), "_duplicados"}
+        ex = reglas.Excluder({**reglas.get(self._cfg), "min_seconds": 0})  # sin leer duraciones: es cada 4 s
         sig = []
         if not inbox.is_dir():
             return (), 0
         for dirpath, dirnames, filenames in os.walk(inbox):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip
+                           and not ex.dir_excluded(os.path.join(dirpath, d))]
             for fn in filenames:
                 if fn.startswith(".") or Path(fn).suffix.lower() not in config.AUDIO_EXT:
+                    continue
+                if ex.file_excluded(os.path.join(dirpath, fn)):
                     continue
                 try:
                     st = os.stat(os.path.join(dirpath, fn))

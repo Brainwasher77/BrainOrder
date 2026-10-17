@@ -147,14 +147,15 @@ def move_unmatched(groups, files, cfg, progress=None):
     files:  [(archivo, carpeta_destino)] elegidos a mano.
     Si en el destino ya hay un archivo con ese nombre, la descarga va a <descargas>/_duplicados.
     """
-    from config import AUDIO_EXT
+    import biblioteca
+    import reglas
     inbox = Path(cfg["inbox"])
     dup_dir = inbox / "_duplicados"
+    ex = reglas.Excluder(reglas.get(cfg))  # lo excluido en Reglas no se mueve
     ops = []
     for folder, dest in groups:
-        for p in sorted(Path(folder).rglob("*")):
-            if p.is_file() and p.suffix.lower() in AUDIO_EXT and not p.name.startswith("."):
-                ops.append((p, Path(dest)))
+        for p in sorted(biblioteca.walk_audio(folder, ex)):
+            ops.append((Path(p), Path(dest)))
     ops += [(Path(f), Path(d)) for f, d in files]
     moved, to_dups, errors = 0, 0, []
     for n, (src, dest) in enumerate(ops, 1):

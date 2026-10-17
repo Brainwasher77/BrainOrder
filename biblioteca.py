@@ -7,6 +7,7 @@ import re
 import unicodedata
 from pathlib import Path
 
+import reglas
 from config import AUDIO_EXT, safe_name
 
 try:
@@ -117,11 +118,21 @@ def duration(path: str):
     return d
 
 
+_RULES = [dict(reglas.DEFAULTS)]
+
+
+def configure(cfg):
+    """Toma las reglas del usuario (tolerancias, formato preferido…)."""
+    _RULES[0] = reglas.get(cfg)
+    return _RULES[0]
+
+
 def same_length(a, b):
-    """Duraciones compatibles: misma grabación (tolerancia max(6 s, 3 %))."""
+    """Duraciones compatibles: misma grabación (tolerancia según Reglas; por defecto max(6 s, 3 %))."""
     if a is None or b is None:
         return True
-    return abs(a - b) <= max(6.0, 0.03 * max(a, b))
+    r = _RULES[0]
+    return abs(a - b) <= max(float(r["dur_tol_s"]), float(r["dur_tol_pct"]) / 100 * max(a, b))
 
 
 # ---------------- carpetas con nombre equivalente ----------------
@@ -220,7 +231,21 @@ def parse_file(p: Path):
     return "", stem
 
 
-def scan(roots, progress=None):
+def walk_audio(root, excluder=None):
+    """Rutas de audio bajo root, respetando las exclusiones del usuario."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")
+                       and not (excluder and excluder.dir_excluded(os.path.join(dirpath, d)))]
+        for fn in filenames:
+            if fn.startswith(".") or os.path.splitext(fn)[1].lower() not in AUDIO_EXT:
+                continue
+            p = os.path.join(dirpath, fn)
+            if excluder and excluder.file_excluded(p, duration):
+                continue
+            yield p
+
+
+def scan(roots, progress=None, excluder=None):
     files = []
     seen = set()
     roots = list(roots)
@@ -230,20 +255,15 @@ def scan(roots, progress=None):
             continue
         if progress:
             progress(f"Revisando tus carpetas: {root.name}…", 0.35 * ri / max(1, len(roots)))
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-            for fn in filenames:
-                if fn.startswith("."):
-                    continue
-                p = Path(dirpath) / fn
-                if p.suffix.lower() not in AUDIO_EXT:
-                    continue
-                key = str(p)
-                if key in seen:
-                    continue
-                seen.add(key)
-                a, t = parse_file(p)
-                files.append(LocalFile(p, a, t))
+        if excluder and excluder.dir_excluded(str(root)):
+            continue
+        for key in walk_audio(root, excluder):
+            if key in seen:
+                continue
+            seen.add(key)
+            p = Path(key)
+            a, t = parse_file(p)
+            files.append(LocalFile(p, a, t))
     return files
 
 
@@ -280,8 +300,7 @@ class Index:
 
 
 def _rank(f: LocalFile):
-    ext = Path(f.path).suffix.lower()
-    q = {".aif": 0, ".aiff": 0, ".wav": 0, ".flac": 1, ".m4a": 2, ".mp3": 3}.get(ext, 4)
+    q = reglas.quality(f.path, _RULES[0])
     try:
         size = -os.path.getsize(f.path)
     except OSError:
@@ -293,19 +312,21 @@ def analyze(playlists, cfg, progress=None):
     """Cruza playlists de Spotify con los archivos locales, sin duplicar archivos.
 
     Cada canción tiene UN solo archivo. Su carpeta "hogar" es la de la primera playlist
-    donde aparece (Me gusta va de última). Estados por fila:
+    donde aparece, según la prioridad de Reglas (por defecto Me gusta va de última). Estados por fila:
       ok         -> el archivo está en su carpeta hogar
       elsewhere  -> ya lo tienes en otra carpeta; se usa ahí, no se copia
       inbox      -> está en descargas; Organizar lo MUEVE a su carpeta hogar
       missing    -> falta por descargar
     inbox_dups: descargas que repiten una canción que ya tienes (van a _duplicados).
     """
+    rules = configure(cfg)
     dest_root = Path(cfg["dest_root"])
     inbox = Path(cfg["inbox"])
     roots = [dest_root, inbox] + [Path(r) for r in cfg.get("library_roots", [])]
     skip = {str(inbox / cfg.get("inbox_done", "_organizadas")), str(inbox / "_duplicados"),
             str(dest_root / "_duplicados"), str(dest_root / "_Informes")}
-    files = [f for f in scan(roots, progress) if not any(f.path.startswith(s + os.sep) for s in skip)]
+    files = [f for f in scan(roots, progress, reglas.Excluder(rules))
+             if not any(f.path.startswith(s + os.sep) for s in skip)]
     if progress:
         progress(f"{len(files)} archivos locales. Cruzando con Spotify…", 0.35)
     total_tracks = sum(len(p["tracks"]) for p in playlists) or 1
@@ -314,8 +335,9 @@ def analyze(playlists, cfg, progress=None):
     inbox_s = str(inbox) + os.sep
     dest_s = str(dest_root) + os.sep
 
-    # carpeta hogar de cada canción: primera playlist (Me gusta al final)
-    ordered = [p for p in playlists if not p.get("liked")] + [p for p in playlists if p.get("liked")]
+    # carpeta hogar de cada canción: la primera playlist según la prioridad que eligió el usuario
+    # (por defecto: orden de Spotify y Me gusta al final)
+    ordered = reglas.ordered_playlists(playlists, rules)
     folders = {pl["id"]: str(resolve_folder(dest_root, pl["name"])) for pl in playlists}
     home, home_name = {}, {}
     for pl in ordered:

@@ -22,11 +22,8 @@ DEFAULTS = {
     # Bandeja de entrada: donde caen las descargas nuevas
     "inbox": str(HOME / "Music" / "descargas para organizar"),
     # Dónde buscar canciones que ya tienes (además de dest_root e inbox)
-    "library_roots": [
-        str(HOME / "Music" / "DJ Library"),
-        str(HOME / "Music" / "Playlists rekordbox"),
-        str(HOME / "Music" / "deemix Music"),
-    ],
+    # (vacío en instalaciones nuevas: cada usuario elige las suyas en Ajustes)
+    "library_roots": [],
     "liked_name": "Me gusta",
     "include_liked": True,
     # Carpeta de playlists en Rekordbox que replica Spotify
@@ -43,7 +40,12 @@ def load():
     cfg = dict(DEFAULTS)
     if CONFIG_FILE.exists():
         try:
-            cfg.update(json.loads(CONFIG_FILE.read_text("utf-8")))
+            saved = json.loads(CONFIG_FILE.read_text("utf-8"))
+            if "library_roots" not in saved:  # instalaciones viejas: conservar lo que venía antes
+                saved["library_roots"] = [str(HOME / "Music" / n) for n in
+                                          ("DJ Library", "Playlists rekordbox", "deemix Music")
+                                          if (HOME / "Music" / n).is_dir()]
+            cfg.update(saved)
         except Exception:
             pass
     return cfg

@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import biblioteca as b
+import reglas
 from config import AUDIO_EXT, log
 from plataforma import native, rb_path
 
@@ -70,8 +71,7 @@ def rb_index(progress=None):
 
 # ---------------------------------------------------------------- plan
 def _q(path):
-    ext = Path(path).suffix.lower()
-    return {".aif": 0, ".aiff": 0, ".wav": 0, ".flac": 1, ".m4a": 2, ".mp3": 3}.get(ext, 4)
+    return reglas.quality(path, b._RULES[0])
 
 
 def _size(p):
@@ -90,7 +90,9 @@ def plan(cfg, analysis=None, progress=None):
     # --- 1. carpetas repetidas
     if progress:
         progress("Buscando carpetas repetidas…")
-    subdirs = sorted(d for d in dest.iterdir() if d.is_dir() and not d.name.startswith((".", "_")))
+    ex = reglas.Excluder(b.configure(cfg))
+    subdirs = sorted(d for d in dest.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))
+                     and not ex.dir_excluded(str(d)))
     counts = {str(d): b._audio_count(d) for d in subdirs}
     groups, used = [], set()
     for d in subdirs:
@@ -118,7 +120,7 @@ def plan(cfg, analysis=None, progress=None):
     if progress:
         progress("Buscando canciones repetidas…")
     skip = str(dest / DUP_DIR) + os.sep, str(dest / "_Informes") + os.sep
-    files = [f for f in b.scan([dest]) if not f.path.startswith(skip)]
+    files = [f for f in b.scan([dest], excluder=ex) if not f.path.startswith(skip)]
     home = {}
     for pl in analysis or []:
         for r in pl["tracks"]:
