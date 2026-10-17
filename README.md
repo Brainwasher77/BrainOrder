@@ -66,6 +66,12 @@ En la barra lateral, **Conexiones**:
   - **Rekordbox** (master.db), **Traktor Pro** (collection.nml), **Serato DJ** (crates en `_Serato_/Subcrates`) y **Engine DJ** (`Engine Library/Database2/m.db`). Al Reorganizar o Unificar también se corrigen sus rutas.
   - **Playlists M3U** para VirtualDJ, djay, Mixxx o cualquier otro.
 
+## Primer uso
+La primera vez se abre un **asistente** de 4 pasos: programas de DJ (detecta los instalados), de dónde vienen tus playlists, tus carpetas (sugiere las que tienen música) y listo. Se puede volver a abrir desde **Ajustes → Asistente de configuración**.
+
+## Historial y Deshacer
+Todo lo que SpotiSync mueve (Organizar, Reorganizar, Unificar) queda en **Historial**. **Deshacer** devuelve cada archivo a donde estaba y corrige las rutas en Rekordbox, Traktor, Serato y Engine DJ (con respaldo). Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta y te lo dice.
+
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:
 - **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que SpotiSync nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.

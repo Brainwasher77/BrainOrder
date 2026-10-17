@@ -17,6 +17,7 @@ sys.path.insert(0, str(HERE))
 import config  # noqa: E402
 import biblioteca  # noqa: E402
 import reglas  # noqa: E402
+import historial  # noqa: E402
 import destinos  # noqa: E402
 import fuentes  # noqa: E402
 from destinos.traktor import TraktorError  # noqa: E402
@@ -193,6 +194,7 @@ class Api:
             "pinned": self._cfg.get("pinned_paths", []),
             "inbox_count": self._inbox_signature()[1],
             "rules": reglas.get(self._cfg),
+            "setup_done": bool(self._cfg.get("setup_done")),
             "sources": self._sources_status(),
             "destinations": destinos.status(self._cfg),
             "formats": reglas.FORMATS,
@@ -244,60 +246,119 @@ class Api:
     def save_connections(self, payload):
         """Guarda fuentes y destinos. Valida Deezer (por red) antes de guardar."""
         payload = payload or {}
+        return self._task(lambda: self._apply_connections(payload), "connections", "Guardar conexiones")
+
+    def _apply_connections(self, payload):
+        """Guarda fuentes y destinos (lo usan Conexiones y el asistente)."""
+        src = dict(self._cfg.get("sources") or {})
+        dst = dict(self._cfg.get("destinations") or {})
+        warnings, info = [], {}
+        p = payload.get("sources") or {}
+        if "spotify" in p:
+            src["spotify"] = {"enabled": bool((p["spotify"] or {}).get("enabled", True))}
+        if "deezer" in p:
+            d = p["deezer"] or {}
+            dz = {"enabled": bool(d.get("enabled")), "user": (d.get("user") or "").strip(),
+                  "playlists": [x.strip() for x in d.get("playlists") or [] if x.strip()],
+                  "include_loved": bool(d.get("include_loved", True))}
+            if dz["enabled"] and (dz["user"] or dz["playlists"]):
+                self._progress("Comprobando Deezer…", 0.3)
+                chk = fuentes.deezer_src.check(dz)
+                warnings += chk["errors"]
+                info["deezer"] = chk
+            src["deezer"] = dz
+        if "archivos" in p:
+            a = p["archivos"] or {}
+            folder = (a.get("folder") or "").strip()
+            if a.get("enabled") and folder and not Path(folder).is_dir():
+                warnings.append(f"No existe la carpeta {folder}")
+            src["archivos"] = {"enabled": bool(a.get("enabled")), "folder": folder}
+        q = payload.get("destinations") or {}
+        if "rekordbox" in q:
+            dst["rekordbox"] = {"enabled": bool((q["rekordbox"] or {}).get("enabled"))}
+        if "traktor" in q:
+            t = q["traktor"] or {}
+            nml = (t.get("nml") or "").strip()
+            if nml and not nml.lower().endswith(".nml"):
+                warnings.append("El archivo de Traktor debe ser collection.nml")
+                nml = ""
+            dst["traktor"] = {"enabled": bool(t.get("enabled")), "nml": nml}
+        for k in ("serato", "engine"):
+            if k in q:
+                v = q[k] or {}
+                d = (v.get("dir") or "").strip()
+                if d and not Path(d).is_dir():
+                    warnings.append(f"No existe la carpeta {d}")
+                    d = ""
+                dst[k] = {"enabled": bool(v.get("enabled")), "dir": d}
+        if "m3u" in q:
+            m = q["m3u"] or {}
+            dst["m3u"] = {"enabled": bool(m.get("enabled")), "folder": (m.get("folder") or "").strip()}
+        if "folder_name" in payload and (payload["folder_name"] or "").strip():
+            self._cfg["rekordbox_folder"] = payload["folder_name"].strip()
+        self._cfg["sources"], self._cfg["destinations"] = src, dst
+        config.save(self._cfg)
+        self._progress("Conexiones guardadas.", 1)
+        return {"sources": self._sources_status(), "destinations": destinos.status(self._cfg),
+                "warnings": warnings, "info": info, "folder_name": self._cfg.get("rekordbox_folder")}
+
+    # ---------- asistente de primer uso ----------
+    def setup_info(self):
+        """Lo que el asistente puede sugerir: programas de DJ detectados y carpetas con música."""
+        home = Path.home()
+        music = home / "Music"
+        cands = []
+        skip = {"_Serato_", "Engine Library", "PioneerDJ", "rekordbox", "Ableton", "Audio Music Apps", "GarageBand"}
+        for base in (music, home / "Downloads", home / "Desktop"):
+            try:
+                subs = [d for d in base.iterdir() if d.is_dir() and not d.name.startswith((".", "_")) and d.name not in skip]
+            except OSError:
+                continue
+            for d in subs:
+                n = 0
+                for dirpath, dirnames, filenames in os.walk(d):
+                    dirnames[:] = [x for x in dirnames if not x.startswith(".")]
+                    n += sum(1 for f in filenames if os.path.splitext(f)[1].lower() in config.AUDIO_EXT)
+                    if n >= 5000:
+                        break
+                if n:
+                    cands.append({"path": str(d), "count": n, "capped": n >= 5000})
+        cands.sort(key=lambda x: -x["count"])
+        cfg_all = {**self._cfg, "destinations": {k: {"enabled": True} for k in destinos.DESTINATIONS}}
+        found = {k: {"label": m.LABEL, "available": bool(m.available(cfg_all)) if k != "m3u" else False}
+                 for k, m in destinos.DESTINATIONS.items()}
+        return {"ok": True, "home": str(home), "music_dirs": cands[:20], "dj": found,
+                "defaults": {"dest_root": self._cfg.get("dest_root"), "inbox": self._cfg.get("inbox"),
+                             "library_roots": self._cfg.get("library_roots") or [],
+                             "client_id": self._cfg.get("client_id", ""), "redirect_uri": self._cfg.get("redirect_uri")}}
+
+    def finish_setup(self, payload):
+        payload = payload or {}
 
         def run():
-            src = dict(self._cfg.get("sources") or {})
-            dst = dict(self._cfg.get("destinations") or {})
-            warnings, info = [], {}
-            p = payload.get("sources") or {}
-            if "spotify" in p:
-                src["spotify"] = {"enabled": bool((p["spotify"] or {}).get("enabled", True))}
-            if "deezer" in p:
-                d = p["deezer"] or {}
-                dz = {"enabled": bool(d.get("enabled")), "user": (d.get("user") or "").strip(),
-                      "playlists": [x.strip() for x in d.get("playlists") or [] if x.strip()],
-                      "include_loved": bool(d.get("include_loved", True))}
-                if dz["enabled"] and (dz["user"] or dz["playlists"]):
-                    self._progress("Comprobando Deezer…", 0.3)
-                    chk = fuentes.deezer_src.check(dz)
-                    warnings += chk["errors"]
-                    info["deezer"] = chk
-                src["deezer"] = dz
-            if "archivos" in p:
-                a = p["archivos"] or {}
-                folder = (a.get("folder") or "").strip()
-                if a.get("enabled") and folder and not Path(folder).is_dir():
-                    warnings.append(f"No existe la carpeta {folder}")
-                src["archivos"] = {"enabled": bool(a.get("enabled")), "folder": folder}
-            q = payload.get("destinations") or {}
-            if "rekordbox" in q:
-                dst["rekordbox"] = {"enabled": bool((q["rekordbox"] or {}).get("enabled"))}
-            if "traktor" in q:
-                t = q["traktor"] or {}
-                nml = (t.get("nml") or "").strip()
-                if nml and not nml.lower().endswith(".nml"):
-                    warnings.append("El archivo de Traktor debe ser collection.nml")
-                    nml = ""
-                dst["traktor"] = {"enabled": bool(t.get("enabled")), "nml": nml}
-            for k in ("serato", "engine"):
-                if k in q:
-                    v = q[k] or {}
-                    d = (v.get("dir") or "").strip()
-                    if d and not Path(d).is_dir():
-                        warnings.append(f"No existe la carpeta {d}")
-                        d = ""
-                    dst[k] = {"enabled": bool(v.get("enabled")), "dir": d}
-            if "m3u" in q:
-                m = q["m3u"] or {}
-                dst["m3u"] = {"enabled": bool(m.get("enabled")), "folder": (m.get("folder") or "").strip()}
-            if "folder_name" in payload and (payload["folder_name"] or "").strip():
-                self._cfg["rekordbox_folder"] = payload["folder_name"].strip()
-            self._cfg["sources"], self._cfg["destinations"] = src, dst
+            dest = (payload.get("dest_root") or "").strip()
+            inbox = (payload.get("inbox") or "").strip()
+            if not dest or not inbox:
+                raise SpotifyError("Elige la carpeta para tu música organizada y la de descargas.")
+            self._progress("Creando carpetas…", 0.2)
+            for d in (dest, inbox):
+                Path(d).expanduser().mkdir(parents=True, exist_ok=True)
+            res = self.save_settings({"dest_root": dest, "inbox": inbox, "client_id": payload.get("client_id", ""),
+                                      "library_roots": [r for r in payload.get("library_roots") or []
+                                                        if r and r not in (dest, inbox)],
+                                      "include_liked": payload.get("include_liked", True)})
+            if not res.get("ok"):
+                raise SpotifyError(res.get("error"))
+            self._progress("Guardando conexiones…", 0.5)
+            out = self._apply_connections({"sources": payload.get("sources") or {},
+                                           "destinations": payload.get("destinations") or {},
+                                           "folder_name": payload.get("folder_name") or "SpotiSync"})
+            self._cfg["setup_done"] = True
             config.save(self._cfg)
-            self._progress("Conexiones guardadas.", 1)
-            return {"sources": self._sources_status(), "destinations": destinos.status(self._cfg),
-                    "warnings": warnings, "info": info, "folder_name": self._cfg.get("rekordbox_folder")}
-        return self._task(run, "connections", "Guardar conexiones")
+            self._progress("¡Listo!", 1)
+            st = self.get_state()
+            return {**out, "state": st}
+        return self._task(run, "setup", "Configuración inicial")
 
     def _dj_precheck(self, keys=None):
         """Antes de mover archivos: los programas de DJ que hay que corregir deben estar cerrados."""
@@ -702,6 +763,7 @@ class Api:
 
     # ---------- organizar ----------
     def organize(self, targets=True, pid=None, extra=None):
+        label = "Organizar" + (f" «{next((p['name'] for p in (_read_json(CACHE_ANALYSIS, None) or []) if p['id'] == pid), '')}»" if pid else " descargas")
         """Organiza todo, o solo una playlist (pid).
         extra (solo en el general): {"groups": [nombres de subcarpetas de descargas],
                                      "files": [{"src", "dest"}]} para descargas sin playlist."""
@@ -732,10 +794,12 @@ class Api:
                             sel.append((str(src), str(dest)))
                     if groups or sel:
                         extra_res = organizador.move_unmatched(groups, sel, self._cfg, self._progress)
+                journal = files.pop("journal", []) + ((extra_res or {}).pop("journal", []) if extra_res else [])
+                op_id = historial.record("organize", label, journal)
                 if not sp_data["playlists"] or not analysis:
                     self._inbox_sig = None
                     return {"files": files, "extra": extra_res, "rekordbox": None, "rekordbox_error": None,
-                            "analysis": analysis or None}
+                            "analysis": analysis or None, "op_id": op_id}
                 self._progress("Re-escaneando tu música…")
                 self._set_stage(50, 85)
                 analysis = self._build_analysis(light=True)
@@ -759,9 +823,58 @@ class Api:
             self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
             self._progress("Organización terminada.", 1)
             return {"files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
-                    "dj": dj, "analysis": analysis}
-        label = "Organizar" + (f" «{next((p['name'] for p in (_read_json(CACHE_ANALYSIS, None) or []) if p['id'] == pid), '')}»" if pid else " descargas")
+                    "dj": dj, "analysis": analysis, "op_id": op_id}
         return self._task(run, f"organize:{pid or 'all'}", label, files=True)
+
+    # ---------- historial y deshacer ----------
+    def history(self):
+        return {"ok": True, "ops": historial.list_ops()}
+
+    def undo(self, op_id):
+        op = historial.get(op_id)
+        label = (op or {}).get("label") or "operación"
+
+        def run():
+            if not op:
+                raise unificar.UnifyError("No encontré esa operación en el historial.")
+            if op.get("undone"):
+                raise unificar.UnifyError("Esa operación ya se deshizo.")
+            todo, skipped = historial.plan_undo(op)
+            if not todo:
+                return {"restored": 0, "skipped": skipped, "analysis": None}
+            back = {cur: orig for cur, orig in todo}
+            # Rekordbox: si alguna pista movida está en la librería, hay que corregirla (cerrado y con respaldo)
+            rb = unificar.rb_index(self._progress) or {}
+            rb_change = {cur: orig for cur, orig in back.items() if cur in rb}
+            if rb_change and rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a deshacer: hay pistas de tu librería entre los archivos.")
+            self._dj_precheck()
+            with self._state:
+                self._set_stage(0, 60)
+                protect = [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or [])
+                done = historial.apply_undo(op, todo, protect, self._progress)
+                self._set_stage(60, 80)
+                rb_stats, warnings = None, []
+                if rb_change:
+                    try:
+                        self._progress("Corrigiendo rutas en Rekordbox…")
+                        rekordbox_sync.backup()
+                        rb_stats = unificar._rb_apply({k: v for k, v in rb_change.items() if k in done}, {}, {})
+                    except Exception as e:
+                        warnings.append(f"Rekordbox: {e}")
+                dj, w2 = self._dj_fix(done)
+                warnings += w2
+                self._set_stage(80, 100)
+                self._progress("Actualizando el análisis…")
+                analysis = None
+                if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
+                    analysis = self._build_analysis(light=True)
+                    reportes.write_reports(analysis, self._cfg)
+            self._inbox_sig = None
+            self._progress("Listo.", 1)
+            return {"restored": len(done), "skipped": skipped, "rekordbox": rb_stats, "dj": dj,
+                    "warnings": warnings, "analysis": analysis}
+        return self._task(run, f"undo:{op_id}", f"Deshacer «{label}»", files=True)
 
     # ---------- reorganizar por playlist ----------
     def relocate(self, pid, moves, keep, remember=True):
@@ -793,6 +906,7 @@ class Api:
                         if str(Path(new).parent) != home.get(src):
                             pinned.add(new)
                 res["dj"], res["dj_warnings"] = self._dj_fix(res["changes"]) if res["changes"] else ({}, [])
+                res["op_id"] = historial.record("relocate", f"Reorganizar «{pl['name']}»", list(res["changes"].items()))
                 pinned -= set(res["changes"])  # las rutas viejas ya no existen
                 self._cfg["pinned_paths"] = sorted(pinned)
                 config.save(self._cfg)
@@ -1093,7 +1207,9 @@ class Api:
             self._dj_precheck()
             with self._state:
                 res = unificar.apply(pl, self._cfg, merge_ids or [], dup_ids or [], bool(remove_empty), self._progress)
-                res["dj"], res["dj_warnings"] = self._dj_fix(res.pop("moved_map", {}), res.pop("repoint", {}))
+                moved_map = res.pop("moved_map", {})
+                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, res.pop("repoint", {}))
+                res["op_id"] = historial.record("unify", "Unificar repetidos", list(moved_map.items()))
                 self._unify_plan = None
                 analysis = None
                 if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):

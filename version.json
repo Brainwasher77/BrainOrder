@@ -1,5 +1,5 @@
 {
-  "version": "1.10.0",
-  "build": 12,
-  "notes": "Serato DJ y Engine DJ como destinos: crates y playlists en el mismo orden, con respaldo y corrección de rutas."
+  "version": "1.11.0",
+  "build": 13,
+  "notes": "Historial con Deshacer para todo lo que se mueve, y asistente de primer uso para instalaciones nuevas."
 }

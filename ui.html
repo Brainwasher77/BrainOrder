@@ -40,6 +40,14 @@ header *{-webkit-app-region:no-drag}
 .progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
 .pcard{max-width:520px;margin:60px auto;text-align:center}
 .rules{max-width:860px}
+.wiz{max-width:640px;width:100%}
+.wiz .steps{display:flex;gap:6px;margin:0 0 16px}
+.wiz .steps i{flex:1;height:4px;border-radius:3px;background:var(--line)}
+.wiz .steps i.on{background:var(--acid)}
+.wiz .opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;cursor:pointer;background:var(--panel2)}
+.wiz .opt input[type=checkbox]{margin-top:3px}
+.wiz .opt .tag{margin-left:6px;margin-right:0}
+.wiz .big{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:4px 0 8px}
 .cx{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0 0;background:var(--panel2)}
 .cxh{display:flex;align-items:center;gap:10px;margin-bottom:4px}
 .cxh b{font-size:14px}
@@ -210,6 +218,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
+        <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
       </div>
@@ -330,6 +339,7 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  $('nHist').textContent = (S.hist||[]).filter(o=>!o.undone).length || '–';
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
@@ -366,6 +376,7 @@ function renderMain(){
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(S.view==='conn'){ m.innerHTML = connView(); return; }
+  if(S.view==='hist'){ m.innerHTML = histView(); return; }
   if(!anySource() && !S.analysis){
     m.innerHTML = `<div class="empty"><h3>¿De dónde vienen tus playlists?</h3>
       <p><b>Spotify</b>: pon el Client ID de tu app de desarrollador en Ajustes y toca Conectar Spotify.<br>
@@ -649,7 +660,8 @@ async function unifyRun(){
   toast(`Listo: <b>${x.retired}</b> copias apartadas en _duplicados, ${x.moved} archivos movidos de carpeta, ${x.empty_removed} carpetas vacías borradas.`
     + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:'')
     + Object.entries(x.dj||{}).map(([k,v])=>`<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`).join('')
-    + (x.dj_warnings||[]).map(w=>`<br><span style="color:var(--org)">${esc(w)}</span>`).join(''));
+    + (x.dj_warnings||[]).map(w=>`<br><span style="color:var(--org)">${esc(w)}</span>`).join('') + undoLink(x));
+  loadHist();
 }
 // ---------- copiar links de lo que falta ----------
 function missingFor(scope){
@@ -776,12 +788,13 @@ async function rgApply(){
   if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
   for(const [k,v] of Object.entries(x.dj||{})) msg += `<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`;
   for(const w of (x.dj_warnings||[])) msg += `<br><span style="color:var(--org)">${esc(w)}</span>`;
+  msg += undoLink(x); loadHist();
   toast(msg, !!x.skipped.length);
 }
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='hist') loadHist(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -880,6 +893,140 @@ async function cxSave(){
   toast('Conexiones guardadas.' + (dz&&dz.user?`<br>Deezer: perfil de <b>${esc(dz.user)}</b>.`:'') + (dz&&dz.playlists.length?`<br>Deezer: ${dz.playlists.map(esc).join(', ')}.`:'')
     + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'') + '<br>Dale ⟳ para traer las playlists.', !!(r.warnings||[]).length);
 }
+
+// ---------- asistente de primer uso ----------
+let W = null;
+async function openWizard(){
+  let info;
+  try{ info = await api().setup_info(); }catch(e){ toast('No pude abrir el asistente: '+esc(e), true); return; }
+  const dj = {}; Object.entries(info.dj).forEach(([k,x])=>{ if(k!=='m3u') dj[k] = x.available; });
+  const d = info.defaults;
+  W = {step:0, info, dj, m3u:false, m3uFolder:'', folder_name:S.settings.rekordbox_folder||'SpotiSync',
+    spotify:true, client_id:d.client_id||'', deezer:false, dzUser:'', files:false, filesFolder:'',
+    dest_root:d.dest_root, inbox:d.inbox, roots:new Set(d.library_roots||[])};
+  wizRender();
+}
+const WSTEPS = 5;
+function wizRender(){
+  const w = W, i = w.info, st = w.step;
+  const bar = `<div class="steps">${Array.from({length:WSTEPS},(_,k)=>`<i class="${k<=st?'on':''}"></i>`).join('')}</div>`;
+  const pickRow = (label, val, fn) => `<label class="f">${label}</label><div style="display:flex;gap:8px;align-items:center"><span class="path" style="flex:1">${val?'📁 '+esc(short(val)):'<span class="hint">sin elegir</span>'}</span><button onclick="${fn}">Elegir…</button></div>`;
+  let body = '';
+  if(st===0) body = `<div class="big">Bienvenido a SpotiSync 👋</div>
+    <p>Te ayuda a tener en tu computador las canciones de tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…), ordenadas en carpetas y listas dentro de tus programas de DJ.</p>
+    <div class="box">En 4 pasos: programas de DJ → de dónde vienen tus playlists → carpetas → listo. Puedes cambiar todo después en <b>Conexiones</b>, <b>Reglas</b> y <b>Ajustes</b>.</div>
+    <div class="box">🔒 SpotiSync nunca borra música: lo repetido se aparta en una carpeta <code>_duplicados</code>, cada programa de DJ se respalda antes de tocarlo y todo lo que mueve se puede deshacer desde <b>Historial</b>.</div>`;
+  if(st===1) body = `<div class="big">¿Qué programas de DJ usas?</div>
+    <p class="hint">Marqué los que encontré en este computador. SpotiSync crea ahí tus playlists, en el mismo orden.</p>
+    ${Object.entries(i.dj).filter(([k])=>k!=='m3u').map(([k,x])=>`<label class="opt"><input type="checkbox" ${w.dj[k]?'checked':''} onchange="W.dj['${k}']=this.checked">
+      <div><b>${esc(x.label)}</b><span class="tag ${x.available?'ok':''}">${x.available?'encontrado':'no encontrado'}</span>
+      ${x.available?'':'<div class="hint" style="margin:2px 0 0">Si lo usas, ábrelo una vez y luego actívalo en Conexiones.</div>'}</div></label>`).join('')}
+    <label class="opt"><input type="checkbox" ${w.m3u?'checked':''} onchange="W.m3u=this.checked;wizRender()"><div><b>Otro (VirtualDJ, djay, Mixxx…)</b><div class="hint" style="margin:2px 0 0">Guarda tus playlists como archivos M3U para importarlas.</div></div></label>
+    ${w.m3u?pickRow('Carpeta para las playlists M3U', w.m3uFolder, "wizPick('m3uFolder')"):''}
+    <label class="f">Nombre de la carpeta de playlists dentro de cada programa</label><input class="t" value="${esc(w.folder_name)}" oninput="W.folder_name=this.value">`;
+  if(st===2) body = `<div class="big">¿De dónde vienen tus playlists?</div>
+    <p class="hint">Puedes usar varias a la vez.</p>
+    <label class="opt"><input type="checkbox" ${w.spotify?'checked':''} onchange="W.spotify=this.checked;wizRender()"><div style="flex:1"><b>Spotify</b>
+      ${w.spotify?`<div class="hint" style="margin:4px 0 0">1. Entra a <a class="lnk" onclick="openUrl('https://developer.spotify.com/dashboard')">developer.spotify.com/dashboard</a> y crea una app (Web API).<br>
+        2. En «Redirect URIs» agrega <code>${esc(i.defaults.redirect_uri)}</code> <a class="lnk" onclick="api().copy_text(${jsq(i.defaults.redirect_uri)});toast('Copiado.')">copiar</a><br>3. Pega aquí su <b>Client ID</b>:</div>
+        <input class="t" style="margin-top:6px" placeholder="Client ID" value="${esc(w.client_id)}" oninput="W.client_id=this.value.trim()">`:''}</div></label>
+    <label class="opt"><input type="checkbox" ${w.deezer?'checked':''} onchange="W.deezer=this.checked;wizRender()"><div style="flex:1"><b>Deezer</b> <span class="tag">sin login</span>
+      ${w.deezer?`<input class="t" style="margin-top:6px" placeholder="Link de tu perfil de Deezer" value="${esc(w.dzUser)}" oninput="W.dzUser=this.value">`:''}</div></label>
+    <label class="opt"><input type="checkbox" ${w.files?'checked':''} onchange="W.files=this.checked;wizRender()"><div style="flex:1"><b>Apple Music, SoundCloud, Tidal u otros</b>
+      <div class="hint" style="margin:2px 0 0">Exportas la playlist a un archivo y la dejas en una carpeta (en Conexiones te explico cómo).</div>
+      ${w.files?`<div style="margin-top:6px">${pickRow('Carpeta de playlists exportadas', w.filesFolder, "wizPick('filesFolder')")}</div>`:''}</div></label>`;
+  if(st===3) body = `<div class="big">Tus carpetas</div>
+    ${pickRow('📂 Dónde quieres tu música organizada (una subcarpeta por playlist)', w.dest_root, "wizPick('dest_root')")}
+    ${pickRow('⬇ Dónde caen tus descargas nuevas', w.inbox, "wizPick('inbox')")}
+    <div class="hint" style="margin-top:4px">Si no existen, se crean.</div>
+    <label class="f" style="margin-top:16px">¿Dónde más tienes música? Así sé lo que ya tienes y no te pido descargarlo otra vez.</label>
+    ${i.music_dirs.filter(x=>x.path!==w.dest_root&&x.path!==w.inbox).map(x=>`<label class="opt" style="padding:7px 10px;margin:5px 0"><input type="checkbox" ${w.roots.has(x.path)?'checked':''} onchange="this.checked?W.roots.add(${jsq(x.path)}):W.roots.delete(${jsq(x.path)})">
+      <div style="flex:1;min-width:0"><span class="path">📁 ${esc(short(x.path))}</span> <span class="art">${x.count}${x.capped?'+':''} audios</span></div></label>`).join('') || '<div class="hint">No encontré otras carpetas con música.</div>'}
+    ${[...w.roots].filter(r=>!i.music_dirs.some(x=>x.path===r)).map(r=>`<div class="opt" style="padding:7px 10px;margin:5px 0"><span class="path" style="flex:1">📁 ${esc(short(r))}</span><button class="ghost" onclick="W.roots.delete(${jsq(r)});wizRender()">✕</button></div>`).join('')}
+    <button style="margin-top:6px" onclick="wizAddRoot()">＋ Otra carpeta…</button>`;
+  if(st===4){ const dj = Object.entries(w.dj).filter(([,v])=>v).map(([k])=>DJ_LABEL[k]).concat(w.m3u?['M3U']:[]);
+    const src = [w.spotify?'Spotify':'', w.deezer?'Deezer':'', w.files?'archivos exportados':''].filter(Boolean);
+    body = `<div class="big">Todo listo ✅</div>
+    <div class="box">🎧 Playlists de: <b>${src.join(', ')||'—'}</b></div>
+    <div class="box">🎛️ Programas de DJ: <b>${dj.join(', ')||'ninguno'}</b> (carpeta «${esc(w.folder_name)}»)</div>
+    <div class="box">📂 Música organizada en <code>${esc(short(w.dest_root))}</code><br>⬇ Descargas en <code>${esc(short(w.inbox))}</code><br>🔎 Además busca en ${w.roots.size} carpeta${w.roots.size!==1?'s':''}.</div>
+    ${w.spotify&&!w.client_id?'<div class="box warn">Te falta el Client ID de Spotify: puedes ponerlo después en Ajustes.</div>':''}
+    <p class="hint">Después: ${w.spotify&&w.client_id?'<b>Conectar Spotify</b>, luego ':''}<b>⟳ Cargar playlists</b> y <b>🔄 Analizar</b> la que quieras.</p>`; }
+  const err = wizCheck();
+  modal(`<div class="wiz">${bar}${body}
+    <div class="actions">${st>0?'<button onclick="W.step--;wizRender()">Atrás</button>':(S.settings.setup_done?'<button onclick="closeModal()">Cerrar</button>':'')}
+      <span style="flex:1;align-self:center;color:var(--org);font-size:12.5px">${err||''}</span>
+      ${st<WSTEPS-1?`<button class="primary" ${err?'disabled':''} onclick="W.step++;wizRender()">${st===0?'Empezar':'Siguiente'}</button>`
+        :`<button class="primary" id="wizGo" onclick="wizFinish()">Terminar</button>`}</div></div>`);
+}
+function wizCheck(){
+  const w = W;
+  if(w.step===1 && w.m3u && !w.m3uFolder) return 'Elige la carpeta para las M3U.';
+  if(w.step===2){ if(!w.spotify && !w.deezer && !w.files) return 'Elige al menos una fuente.';
+    if(w.deezer && !w.dzUser.trim()) return 'Pega el link de tu perfil de Deezer.';
+    if(w.files && !w.filesFolder) return 'Elige la carpeta de playlists exportadas.'; }
+  if(w.step===3){ if(!w.dest_root || !w.inbox) return 'Elige las dos carpetas.';
+    if(w.dest_root===w.inbox) return 'Música organizada y descargas deben ser carpetas distintas.'; }
+  return '';
+}
+async function wizPick(key){ const p = await api().pick_folder(W[key] || S.settings.dest_root); if(p){ W[key]=p; wizRender(); } }
+async function wizAddRoot(){ const p = await api().pick_folder(''); if(p){ W.roots.add(p); wizRender(); } }
+async function wizFinish(){
+  const w = W, b = $('wizGo'); if(b){ b.disabled = true; b.textContent = 'Guardando…'; }
+  const dests = {}; Object.entries(w.dj).forEach(([k,v])=>dests[k]={enabled:v});
+  dests.m3u = {enabled:w.m3u, folder:w.m3uFolder};
+  const r = await api().finish_setup({dest_root:w.dest_root, inbox:w.inbox, library_roots:[...w.roots], client_id:w.spotify?w.client_id:'',
+    folder_name:w.folder_name, sources:{spotify:{enabled:w.spotify}, deezer:{enabled:w.deezer, user:w.dzUser, playlists:[]}, archivos:{enabled:w.files, folder:w.filesFolder}},
+    destinations:dests});
+  if(!r.ok){ toast(esc(r.error), true); if(b){ b.disabled=false; b.textContent='Terminar'; } return; }
+  const st = r.state; S.settings = st.settings; S.settings.setup_done = true; S.sources = st.sources; S.dests = st.destinations; S.inboxCount = st.inbox_count||0;
+  closeModal(); render();
+  toast('¡Listo! SpotiSync quedó configurado.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'')
+    + (w.spotify&&w.client_id?'<br>Ahora toca <b>Conectar Spotify</b>.':'<br>Ahora dale <b>⟳</b> en Tus playlists.'), !!(r.warnings||[]).length);
+  if(!(w.spotify&&w.client_id)) loadPlaylists();
+}
+
+// ---------- historial y deshacer ----------
+const KIND = {organize:'⬇ Organizar', relocate:'📂 Reorganizar', unify:'🧹 Unificar'};
+async function loadHist(){ try{ const r = await api().history(); S.hist = r.ops||[]; if(S.view==='hist') render(); else paintNav(); }catch(e){} }
+function paintNav(){ const el=$('nHist'); if(el) el.textContent = (S.hist||[]).filter(o=>!o.undone).length || '–'; }
+function histView(){
+  const ops = S.hist;
+  if(!ops) return '<div class="empty"><p>Cargando…</p></div>';
+  return `<div class="rules"><h2 style="margin-top:0">Historial</h2>
+    <p class="hint" style="margin-top:-6px">Cada vez que SpotiSync mueve archivos queda aquí. <b>Deshacer</b> devuelve cada archivo a donde estaba y corrige las rutas en tus programas de DJ. Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta.</p>
+    ${ops.length? ops.map(o=>{ const d = new Date(o.time); const busyK = running('undo:'+o.id);
+      return `<div class="cx" style="${o.undone?'opacity:.55':''}"><div class="cxh"><b>${esc(KIND[o.kind]||o.kind)}</b>
+        <span class="tag">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
+        ${o.undone?'<span class="art">deshecho</span>':`<button ${o.ready&&!busyK?'':'disabled'} onclick="askUndo(${jsq(o.id)})">${busyK?'Deshaciendo…':'↩ Deshacer'}</button>`}</div>
+        <div>${esc(o.label)} · <b>${o.count}</b> archivo${o.count!==1?'s':''}${!o.undone&&o.ready<o.count?` <span class="art">(${o.ready} se pueden devolver; los demás cambiaron desde entonces)</span>`:''}</div>
+        <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.sample.map(esc).join(' · ')}${o.count>o.sample.length?' …':''}</div></div>`; }).join('')
+      : '<div class="hint">Todavía no has movido archivos con SpotiSync.</div>'}</div>`;
+}
+function askUndo(id){
+  const o = (S.hist||[]).find(x=>x.id===id); if(!o) return;
+  modal(`<h3>Deshacer «${esc(o.label)}»</h3>
+    <p>Se devuelven <b>${o.ready}</b> archivo${o.ready!==1?'s':''} a donde estaban y se corrigen sus rutas en tus programas de DJ (con respaldo).</p>
+    <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que SpotiSync creó se quedan; solo cambian las rutas.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();undoOp(${jsq(id)})">Deshacer</button></div>`);
+}
+async function undoOp(id){
+  setTimeout(()=>{ if(S.view==='hist') render(); }, 150);
+  const r = await api().undo(id);
+  await loadHist();
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r);
+  try{ const st = await api().get_state(); S.inboxCount = st.inbox_count || 0; }catch(e){}
+  render();
+  let msg = `↩ <b>${r.restored}</b> archivo${r.restored!==1?'s':''} devuelto${r.restored!==1?'s':''} a su lugar.`;
+  if(r.skipped.length) msg += `<br><span style="color:var(--org)">${r.skipped.length} se saltaron: ${r.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${r.skipped.length>2?'…':''}</span>`;
+  if(r.rekordbox) msg += `<br>Rekordbox: ${r.rekordbox.paths} rutas corregidas.`;
+  for(const [k,v] of Object.entries(r.dj||{})) msg += `<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas.`;
+  for(const w of (r.warnings||[])) msg += `<br><span style="color:var(--org)">${esc(w)}</span>`;
+  toast(msg, !!r.skipped.length || !!(r.warnings||[]).length);
+}
+function undoLink(r){ return r && r.op_id ? `<br><a class="lnk" onclick="askUndoLatest(${jsq(r.op_id)})">↩ Deshacer</a>` : ''; }
+async function askUndoLatest(id){ await loadHist(); askUndo(id); }
 
 // ---------- reglas ----------
 // Borrador editable; se guarda con «Guardar y aplicar».
@@ -1112,6 +1259,7 @@ async function organize(){
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
   msg += djSummary(r.dj);
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
+  msg += undoLink(r); loadHist();
   toast(msg, Object.values(r.dj||{}).some(x=>x.error));
 }
 // programas de DJ que se actualizan al organizar (los activos en Conexiones)
@@ -1138,7 +1286,8 @@ function openUrl(u){ api().open_url(u); }
 
 function openSettings(){
   const s = S.settings;
-  modal(`<h3>Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')}</span></h3>
+  modal(`<h3 style="display:flex;align-items:center;gap:8px">Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')}</span>
+      <button class="ghost" style="margin-left:auto;font-size:12.5px" onclick="closeModal();openWizard()">🧭 Asistente de configuración</button></h3>
     <div class="box"><b>App de Spotify:</b> en <code>developer.spotify.com/dashboard</code> crea una app (Web API), agrega como Redirect URI
       <code>${esc(s.redirect_uri)}</code> y pega aquí su Client ID. No necesitas el Client Secret.</div>
     <label class="f">Client ID</label><input class="t mono" id="sClient" value="${esc(s.client_id)}" placeholder="32 caracteres">
@@ -1190,10 +1339,13 @@ window.addEventListener('pywebviewready', async () => {
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
+  loadHist();
   try{ api().start_watch(); }catch(e){}
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
   const pend = Object.entries(S.foreign).filter(([,f]) => (f.choice||'preguntar')==='preguntar').map(([id])=>id);
+  S.settings.setup_done = !!st.setup_done;
+  if(!st.setup_done){ openWizard(); return; }
   if(pend.length) askForeign(pend);
 });
 $('mbg').addEventListener('click', e => { if(e.target.id==='mbg') closeModal(); });
