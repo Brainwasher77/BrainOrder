@@ -74,6 +74,9 @@ La primera vez se abre un **asistente** de 4 pasos: programas de DJ (detecta los
 ## Historial y Deshacer
 Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Historial**. **Deshacer** devuelve cada archivo a donde estaba y corrige las rutas en Rekordbox, Traktor, Serato y Engine DJ (con respaldo). Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta y te lo dice.
 
+## Key y energía (Mixed In Key)
+Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus archivos, leídos de las etiquetas que deja **Mixed In Key 10 u 11** (también entiende la key de otros programas: «Am», «C#m», Open Key «1m»…; se marcan con *). Se ordena por cualquiera de esas columnas, el filtro **Sin Mixed In Key** muestra lo que falta analizar y escribir **8A** en el buscador deja solo esa key. BrainOrder solo lee: nunca cambia las etiquetas.
+
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:
 - **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que BrainOrder nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.
