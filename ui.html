@@ -548,6 +548,7 @@ function hostLabel(u){ const h=(u||'').toLowerCase();
   return h.includes('spotify')?'Spotify':h.includes('deezer')?'Deezer':h.includes('soundcloud')?'SoundCloud':h.includes('tidal')?'Tidal'
     :h.includes('apple')?'Apple Music':h.includes('youtu')?'YouTube':'Link'; }
 const SRC_TAG = {deezer:'DZ', archivos:'📄'};
+const DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', engine:'Engine DJ', m3u:'M3U'};
 function links(r){
   const out=[];
   if(r.url) out.push(`<a class="lnk" onclick="openUrl(${jsq(r.url)})">${hostLabel(r.url)} ↗</a>`);
@@ -647,7 +648,7 @@ async function unifyRun(){
   render();
   toast(`Listo: <b>${x.retired}</b> copias apartadas en _duplicados, ${x.moved} archivos movidos de carpeta, ${x.empty_removed} carpetas vacías borradas.`
     + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:'')
-    + Object.entries(x.dj||{}).map(([k,v])=>`<br>${k==='traktor'?'Traktor':esc(k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`).join('')
+    + Object.entries(x.dj||{}).map(([k,v])=>`<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`).join('')
     + (x.dj_warnings||[]).map(w=>`<br><span style="color:var(--org)">${esc(w)}</span>`).join(''));
 }
 // ---------- copiar links de lo que falta ----------
@@ -773,7 +774,7 @@ async function rgApply(){
   const x=r.result; let msg = `<b>${x.moved}</b> movida${x.moved!==1?'s':''}` + (keep.length&&remember?`, ${keep.length} se quedan donde están (no te las vuelvo a proponer)`:'');
   if(x.skipped.length) msg += `<br><span style="color:var(--org)">${x.skipped.length} no se movieron: ${x.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${x.skipped.length>2?'…':''}</span>`;
   if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
-  for(const [k,v] of Object.entries(x.dj||{})) msg += `<br>${k==='traktor'?'Traktor':esc(k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`;
+  for(const [k,v] of Object.entries(x.dj||{})) msg += `<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`;
   for(const w of (x.dj_warnings||[])) msg += `<br><span style="color:var(--org)">${esc(w)}</span>`;
   toast(msg, !!x.skipped.length);
 }
@@ -793,6 +794,8 @@ function cxInit(){
     rekordbox:{enabled:!!(de.rekordbox||{}).wanted, available:!!(de.rekordbox||{}).available},
     traktor:{enabled:!!(de.traktor||{}).wanted, nml:(de.traktor||{}).nml||'', available:!!(de.traktor||{}).available},
     m3u:{enabled:!!(de.m3u||{}).wanted, folder:(de.m3u||{}).folder||''},
+    serato:{enabled:!!(de.serato||{}).wanted, dir:(de.serato||{}).dir||'', available:!!(de.serato||{}).available},
+    engine:{enabled:!!(de.engine||{}).wanted, dir:(de.engine||{}).dir||'', available:!!(de.engine||{}).available},
     folder_name: S.settings.rekordbox_folder||'SpotiSync'};
   CX.deezer.enabled = !!(so.deezer||{}).enabled; CX.archivos.enabled = !!(so.archivos||{}).enabled;
 }
@@ -837,9 +840,15 @@ function connView(){
     <div class="cx"><div class="cxh"><b>Traktor Pro</b><span class="tag ${c.traktor.available||c.traktor.nml?'ok':''}">${c.traktor.nml?'collection.nml encontrado':'no encontrado'}</span>${tog(c.traktor.enabled,"CX.traktor.enabled=this.checked;cxDirty();render()")}</div>
       ${c.traktor.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.traktor.nml?'📄 '+esc(short(c.traktor.nml)):'<span class="hint">elige tu collection.nml</span>'}</span><button onclick="cxPickNml()">Cambiar…</button></div>`:''}
       <div class="hint">Crea las playlists en tu colección (collection.nml) y corrige rutas cuando SpotiSync mueve archivos. Traktor debe estar cerrado.</div></div>
-    <div class="cx"><div class="cxh"><b>Playlists M3U</b><span class="tag">Serato · VirtualDJ · Engine DJ · djay · Mixxx</span>${tog(c.m3u.enabled,"CX.m3u.enabled=this.checked;cxDirty();render()")}</div>
+    <div class="cx"><div class="cxh"><b>Serato DJ</b><span class="tag ${c.serato.available?'ok':''}">${c.serato.available?'carpeta _Serato_ encontrada':'no encontrada'}</span>${tog(c.serato.enabled,"CX.serato.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.serato.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">📁 ${esc(short(c.serato.dir))}</span><button onclick="cxPick('serato')">Cambiar…</button></div>`:''}
+      <div class="hint">Crea un crate por playlist dentro del crate «${esc(c.folder_name)}». Canciones en discos externos van al _Serato_ de ese disco. Corrige rutas al mover archivos. Serato debe estar cerrado.</div></div>
+    <div class="cx"><div class="cxh"><b>Engine DJ</b><span class="tag ${c.engine.available?'ok':''}">${c.engine.available?'librería encontrada':'no encontrada'}</span>${tog(c.engine.enabled,"CX.engine.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.engine.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">📁 ${esc(short(c.engine.dir))}</span><button onclick="cxPick('engine')">Cambiar…</button></div>`:''}
+      <div class="hint">Playlists dentro de tu librería de Engine DJ (Database2/m.db) para Denon, Numark y Rane. Las pistas nuevas quedan sin analizar: analízalas en Engine. Engine DJ debe estar cerrado.</div></div>
+    <div class="cx"><div class="cxh"><b>Playlists M3U</b><span class="tag">VirtualDJ · djay · Mixxx · cualquiera</span>${tog(c.m3u.enabled,"CX.m3u.enabled=this.checked;cxDirty();render()")}</div>
       ${c.m3u.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.m3u.folder?'📁 '+esc(short(c.m3u.folder)):'<span class="hint">elige dónde guardarlas</span>'}</span><button onclick="cxPick('m3u')">Elegir…</button></div>`:''}
-      <div class="hint">Guarda cada playlist como .m3u8, en orden, para importarla en cualquier programa. La escritura directa en Serato, Engine DJ y VirtualDJ viene en las próximas versiones.</div></div>
+      <div class="hint">Guarda cada playlist como .m3u8, en orden, para importarla en cualquier programa (VirtualDJ, djay, Mixxx…).</div></div>
   </section>
 
   <div class="rbar"><button class="primary" id="cxSave" onclick="cxSave()" ${CX.dirty?'':'disabled'}>Guardar</button>
@@ -847,10 +856,10 @@ function connView(){
   </div>`;
 }
 async function cxPick(which){
-  const cur = which==='archivos' ? CX.archivos.folder : CX.m3u.folder;
+  const cur = which==='archivos' ? CX.archivos.folder : (which==='m3u' ? CX.m3u.folder : CX[which].dir);
   const p = await api().pick_folder(cur || S.settings.dest_root);
   if(!p) return;
-  if(which==='archivos') CX.archivos.folder = p; else CX.m3u.folder = p;
+  if(which==='archivos') CX.archivos.folder = p; else if(which==='m3u') CX.m3u.folder = p; else { CX[which].dir = p; CX[which].available = true; }
   cxDirty(); render();
 }
 async function cxPickNml(){ const p = await api().pick_file(CX.traktor.nml, 'nml'); if(p){ CX.traktor.nml = p; cxDirty(); render(); } }
@@ -860,7 +869,8 @@ async function cxSave(){
     sources:{spotify:{enabled:c.spotify.enabled},
       deezer:{enabled:c.deezer.enabled, user:c.deezer.user, playlists:c.deezer.playlists.split('\n').map(x=>x.trim()).filter(Boolean), include_loved:c.deezer.include_loved},
       archivos:{enabled:c.archivos.enabled, folder:c.archivos.folder}},
-    destinations:{rekordbox:{enabled:c.rekordbox.enabled}, traktor:{enabled:c.traktor.enabled, nml:c.traktor.nml}, m3u:{enabled:c.m3u.enabled, folder:c.m3u.folder}}};
+    destinations:{rekordbox:{enabled:c.rekordbox.enabled}, traktor:{enabled:c.traktor.enabled, nml:c.traktor.nml}, m3u:{enabled:c.m3u.enabled, folder:c.m3u.folder},
+      serato:{enabled:c.serato.enabled, dir:c.serato.dir}, engine:{enabled:c.engine.enabled, dir:c.engine.dir}}};
   const r = await api().save_connections(payload);
   if(!r.ok){ taskErr(r); return; }
   S.sources = r.sources; S.dests = r.destinations; S.settings.rekordbox_folder = r.folder_name;
