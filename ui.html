@@ -40,6 +40,19 @@ header *{-webkit-app-region:no-drag}
 .progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
 .pcard{max-width:520px;margin:60px auto;text-align:center}
 .rules{max-width:860px}
+.cx{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0 0;background:var(--panel2)}
+.cxh{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.cxh b{font-size:14px}
+.tag{font-size:11.5px;color:var(--mute);border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-right:auto}
+.tag.ok{color:var(--ok);border-color:rgba(61,220,151,.35)}
+.sw{position:relative;width:38px;height:22px;flex:none;cursor:pointer}
+.sw input{opacity:0;width:0;height:0}
+.sw i{position:absolute;inset:0;background:var(--line);border-radius:22px;transition:.15s}
+.sw i::after{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#fff;transition:.15s}
+.sw input:checked+i{background:var(--acid)}
+.sw input:checked+i::after{transform:translateX(16px);background:#111}
+.rules label.f{display:block;margin:10px 0 4px;color:var(--mute);font-size:12.5px}
+.rules input.t{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 .rules section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin:0 0 16px}
 .rules h3{margin:0 0 4px;font-size:15px}
 .rules .hint{color:var(--mute);font-size:12.5px;margin:0 0 12px}
@@ -196,6 +209,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
+        <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
       </div>
@@ -316,6 +330,8 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  const so=S.sources||{}, de=S.dests||{};
+  $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
   $('plNav').innerHTML = (a||[]).map((pl,i) => {
     if(pl.ignored) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Ignorada en Reglas"><div class="row">
@@ -325,7 +341,7 @@ function renderCore(){
       <div class="bar" style="opacity:.4"></div></a>`;
     const c = plStats(pl), n = c.total || 1, oc = orgCount(pl.id);
     return `<a data-v="pl:${i}" onclick="show('pl:${i}')"><div class="row"><span class="name">${pl.liked?'♥ ':''}${esc(pl.name)}</span>
-      <span class="cnt mono">${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
+      <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
       <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
   }).join('');
   const sv = S.view.startsWith('reorg:') ? 'pl:'+S.view.split(':')[1] : S.view;
@@ -349,10 +365,13 @@ function renderMain(){
   const m = $('main');
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
-  if(!S.connected && !S.analysis){
-    m.innerHTML = `<div class="empty"><h3>Conecta tu cuenta de Spotify</h3>
-      <p>Primero pon el Client ID de tu app de desarrollador en <b>Ajustes</b>, luego toca <b>Conectar Spotify</b>.</p>
-      <button class="primary" onclick="openSettings()">Abrir ajustes</button></div>`; return;
+  if(S.view==='conn'){ m.innerHTML = connView(); return; }
+  if(!anySource() && !S.analysis){
+    m.innerHTML = `<div class="empty"><h3>¿De dónde vienen tus playlists?</h3>
+      <p><b>Spotify</b>: pon el Client ID de tu app de desarrollador en Ajustes y toca Conectar Spotify.<br>
+      <b>Deezer, SoundCloud, Tidal, Apple Music…</b>: actívalos en Conexiones.</p>
+      <div style="display:flex;gap:10px;justify-content:center"><button class="primary" onclick="show('conn')">Abrir Conexiones</button>
+      <button onclick="openSettings()">Ajustes de Spotify</button></div></div>`; return;
   }
   if(!S.analysis){
     m.innerHTML = `<div class="empty"><h3>Todo listo</h3><p><b>Cargar mis playlists</b> trae solo la lista (rápido) y luego analizas la que estés trabajando.<br>
@@ -524,10 +543,15 @@ function statsView(){
       <td><div class="bar" style="margin:6px 0 0;height:7px"><i style="width:${nf/max*100}%;background:var(--info)"></i></div></td><td class="mono" style="width:60px;text-align:right">${nf}</td></tr>`).join('')}</table>`;
 }
 
+function anySource(){ const so=S.sources||{}; return S.connected || (so.deezer&&so.deezer.enabled) || (so.archivos&&so.archivos.enabled); }
+function hostLabel(u){ const h=(u||'').toLowerCase();
+  return h.includes('spotify')?'Spotify':h.includes('deezer')?'Deezer':h.includes('soundcloud')?'SoundCloud':h.includes('tidal')?'Tidal'
+    :h.includes('apple')?'Apple Music':h.includes('youtu')?'YouTube':'Link'; }
+const SRC_TAG = {deezer:'DZ', archivos:'📄'};
 function links(r){
   const out=[];
-  if(r.url) out.push(`<a class="lnk" onclick="openUrl(${jsq(r.url)})">Spotify ↗</a>`);
-  if(r.deezer && r.deezer.url) out.push(`<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
+  if(r.url) out.push(`<a class="lnk" onclick="openUrl(${jsq(r.url)})">${hostLabel(r.url)} ↗</a>`);
+  if(r.deezer && r.deezer.url && r.deezer.url!==r.url) out.push(`<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
   return out.join('<span style="color:var(--line)"> · </span>');
 }
 async function exportPlaylist(i){
@@ -622,7 +646,9 @@ async function unifyRun(){
   await applyAnalysis(r);
   render();
   toast(`Listo: <b>${x.retired}</b> copias apartadas en _duplicados, ${x.moved} archivos movidos de carpeta, ${x.empty_removed} carpetas vacías borradas.`
-    + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:''));
+    + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas de playlist re-apuntadas (respaldo ${esc(x.backup)}).`:'')
+    + Object.entries(x.dj||{}).map(([k,v])=>`<br>${k==='traktor'?'Traktor':esc(k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`).join('')
+    + (x.dj_warnings||[]).map(w=>`<br><span style="color:var(--org)">${esc(w)}</span>`).join(''));
 }
 // ---------- copiar links de lo que falta ----------
 function missingFor(scope){
@@ -634,7 +660,7 @@ function copyButtons(scope){
   const m = missingFor(scope);
   if(!m.length) return '';
   const dz = m.filter(t=>t.deezer && t.deezer.found).length;
-  return `<button class="cp sp" onclick="copyLinks(${jsq(scope)},'spotify')" title="Copia los links de Spotify de las ${m.length} canciones que faltan, uno por línea">📋 Spotify <span class="badge mono">${m.length}</span></button>
+  return `<button class="cp sp" onclick="copyLinks(${jsq(scope)},'spotify')" title="Copia el link original (Spotify, Deezer, SoundCloud…) de las ${m.length} canciones que faltan, uno por línea">📋 Links <span class="badge mono">${m.filter(t=>t.url).length}</span></button>
     <button class="cp dz" onclick="copyLinks(${jsq(scope)},'deezer')" title="Copia los links de Deezer encontrados, uno por línea" ${dz?'':'disabled'}>📋 Deezer <span class="badge mono">${dz}</span></button>`;
 }
 async function copyLinks(scope, svc){
@@ -646,7 +672,7 @@ async function copyLinks(scope, svc){
   if(!links.length){ toast('No hay links para copiar.', true); return; }
   const r = await api().copy_text(links.join('\n'));
   if(!r.ok){ toast(esc(r.error), true); return; }
-  toast(`Copiados <b>${links.length}</b> links de ${svc==='spotify'?'Spotify':'Deezer'}, uno por línea.` +
+  toast(`Copiados <b>${links.length}</b> links${svc==='spotify'?'':' de Deezer'}, uno por línea.` +
     (skipped?`<br><span style="color:var(--org)">${skipped} sin link exacto en Deezer no se copiaron (búscalas a mano o usa Spotify).</span>`:''));
 }
 // ---------- actualizaciones ----------
@@ -747,12 +773,103 @@ async function rgApply(){
   const x=r.result; let msg = `<b>${x.moved}</b> movida${x.moved!==1?'s':''}` + (keep.length&&remember?`, ${keep.length} se quedan donde están (no te las vuelvo a proponer)`:'');
   if(x.skipped.length) msg += `<br><span style="color:var(--org)">${x.skipped.length} no se movieron: ${x.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${x.skipped.length>2?'…':''}</span>`;
   if(x.rekordbox) msg += `<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas (respaldo ${esc(x.backup)}).`;
+  for(const [k,v] of Object.entries(x.dj||{})) msg += `<br>${k==='traktor'?'Traktor':esc(k)}: ${v.refs} referencias corregidas (respaldo ${esc(v.backup)}).`;
+  for(const w of (x.dj_warnings||[])) msg += `<br><span style="color:var(--org)">${esc(w)}</span>`;
   toast(msg, !!x.skipped.length);
 }
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='rules' && S.view!=='rules') rulesInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+
+// ---------- conexiones: fuentes y programas de DJ ----------
+let CX = null;
+function cxInit(){
+  const so = S.sources||{}, de = S.dests||{};
+  CX = {dirty:false,
+    spotify:{enabled: (so.spotify||{}).enabled!==false},
+    deezer:{enabled:!!(so.deezer||{}).enabled || !!((so.deezer||{}).user), user:(so.deezer||{}).user||'', playlists:((so.deezer||{}).playlists||[]).join('\n'), include_loved:(so.deezer||{}).include_loved!==false},
+    archivos:{enabled:!!(so.archivos||{}).folder && (so.archivos||{}).enabled!==false, folder:(so.archivos||{}).folder||''},
+    rekordbox:{enabled:!!(de.rekordbox||{}).wanted, available:!!(de.rekordbox||{}).available},
+    traktor:{enabled:!!(de.traktor||{}).wanted, nml:(de.traktor||{}).nml||'', available:!!(de.traktor||{}).available},
+    m3u:{enabled:!!(de.m3u||{}).wanted, folder:(de.m3u||{}).folder||''},
+    folder_name: S.settings.rekordbox_folder||'SpotiSync'};
+  CX.deezer.enabled = !!(so.deezer||{}).enabled; CX.archivos.enabled = !!(so.archivos||{}).enabled;
+}
+function cxDirty(){ CX.dirty=true; const b=$('cxSave'); if(b) b.disabled=false; }
+const tog = (on, fn) => `<label class="sw"><input type="checkbox" ${on?'checked':''} onchange="${fn}"><i></i></label>`;
+function connView(){
+  if(!CX) cxInit();
+  const c = CX;
+  return `<div class="rules"><h2 style="margin-top:0">Conexiones</h2>
+  <p class="hint" style="margin-top:-6px">De dónde salen tus playlists y a qué programas de DJ se copian. Puedes usar varias fuentes a la vez: si una canción está en dos (por ISRC), es una sola.</p>
+
+  <section><h3>🎧 Fuentes de playlists</h3>
+    <div class="cx"><div class="cxh"><b>Spotify</b><span class="tag ${S.connected?'ok':''}">${S.connected?'conectado':'sin conectar'}</span>${tog(c.spotify.enabled,"CX.spotify.enabled=this.checked;cxDirty()")}</div>
+      <div class="hint">Tus playlists y Me gusta. Necesita el Client ID de tu app de desarrollador (Ajustes).
+        <div style="margin-top:8px"><button onclick="connect()">${S.connected?'Desconectar':'Conectar Spotify'}</button> <button class="ghost" onclick="openSettings()">Ajustes de Spotify</button></div></div></div>
+
+    <div class="cx"><div class="cxh"><b>Deezer</b><span class="tag">sin login</span>${tog(c.deezer.enabled,"CX.deezer.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.deezer.enabled?`<label class="f">Tu perfil (link o número) — trae tus playlists públicas</label>
+      <input class="t" value="${esc(c.deezer.user)}" placeholder="https://www.deezer.com/profile/123456" oninput="CX.deezer.user=this.value;cxDirty()">
+      <label class="f">Links de playlists sueltas (una por línea)</label>
+      <textarea oninput="CX.deezer.playlists=this.value;cxDirty()" placeholder="https://www.deezer.com/playlist/…">${esc(c.deezer.playlists)}</textarea>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer"><input type="checkbox" ${c.deezer.include_loved?'checked':''} onchange="CX.deezer.include_loved=this.checked;cxDirty()"> Incluir mis favoritos de Deezer</label>
+      <div class="hint" style="margin-top:6px">Solo playlists <b>públicas</b>. Si una tuya es privada, hazla pública en Deezer o pega su link.</div>`
+      :'<div class="hint">Lee tus playlists públicas de Deezer sin pedirte contraseña.</div>'}</div>
+
+    <div class="cx"><div class="cxh"><b>Archivos exportados</b><span class="tag">SoundCloud · Tidal · Apple Music · cualquiera</span>${tog(c.archivos.enabled,"CX.archivos.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.archivos.enabled?`<label class="f">Carpeta donde guardas las playlists exportadas</label>
+      <div style="display:flex;gap:8px;align-items:center"><span class="path" style="flex:1">${c.archivos.folder?'📁 '+esc(short(c.archivos.folder)):'<span class="hint">sin elegir</span>'}</span><button onclick="cxPick('archivos')">Elegir…</button></div>`:''}
+      <div class="hint" style="margin-top:8px">Cada archivo de esa carpeta es una playlist (.m3u, .csv o .txt):
+        <br>• <b>Apple Music</b>: en la app Música, selecciona la playlist → Archivo → Biblioteca → Exportar playlist… (texto).
+        <br>• <b>SoundCloud, Tidal, YouTube Music…</b>: exporta la playlist a CSV con TuneMyMusic o Soundiiz.
+        <br>• <b>Spotify sin app de desarrollador</b> (o playlists de amigos): Exportify → CSV.
+        <br>Si el archivo cambia, la playlist se marca como cambiada (●).</div></div>
+    <div class="hint" style="margin-top:10px">Conexión directa con Tidal, SoundCloud y Apple Music: en estudio. Hoy sus APIs piden requisitos que no tiene una app personal (cuenta de pago de Apple Developer, plan Artist Pro de SoundCloud, API privada de Tidal); por eso entran por archivo.</div>
+  </section>
+
+  <section><h3>🎛️ Programas de DJ</h3>
+    <label class="f">Nombre de la carpeta que SpotiSync crea en cada programa</label>
+    <input class="t" value="${esc(c.folder_name)}" oninput="CX.folder_name=this.value;cxDirty()" style="max-width:280px">
+    <div class="cx"><div class="cxh"><b>Rekordbox</b><span class="tag ${c.rekordbox.available?'ok':''}">${c.rekordbox.available?'librería encontrada':'no encontrada'}</span>${tog(c.rekordbox.enabled,"CX.rekordbox.enabled=this.checked;cxDirty()")}</div>
+      <div class="hint">Escribe directo en tu librería (master.db). Rekordbox debe estar cerrado.</div></div>
+    <div class="cx"><div class="cxh"><b>Traktor Pro</b><span class="tag ${c.traktor.available||c.traktor.nml?'ok':''}">${c.traktor.nml?'collection.nml encontrado':'no encontrado'}</span>${tog(c.traktor.enabled,"CX.traktor.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.traktor.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.traktor.nml?'📄 '+esc(short(c.traktor.nml)):'<span class="hint">elige tu collection.nml</span>'}</span><button onclick="cxPickNml()">Cambiar…</button></div>`:''}
+      <div class="hint">Crea las playlists en tu colección (collection.nml) y corrige rutas cuando SpotiSync mueve archivos. Traktor debe estar cerrado.</div></div>
+    <div class="cx"><div class="cxh"><b>Playlists M3U</b><span class="tag">Serato · VirtualDJ · Engine DJ · djay · Mixxx</span>${tog(c.m3u.enabled,"CX.m3u.enabled=this.checked;cxDirty();render()")}</div>
+      ${c.m3u.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.m3u.folder?'📁 '+esc(short(c.m3u.folder)):'<span class="hint">elige dónde guardarlas</span>'}</span><button onclick="cxPick('m3u')">Elegir…</button></div>`:''}
+      <div class="hint">Guarda cada playlist como .m3u8, en orden, para importarla en cualquier programa. La escritura directa en Serato, Engine DJ y VirtualDJ viene en las próximas versiones.</div></div>
+  </section>
+
+  <div class="rbar"><button class="primary" id="cxSave" onclick="cxSave()" ${CX.dirty?'':'disabled'}>Guardar</button>
+    <button onclick="cxInit();render()" ${CX.dirty?'':'disabled'}>Descartar cambios</button></div>
+  </div>`;
+}
+async function cxPick(which){
+  const cur = which==='archivos' ? CX.archivos.folder : CX.m3u.folder;
+  const p = await api().pick_folder(cur || S.settings.dest_root);
+  if(!p) return;
+  if(which==='archivos') CX.archivos.folder = p; else CX.m3u.folder = p;
+  cxDirty(); render();
+}
+async function cxPickNml(){ const p = await api().pick_file(CX.traktor.nml, 'nml'); if(p){ CX.traktor.nml = p; cxDirty(); render(); } }
+async function cxSave(){
+  const c = CX;
+  const payload = {folder_name: c.folder_name,
+    sources:{spotify:{enabled:c.spotify.enabled},
+      deezer:{enabled:c.deezer.enabled, user:c.deezer.user, playlists:c.deezer.playlists.split('\n').map(x=>x.trim()).filter(Boolean), include_loved:c.deezer.include_loved},
+      archivos:{enabled:c.archivos.enabled, folder:c.archivos.folder}},
+    destinations:{rekordbox:{enabled:c.rekordbox.enabled}, traktor:{enabled:c.traktor.enabled, nml:c.traktor.nml}, m3u:{enabled:c.m3u.enabled, folder:c.m3u.folder}}};
+  const r = await api().save_connections(payload);
+  if(!r.ok){ taskErr(r); return; }
+  S.sources = r.sources; S.dests = r.destinations; S.settings.rekordbox_folder = r.folder_name;
+  if(S.view==='conn') cxInit();
+  render();
+  const dz = (r.info||{}).deezer;
+  toast('Conexiones guardadas.' + (dz&&dz.user?`<br>Deezer: perfil de <b>${esc(dz.user)}</b>.`:'') + (dz&&dz.playlists.length?`<br>Deezer: ${dz.playlists.map(esc).join(', ')}.`:'')
+    + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'') + '<br>Dale ⟳ para traer las playlists.', !!(r.warnings||[]).length);
+}
 
 // ---------- reglas ----------
 // Borrador editable; se guarda con «Guardar y aplicar».
@@ -870,7 +987,7 @@ async function connect(){
   render();
 }
 async function analyze(){
-  if(!S.connected){ return connect(); }
+  if(!anySource()){ show('conn'); toast('Activa al menos una fuente: Spotify, Deezer o archivos exportados.', true); return; }
   if(running('analyze:all')) return;
   const p = api().analyze();
   if(!S.analysis || !S.analysis.some(p=>!p.pending)) setTimeout(()=>{ if(running('analyze:all')) $('main').innerHTML = progressCard('todas tus playlists','analyze:all'); }, 150);
@@ -883,7 +1000,7 @@ async function analyze(){
 }
 let orgPid = null;
 async function loadPlaylists(){
-  if(!S.connected){ return connect(); }
+  if(!anySource()){ show('conn'); toast('Activa al menos una fuente: Spotify, Deezer o archivos exportados.', true); return; }
   const r = await api().list_playlists();
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r); S.foreign = r.foreign || {}; render();
@@ -931,10 +1048,7 @@ async function askOrganize(pid){
     <div class="box">📁 Se <b>mueven</b> ${rows.length} descarga${rows.length!==1?'s':''} a ${dests} carpeta${dests!==1?'s':''} dentro de <code>${esc(short(S.settings.dest_root))}</code>. Cada canción queda en una sola carpeta (la de su primera playlist).</div>
     ${dups.length?`<div class="box">🗂️ ${dups.length} descarga${dups.length!==1?'s':''} que ya tenías se aparta${dups.length!==1?'n':''} en <code>${esc(base(S.settings.inbox))}/_duplicados</code> para que la${dups.length!==1?'s':''} borres.</div>`:''}
     <div class="box">🎧 Las canciones que ya tienes en otras carpetas no se tocan: Rekordbox las usa donde están, con tus cues.</div>
-    <label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer">
-      <input type="checkbox" id="chkRb" checked style="margin-top:3px">
-      <span>Actualizar Rekordbox: ${plName?`la playlist <b>${esc(plName)}</b> dentro de`:'carpeta de playlists'} <b>${esc(S.settings.rekordbox_folder)}</b> con el mismo orden de Spotify. Antes se respalda tu librería.</span></label>
-    ${st.rekordbox_running?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de continuar o la parte de Rekordbox no se aplicará.</div>`:''}
+    ${djChecks(st, plName)}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="organize()">Organizar</button></div>`);
 }
 // ---------- organizar general: lo que coincide + lo que no coincide con ninguna playlist ----------
@@ -959,10 +1073,7 @@ async function askOrganizeAll(){
           <span style="margin-left:auto;display:flex;gap:6px"><button class="ghost" onclick="oxAllLoose(true)">Todos</button><button class="ghost" onclick="oxAllLoose(false)">Ninguno</button></span></div>
         <div style="max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px">${ib.loose.map(f=>`<label class="oxrow" style="padding:5px 10px"><input type="checkbox" class="oxl" data-f="${esc(f)}" onchange="this.checked?OX.loose.add(this.dataset.f):OX.loose.delete(this.dataset.f);oxSum()"> <span>${esc(base(f))}</span></label>`).join('')}</div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><button onclick="oxPickDest()">📁 Carpeta para los marcados…</button><span class="art" id="oxDest">sin elegir</span></div>`:''}`:''}
-    <label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer">
-      <input type="checkbox" id="chkRb" checked style="margin-top:3px">
-      <span>Actualizar Rekordbox: carpeta de playlists <b>${esc(S.settings.rekordbox_folder)}</b> con el mismo orden de Spotify. Antes se respalda tu librería.</span></label>
-    ${st.rekordbox_running?`<div class="box warn">⚠️ <b>Rekordbox está abierto.</b> Ciérralo antes de continuar o la parte de Rekordbox no se aplicará.</div>`:''}
+    ${djChecks(st, null)}
     <div class="actions"><span id="oxSum" class="art" style="margin-right:auto;align-self:center"></span><button onclick="closeModal()">Cancelar</button><button class="warn" id="oxGo" onclick="organize()">Organizar</button></div>`);
   oxSum();
 }
@@ -977,7 +1088,7 @@ function oxSum(){
   if(b) b.disabled = !n;
 }
 async function organize(){
-  const rb = $('chkRb') ? $('chkRb').checked : true;
+  const rb = [...document.querySelectorAll('input.djchk')].filter(c=>c.checked).map(c=>c.dataset.k);
   const extra = orgPid ? null : {groups:[...OX.groups], files: OX.dest ? [...OX.loose].map(f=>({src:f, dest:OX.dest})) : []};
   const pid = orgPid;
   closeModal();
@@ -989,9 +1100,23 @@ async function organize(){
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
-  if(r.rekordbox) msg += `<br>Rekordbox: ${r.rekordbox.playlists_updated} playlists actualizadas, ${r.rekordbox.tracks_added} pistas nuevas (respaldo ${esc(r.rekordbox.backup)}). Al abrir Rekordbox, analiza las pistas nuevas.`;
-  if(r.rekordbox_error) msg += `<br><span style="color:var(--org)">Rekordbox: ${esc(r.rekordbox_error)}</span>`;
-  toast(msg, !!r.rekordbox_error);
+  msg += djSummary(r.dj);
+  if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
+  toast(msg, Object.values(r.dj||{}).some(x=>x.error));
+}
+// programas de DJ que se actualizan al organizar (los activos en Conexiones)
+function djChecks(st, plName){
+  const d = st.destinations || {}, on = Object.entries(d).filter(([,x])=>x.enabled);
+  if(!on.length) return `<div class="box">🎛️ No hay programas de DJ activos. Actívalos en <a class="lnk" onclick="closeModal();show('conn')">Conexiones</a>.</div>`;
+  return `<div style="margin-top:12px;font-weight:650">Actualizar en tus programas de DJ ${plName?`(solo «${esc(plName)}»)`:''}</div>
+    <div class="art" style="margin:2px 0 6px">Carpeta <b>${esc(S.settings.rekordbox_folder)}</b>, mismo orden que tus playlists. Antes se respalda cada librería.</div>` +
+    on.map(([k,x])=>`<label style="display:flex;gap:10px;align-items:center;margin:4px 0;cursor:pointer">
+      <input type="checkbox" class="djchk" data-k="${k}" ${x.running?'':'checked'}> <span>${esc(x.label)}${k==='m3u'?` <span class="art">→ ${esc(short(x.folder||''))}</span>`:''}</span>
+      ${x.running?`<span style="color:var(--org)">⚠️ está abierto: ciérralo o no se aplicará</span>`:''}</label>`).join('');
+}
+function djSummary(dj){
+  return Object.values(dj||{}).map(x => x.error ? `<br><span style="color:var(--org)">${esc(x.label)}: ${esc(x.error)}</span>`
+    : `<br>${esc(x.label)}: ${x.stats.playlists_updated} playlists actualizadas${x.stats.tracks_added?`, ${x.stats.tracks_added} pistas nuevas`:''}${x.stats.backup?` (respaldo ${esc(x.stats.backup)})`:''}.`).join('');
 }
 async function exportMissing(){
   const r = await api().export_excel();
@@ -1012,7 +1137,7 @@ function openSettings(){
     <label class="f">Otras carpetas donde ya tienes música</label>
     <div id="rootsList"></div>
     <button onclick="addRoot()" style="margin-top:6px">＋ Agregar carpeta…</button>
-    <label class="f">Nombre de la carpeta de playlists en Rekordbox</label><input class="t" id="sRb" value="${esc(s.rekordbox_folder)}">
+    <label class="f">Nombre de la carpeta de playlists en tus programas de DJ</label><input class="t" id="sRb" value="${esc(s.rekordbox_folder)}">
     <label class="f">Canciones que te gustan</label>
     <div style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="sLiked" ${s.include_liked?'checked':''}>
       <span>Incluir como playlist llamada</span><input class="t" id="sLikedName" value="${esc(s.liked_name)}" style="width:180px"></div>
@@ -1053,7 +1178,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  S.rules = st.rules || {}; S.formats = st.formats || [];
+  S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   try{ api().start_watch(); }catch(e){}
   render();

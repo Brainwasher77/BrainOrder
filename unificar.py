@@ -369,7 +369,9 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
         rep.write_text("SpotiSync — Unificar repetidos\n\n" + "\n".join(log_lines) + "\n", "utf-8")
 
     res = {"retired": len(retired), "moved": len(path_change), "empty_removed": removed,
-           "backup": backup, "rekordbox": rb_stats, "dup_dir": str(dupdir)}
+           "backup": backup, "rekordbox": rb_stats, "dup_dir": str(dupdir),
+           # para corregir rutas en otros programas de DJ (Traktor…)
+           "moved_map": {**path_change, **retired}, "repoint": {k: v for k, v in dup_of.items() if k in retired}}
     log(f"Unificar: {res}")
     return res
 

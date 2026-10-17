@@ -17,6 +17,10 @@ sys.path.insert(0, str(HERE))
 import config  # noqa: E402
 import biblioteca  # noqa: E402
 import reglas  # noqa: E402
+import destinos  # noqa: E402
+import fuentes  # noqa: E402
+from destinos.traktor import TraktorError  # noqa: E402
+from fuentes.deezer_src import DeezerError  # noqa: E402
 import organizador  # noqa: E402
 import plataforma  # noqa: E402
 import rekordbox_sync  # noqa: E402
@@ -139,7 +143,8 @@ class Api:
             if "analysis" in out and self._tl.rev is not None:
                 out["rev"] = self._tl.rev
             return {"ok": True, **out}
-        except (SpotifyError, rekordbox_sync.RekordboxError, unificar.UnifyError) as e:
+        except (SpotifyError, rekordbox_sync.RekordboxError, unificar.UnifyError, TraktorError, DeezerError,
+                FileNotFoundError) as e:
             return {"ok": False, "error": str(e)}
         except Exception as e:
             config.log(traceback.format_exc())
@@ -188,6 +193,8 @@ class Api:
             "pinned": self._cfg.get("pinned_paths", []),
             "inbox_count": self._inbox_signature()[1],
             "rules": reglas.get(self._cfg),
+            "sources": self._sources_status(),
+            "destinations": destinos.status(self._cfg),
             "formats": reglas.FORMATS,
             "version": actualizador.local_version(),
             "win": plataforma.IS_WIN,
@@ -206,6 +213,104 @@ class Api:
         if not res:
             return None
         return res[0] if isinstance(res, (list, tuple)) else str(res)
+
+    def pick_file(self, current="", kind="nml"):
+        """Selector de archivo (por ahora: collection.nml de Traktor)."""
+        import webview
+        start = str(Path(current).parent) if current and Path(current).exists() else str(Path.home() / "Documents")
+        mode = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
+        types = ("Colección de Traktor (*.nml)",) if kind == "nml" else ()
+        try:
+            res = self._window.create_file_dialog(mode, directory=start, file_types=types)
+        except Exception as e:
+            config.log(f"Selector de archivos falló: {e}")
+            return None
+        if not res:
+            return None
+        return res[0] if isinstance(res, (list, tuple)) else str(res)
+
+    # ---------- conexiones: fuentes y destinos ----------
+    def _sources_status(self):
+        src = self._cfg.get("sources") or {}
+        out = {"spotify": {"label": "Spotify", "enabled": (src.get("spotify") or {}).get("enabled", True),
+                           "connected": self._sp().connected}}
+        for k, m in fuentes.SOURCES.items():
+            out[k] = {"label": m.LABEL, "enabled": m.enabled(self._cfg), **(src.get(k) or {})}
+        return out
+
+    def _spotify_on(self):
+        return (self._cfg.get("sources") or {}).get("spotify", {}).get("enabled", True) and self._sp().connected
+
+    def save_connections(self, payload):
+        """Guarda fuentes y destinos. Valida Deezer (por red) antes de guardar."""
+        payload = payload or {}
+
+        def run():
+            src = dict(self._cfg.get("sources") or {})
+            dst = dict(self._cfg.get("destinations") or {})
+            warnings, info = [], {}
+            p = payload.get("sources") or {}
+            if "spotify" in p:
+                src["spotify"] = {"enabled": bool((p["spotify"] or {}).get("enabled", True))}
+            if "deezer" in p:
+                d = p["deezer"] or {}
+                dz = {"enabled": bool(d.get("enabled")), "user": (d.get("user") or "").strip(),
+                      "playlists": [x.strip() for x in d.get("playlists") or [] if x.strip()],
+                      "include_loved": bool(d.get("include_loved", True))}
+                if dz["enabled"] and (dz["user"] or dz["playlists"]):
+                    self._progress("Comprobando Deezer…", 0.3)
+                    chk = fuentes.deezer_src.check(dz)
+                    warnings += chk["errors"]
+                    info["deezer"] = chk
+                src["deezer"] = dz
+            if "archivos" in p:
+                a = p["archivos"] or {}
+                folder = (a.get("folder") or "").strip()
+                if a.get("enabled") and folder and not Path(folder).is_dir():
+                    warnings.append(f"No existe la carpeta {folder}")
+                src["archivos"] = {"enabled": bool(a.get("enabled")), "folder": folder}
+            q = payload.get("destinations") or {}
+            if "rekordbox" in q:
+                dst["rekordbox"] = {"enabled": bool((q["rekordbox"] or {}).get("enabled"))}
+            if "traktor" in q:
+                t = q["traktor"] or {}
+                nml = (t.get("nml") or "").strip()
+                if nml and not nml.lower().endswith(".nml"):
+                    warnings.append("El archivo de Traktor debe ser collection.nml")
+                    nml = ""
+                dst["traktor"] = {"enabled": bool(t.get("enabled")), "nml": nml}
+            if "m3u" in q:
+                m = q["m3u"] or {}
+                dst["m3u"] = {"enabled": bool(m.get("enabled")), "folder": (m.get("folder") or "").strip()}
+            if "folder_name" in payload and (payload["folder_name"] or "").strip():
+                self._cfg["rekordbox_folder"] = payload["folder_name"].strip()
+            self._cfg["sources"], self._cfg["destinations"] = src, dst
+            config.save(self._cfg)
+            self._progress("Conexiones guardadas.", 1)
+            return {"sources": self._sources_status(), "destinations": destinos.status(self._cfg),
+                    "warnings": warnings, "info": info, "folder_name": self._cfg.get("rekordbox_folder")}
+        return self._task(run, "connections", "Guardar conexiones")
+
+    def _dj_precheck(self, keys=None):
+        """Antes de mover archivos: los programas de DJ que hay que corregir deben estar cerrados."""
+        for k in keys or destinos.enabled_keys(self._cfg):
+            m = destinos.DESTINATIONS[k]
+            if k != "rekordbox" and m.running():
+                raise TraktorError(f"{m.LABEL} está abierto. Ciérralo para que SpotiSync pueda corregir sus rutas.")
+
+    def _dj_fix(self, moved, repoint=None):
+        out, warn = {}, []
+        for k in destinos.enabled_keys(self._cfg):
+            if k == "rekordbox":
+                continue
+            try:
+                r = destinos.DESTINATIONS[k].fix_paths(self._cfg, moved, repoint)
+                if r:
+                    out[k] = r
+            except Exception as e:
+                warn.append(f"{destinos.DESTINATIONS[k].LABEL}: {e}")
+                config.log(f"Corregir rutas en {k} falló: {e!r}")
+        return out, warn
 
     def save_settings(self, s):
         # validar carpetas: descargas y playlists no pueden ser la misma ni estar una dentro de la otra
@@ -324,6 +429,8 @@ class Api:
                      "folder": str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)),
                      "ignored": reglas.ignored(rules, p["id"])}
             a["snapshot"] = p.get("snapshot")
+            a["source"] = p.get("source") or fuentes.source_of(p["id"])
+            a["url"] = p.get("url")
             a["analyzed_snapshot"] = p.get("analyzed_snapshot")
             a["total"] = p.get("total")
             analysis.append(a)
@@ -367,10 +474,8 @@ class Api:
     def list_playlists(self):
         """Trae solo la lista de tus playlists (sin canciones). Rápido."""
         def run():
-            sp = self._sp()
             self._progress("Leyendo la lista de tus playlists…")
-            own = sp.list_mine()
-            metas = own + ([self._liked_meta(sp)] if self._cfg.get("include_liked") else [])
+            metas, warnings, known, spotify_ok = self._list_all_sources()
 
             def merge(data):
                 old = {p["id"]: p for p in data["playlists"]}
@@ -378,31 +483,66 @@ class Api:
                 for m in metas:
                     o = old.get(m["id"]) or {}
                     new.append({**m, "tracks": o.get("tracks"), "analyzed_snapshot": o.get("analyzed_snapshot")})
+                if not spotify_ok:  # Spotify apagado o sin conexión: se conserva lo que ya había
+                    new = [p for p in data["playlists"] if fuentes.source_of(p["id"]) == "spotify"] + new
                 data["playlists"] = new
             self._update_sp(merge)
-            known = self._register_foreign(sp)
             analysis = self._build_analysis(light=True)
-            self._progress(f"{len(own)} playlists. Elige una y dale Analizar, o Analizar todo.")
-            return {"analysis": analysis, "foreign": known,
+            self._progress(f"{len(metas)} playlists. Elige una y dale Analizar, o Analizar todo.")
+            return {"analysis": analysis, "foreign": known, "warnings": warnings,
                     "ask_foreign": [pid for pid, f in known.items() if f.get("choice") == "preguntar"]}
         return self._task(run, "list", "Cargar playlists")
+
+    def _list_all_sources(self):
+        """Metadatos de las playlists de todas las fuentes activas. -> (metas, avisos, ajenas, spotify_ok)"""
+        metas, warnings, known, spotify_ok = [], [], self._cfg.get("foreign", {}), False
+        if self._spotify_on():
+            sp = self._sp()
+            own = sp.list_mine()
+            metas += [{**m, "source": "spotify"} for m in own]
+            if self._cfg.get("include_liked"):
+                metas.append({**self._liked_meta(sp), "source": "spotify"})
+            known = self._register_foreign(sp)
+            spotify_ok = True
+        for k, m in fuentes.SOURCES.items():
+            if not m.enabled(self._cfg):
+                continue
+            try:
+                metas += m.list_playlists(self._cfg, self._progress)
+            except Exception as e:
+                warnings.append(f"{m.LABEL}: {e}")
+                config.log(f"Fuente {k} falló: {e!r}")
+        if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()):
+            raise SpotifyError("No hay ninguna fuente activa. Conecta Spotify o activa Deezer / archivos en Conexiones.")
+        return metas, warnings, known, spotify_ok
+
+    def _read_tracks(self, entry):
+        """Canciones de una playlist desde su fuente."""
+        src = entry.get("source") or fuentes.source_of(entry["id"])
+        if src == "spotify":
+            sp = self._sp()
+            if entry["id"] == "liked":
+                entry.update(self._liked_meta(sp))
+                return sp.liked(self._progress)
+            return sp.playlist_tracks(entry["id"], self._progress, entry.get("total"))
+        m = fuentes.SOURCES[src]
+        return m.tracks(self._cfg, entry, self._progress)
 
     def analyze_playlist(self, pid):
         """Lee de Spotify SOLO esta playlist y la cruza con tus archivos."""
         def run():
             if reglas.ignored(reglas.get(self._cfg), pid):
                 raise SpotifyError("Esta playlist está ignorada en Reglas. Actívala allí para analizarla.")
-            sp = self._sp()
             entry = dict(next((p for p in self._load_sp()["playlists"] if p["id"] == pid), None) or {})
             if not entry:
                 raise SpotifyError("No encontré esa playlist. Dale a ⟳ para recargar la lista.")
+            src = entry.get("source") or fuentes.source_of(pid)
+            label = "Spotify" if src == "spotify" else fuentes.SOURCES[src].LABEL
             self._set_stage(0, 40)
-            self._progress(f"Leyendo «{entry['name']}» de Spotify…", 0)
-            if pid == "liked":
-                entry.update(self._liked_meta(sp))
-                tracks = sp.liked(self._progress)
-            else:
-                tracks = sp.playlist_tracks(pid, self._progress, entry.get("total"))
+            self._progress(f"Leyendo «{entry['name']}» de {label}…", 0)
+            if src == "spotify" and not self._sp().connected:
+                raise SpotifyError("Spotify no está conectado. Conéctalo para leer esta playlist.")
+            tracks = self._read_tracks(entry)
 
             def put(data):  # guardar sobre la caché MÁS RECIENTE (otra tarea pudo cambiarla)
                 cur = next((p for p in data["playlists"] if p["id"] == pid), None)
@@ -424,39 +564,71 @@ class Api:
     def analyze(self):
         """Analizar todo: todas tus playlists y Me gusta."""
         def run():
-            sp = self._sp()
             self._set_stage(0, 45)
-            playlists = sp.my_playlists(self._progress)
-            for p in playlists:
-                p["analyzed_snapshot"] = p.get("snapshot")
-            if self._cfg.get("include_liked"):
-                lm = self._liked_meta(sp)
-                lm["tracks"] = sp.liked(self._progress)
-                lm["analyzed_snapshot"] = lm["snapshot"]
-                playlists.append(lm)
-            known = self._register_foreign(sp)
-            foreign_ok = []
-            for pid, f in known.items():
-                if f.get("choice") != "integrar":
+            rules = reglas.get(self._cfg)
+            playlists, foreign_ok, warnings = [], None, []
+            known = self._cfg.get("foreign", {})
+            spotify_ok = self._spotify_on()
+            if spotify_ok:
+                sp = self._sp()
+                self._sub_stage(0, 0.7)
+                playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress)]
+                for p in playlists:
+                    p["analyzed_snapshot"] = p.get("snapshot")
+                if self._cfg.get("include_liked"):
+                    lm = {**self._liked_meta(sp), "source": "spotify"}
+                    lm["tracks"] = sp.liked(self._progress)
+                    lm["analyzed_snapshot"] = lm["snapshot"]
+                    playlists.append(lm)
+                known = self._register_foreign(sp)
+                foreign_ok = []
+                for pid, f in known.items():
+                    if f.get("choice") != "integrar":
+                        continue
+                    self._progress(f"Intentando leer playlist ajena: {f['name']}")
+                    tracks = sp.try_foreign(pid)
+                    if tracks:
+                        f["status"] = "integrada"
+                        foreign_ok.append({"id": pid, "name": f["name"], "tracks": tracks})
+                    else:
+                        f["status"] = "pendiente"  # Spotify no deja leerla: hay que copiarla a una propia
+                config.save(self._cfg)
+            # otras fuentes (Deezer, archivos)
+            self._sub_stage(0.7, 1.0)
+            others = []
+            for k, m in fuentes.SOURCES.items():
+                if not m.enabled(self._cfg):
                     continue
-                self._progress(f"Intentando leer playlist ajena: {f['name']}")
-                tracks = sp.try_foreign(pid)
-                if tracks:
-                    f["status"] = "integrada"
-                    foreign_ok.append({"id": pid, "name": f["name"], "tracks": tracks})
-                else:
-                    f["status"] = "pendiente"  # Spotify no deja leerla: hay que copiarla a una propia
-            config.save(self._cfg)
+                try:
+                    metas = m.list_playlists(self._cfg, self._progress)
+                except Exception as e:
+                    warnings.append(f"{m.LABEL}: {e}")
+                    continue
+                for i, meta in enumerate(metas):
+                    if meta.get("error") or reglas.ignored(rules, meta["id"]):
+                        others.append({**meta, "tracks": None})
+                        continue
+                    try:
+                        tr = m.tracks(self._cfg, meta, None)
+                        self._progress(f"{m.LABEL}: {meta['name']}", (i + 1) / max(1, len(metas)))
+                        others.append({**meta, "tracks": tr, "analyzed_snapshot": meta.get("snapshot")})
+                    except Exception as e:
+                        warnings.append(f"{m.LABEL} «{meta['name']}»: {e}")
+                        others.append({**meta, "tracks": None})
+            if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()):
+                raise SpotifyError("No hay ninguna fuente activa. Conecta Spotify o activa Deezer / archivos en Conexiones.")
 
             def put(data):
-                data["playlists"] = playlists
-                data["foreign_ok"] = foreign_ok
+                keep = [] if spotify_ok else [p for p in data["playlists"] if fuentes.source_of(p["id"]) == "spotify"]
+                data["playlists"] = (playlists if spotify_ok else keep) + others
+                if foreign_ok is not None:
+                    data["foreign_ok"] = foreign_ok
             self._update_sp(put)
             self._set_stage(45, 100)
             analysis = self._build_analysis()
             self._set_stage(0, 100, send=False)
             self._progress("Análisis listo.", 1)
-            return {"analysis": analysis, "foreign": known,
+            return {"analysis": analysis, "foreign": known, "warnings": warnings,
                     "ask_foreign": [pid for pid, f in known.items() if f.get("choice") == "preguntar"]}
         return self._task(run, "analyze:all", "Analizar todo")
 
@@ -521,7 +693,7 @@ class Api:
         return self._task(run, "rules", "Aplicar reglas")
 
     # ---------- organizar ----------
-    def organize(self, include_rekordbox=True, pid=None, extra=None):
+    def organize(self, targets=True, pid=None, extra=None):
         """Organiza todo, o solo una playlist (pid).
         extra (solo en el general): {"groups": [nombres de subcarpetas de descargas],
                                      "files": [{"src", "dest"}]} para descargas sin playlist."""
@@ -560,19 +732,26 @@ class Api:
                 self._set_stage(50, 85)
                 analysis = self._build_analysis(light=True)
             self._set_stage(85, 100)
-            rb, rb_error = None, None
-            if include_rekordbox:
+            # programas de DJ: True = todos los activos; lista = los marcados en la ventana
+            keys = destinos.enabled_keys(self._cfg) if targets is True else \
+                [k for k in (targets or []) if k in destinos.enabled_keys(self._cfg)]
+            dj, target = {}, ([p for p in analysis if p["id"] == pid] if pid else analysis)
+            for j, k in enumerate(keys):
+                m = destinos.DESTINATIONS[k]
+                self._sub_stage(j / len(keys), (j + 1) / len(keys))
                 try:
-                    target = [p for p in analysis if p["id"] == pid] if pid else analysis
-                    rb = rekordbox_sync.sync(target, self._cfg, self._progress)
-                except rekordbox_sync.RekordboxError as e:
-                    rb_error = str(e)
+                    dj[k] = {"label": m.LABEL, "stats": m.sync(target, self._cfg, self._progress)}
+                except Exception as e:
+                    config.log(f"{m.LABEL} falló: {e!r}")
+                    dj[k] = {"label": m.LABEL, "error": str(e)}
+            rb = (dj.get("rekordbox") or {}).get("stats")
+            rb_error = (dj.get("rekordbox") or {}).get("error")
             with self._state:
                 reportes.write_reports([p for p in analysis if not pid or p["id"] == pid], self._cfg)
             self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
             self._progress("Organización terminada.", 1)
             return {"files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
-                    "analysis": analysis}
+                    "dj": dj, "analysis": analysis}
         label = "Organizar" + (f" «{next((p['name'] for p in (_read_json(CACHE_ANALYSIS, None) or []) if p['id'] == pid), '')}»" if pid else " descargas")
         return self._task(run, f"organize:{pid or 'all'}", label, files=True)
 
@@ -593,6 +772,8 @@ class Api:
                     if src in valid_src and dest in allowed and src not in seen and str(Path(src).parent) != dest:
                         ops.append((src, dest))
                         seen.add(src)
+                if ops:
+                    self._dj_precheck()
                 res = organizador.relocate(ops, self._cfg, self._progress) if ops else \
                     {"moved": 0, "skipped": [], "rekordbox": None, "backup": None, "changes": {}}
                 pinned = set(self._cfg.get("pinned_paths", []))
@@ -603,6 +784,7 @@ class Api:
                     for src, new in res["changes"].items():
                         if str(Path(new).parent) != home.get(src):
                             pinned.add(new)
+                res["dj"], res["dj_warnings"] = self._dj_fix(res["changes"]) if res["changes"] else ({}, [])
                 pinned -= set(res["changes"])  # las rutas viejas ya no existen
                 self._cfg["pinned_paths"] = sorted(pinned)
                 config.save(self._cfg)
@@ -900,8 +1082,10 @@ class Api:
             pl = getattr(self, "_unify_plan", None)
             if not pl:
                 raise unificar.UnifyError("Primero dale a Revisar.")
+            self._dj_precheck()
             with self._state:
                 res = unificar.apply(pl, self._cfg, merge_ids or [], dup_ids or [], bool(remove_empty), self._progress)
+                res["dj"], res["dj_warnings"] = self._dj_fix(res.pop("moved_map", {}), res.pop("repoint", {}))
                 self._unify_plan = None
                 analysis = None
                 if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):

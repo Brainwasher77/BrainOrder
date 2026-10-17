@@ -1,5 +1,5 @@
 {
-  "version": "1.8.0",
-  "build": 10,
-  "notes": "Nueva pantalla Reglas: exclusiones, prioridad de playlists, ignorar playlists, tolerancia y formato preferido."
+  "version": "1.9.0",
+  "build": 11,
+  "notes": "Conexiones: Deezer y playlists exportadas (Apple Music, SoundCloud, Tidal…) como fuentes; Traktor y M3U como destinos."
 }
