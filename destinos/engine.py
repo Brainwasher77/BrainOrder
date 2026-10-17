@@ -69,7 +69,7 @@ def running():
 
 def backup(cfg):
     src = db_path(cfg)
-    bdir = library_dir(cfg) / "SpotiSync respaldos"
+    bdir = library_dir(cfg) / "BrainOrder respaldos"
     bdir.mkdir(parents=True, exist_ok=True)
     dst = bdir / f"m.{datetime.now():%Y%m%d-%H%M%S}.db"
     # copia consistente aunque haya WAL
@@ -186,7 +186,7 @@ def sync(analysis, cfg, progress=None):
     stats = {"playlists_updated": 0, "tracks_added": 0, "backup": bk, "skipped": 0}
     try:
         with lib.db:
-            folder = lib.playlist(cfg.get("rekordbox_folder") or "SpotiSync", 0)
+            folder = lib.playlist(cfg.get("rekordbox_folder") or "BrainOrder", 0)
             analysis = [p for p in analysis if not p.get("pending")]
             for i, pl in enumerate(analysis, 1):
                 if progress:

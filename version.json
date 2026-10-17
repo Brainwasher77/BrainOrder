@@ -1,5 +1,5 @@
 {
-  "version": "1.11.0",
-  "build": 13,
-  "notes": "Historial con Deshacer para todo lo que se mueve, y asistente de primer uso para instalaciones nuevas."
+  "version": "2.0.0",
+  "build": 14,
+  "notes": "SpotiSync ahora se llama BrainOrder. Conserva tu configuración, historial y conexiones."
 }

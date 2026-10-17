@@ -1,6 +1,6 @@
-# SpotiSync
+# BrainOrder
 
-App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playlists de Spotify con tu música descargada y con Rekordbox.
+App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…) con tu música descargada y con tus programas de DJ (Rekordbox, Traktor, Serato, Engine DJ y cualquiera que lea M3U).
 
 - Compara tus playlists de Spotify (y tus Me gusta) con los archivos de tu computador y te dice qué te falta y a qué carpeta va.
 - **Organizar** mueve las descargas a la carpeta de su playlist, sin duplicar archivos, y replica las playlists en Rekordbox con el mismo orden de Spotify.
@@ -10,24 +10,26 @@ App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playli
 
 ---
 
+> **Antes se llamaba SpotiSync.** Si ya la tenías instalada no tienes que hacer nada: se actualiza sola, se renombra a BrainOrder y conserva tu configuración e historial.
+
 ## Instalación
 
 Necesitas **Python 3.9 o superior**.
 
 ### macOS
 1. Si no tienes Python: `brew install python` (o descárgalo de python.org).
-2. Doble clic en **`Instalar SpotiSync.command`**. Si macOS lo bloquea: clic derecho → Abrir.
-3. Queda **SpotiSync** en Aplicaciones. Ábrelo con Spotlight (⌘ + espacio) y, si quieres, déjalo fijo en el Dock.
+2. Doble clic en **`Instalar BrainOrder.command`**. Si macOS lo bloquea: clic derecho → Abrir.
+3. Queda **BrainOrder** en Aplicaciones. Ábrelo con Spotlight (⌘ + espacio) y, si quieres, déjalo fijo en el Dock.
 
 ### Windows 10 / 11
 1. Si no tienes Python: instálalo desde [python.org](https://www.python.org/downloads/) marcando **"Add python.exe to PATH"**, o en una terminal: `winget install Python.Python.3.12`.
-2. Doble clic en **`Instalar SpotiSync (Windows).bat`**. Si aparece "Windows protegió tu PC": Más información → Ejecutar de todas formas.
-3. Queda un acceso directo **SpotiSync** en el Escritorio y en el Menú Inicio.
+2. Doble clic en **`Instalar BrainOrder (Windows).bat`**. Si aparece "Windows protegió tu PC": Más información → Ejecutar de todas formas.
+3. Queda un acceso directo **BrainOrder** en el Escritorio y en el Menú Inicio.
 
 El instalador copia la app a tu carpeta de datos y crea un entorno de Python propio (no toca tu Python del sistema). **Después de instalar puedes borrar la carpeta descargada.**
 
 ## Actualizaciones automáticas
-- Cada vez que abres SpotiSync revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
+- Cada vez que abres BrainOrder revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
 - Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app. La primera vez después de eso tarda un par de minutos.
 - Solo hace falta volver a correr el instalador si cambias de computador.
 
@@ -36,7 +38,7 @@ Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en
 ## Conectar Spotify (una vez)
 1. Entra a <https://developer.spotify.com/dashboard> con tu cuenta (Spotify exige que el dueño de la app sea **Premium**).
 2. **Create app** → API: **Web API** → Redirect URI: `http://127.0.0.1:8888/callback` (exacto).
-3. Copia el **Client ID** (no hace falta el Client Secret) y pégalo en SpotiSync → **Ajustes**.
+3. Copia el **Client ID** (no hace falta el Client Secret) y pégalo en BrainOrder → **Ajustes**.
 4. **Conectar Spotify** y autoriza en el navegador.
 
 ## Uso
@@ -70,11 +72,11 @@ En la barra lateral, **Conexiones**:
 La primera vez se abre un **asistente** de 4 pasos: programas de DJ (detecta los instalados), de dónde vienen tus playlists, tus carpetas (sugiere las que tienen música) y listo. Se puede volver a abrir desde **Ajustes → Asistente de configuración**.
 
 ## Historial y Deshacer
-Todo lo que SpotiSync mueve (Organizar, Reorganizar, Unificar) queda en **Historial**. **Deshacer** devuelve cada archivo a donde estaba y corrige las rutas en Rekordbox, Traktor, Serato y Engine DJ (con respaldo). Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta y te lo dice.
+Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Historial**. **Deshacer** devuelve cada archivo a donde estaba y corrige las rutas en Rekordbox, Traktor, Serato y Engine DJ (con respaldo). Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta y te lo dice.
 
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:
-- **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que SpotiSync nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.
+- **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que BrainOrder nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.
 - **Prioridad de playlists**: si una canción está en varias playlists, su archivo vive en la carpeta de la primera de la lista. Arrastra para ordenar. Cada playlist puede **Organizar** o **Ignorar**.
 - **Comparación**: tolerancia de duración para decidir si es la misma grabación, y qué formato se queda cuando hay repetidos.
 
@@ -89,13 +91,13 @@ Para restaurar Rekordbox: ciérralo y reemplaza `master.db` por uno de los respa
 
 ## Dónde guarda sus datos
 Ajustes, sesión de Spotify, cachés y el log (`spotisync.log`):
-- macOS: `~/Library/Application Support/SpotiSync/`
-- Windows: `%APPDATA%\SpotiSync\`
+- macOS: `~/Library/Application Support/BrainOrder/`
+- Windows: `%APPDATA%\BrainOrder\`
 
 Tu Client ID y tu sesión de Spotify viven solo ahí, nunca en el repositorio.
 
 ## Limitaciones
-- Spotify no deja que apps personales lean canciones de playlists de otras personas. SpotiSync te pregunta si quieres integrarlas; para hacerlo, cópialas en Spotify a una playlist tuya (Seleccionar todo → Añadir a playlist → Nueva playlist).
+- Spotify no deja que apps personales lean canciones de playlists de otras personas. BrainOrder te pregunta si quieres integrarlas; para hacerlo, cópialas en Spotify a una playlist tuya (Seleccionar todo → Añadir a playlist → Nueva playlist).
 - Las pistas nuevas entran a Rekordbox sin analizar: al abrirlo, selecciónalas y analízalas (BPM, waveform).
 
 ## Estructura

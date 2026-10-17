@@ -34,10 +34,11 @@ def backup():
     src = RB_DIR / "master.db"
     if not src.exists():
         raise RekordboxError(f"No encontré la librería de Rekordbox en {src}")
-    dst = RB_DIR / f"master.backup.spotisync-{datetime.now():%Y%m%d-%H%M%S}.db"
+    dst = RB_DIR / f"master.backup.brainorder-{datetime.now():%Y%m%d-%H%M%S}.db"
     shutil.copy2(src, dst)
-    # conservar solo los 5 respaldos más recientes de SpotiSync
-    olds = sorted(RB_DIR.glob("master.backup.spotisync-*.db"))
+    # conservar solo los 5 respaldos más recientes de BrainOrder (antes se llamaba SpotiSync)
+    olds = sorted(list(RB_DIR.glob("master.backup.spotisync-*.db")) + list(RB_DIR.glob("master.backup.brainorder-*.db")),
+                  key=lambda p: p.stat().st_mtime)
     for old in olds[:-5]:
         try:
             old.unlink()

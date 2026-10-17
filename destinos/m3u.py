@@ -27,7 +27,7 @@ def running():
 
 def sync(analysis, cfg, progress=None):
     out = Path(folder(cfg))
-    sub = out / safe_name(cfg.get("rekordbox_folder") or "SpotiSync")
+    sub = out / safe_name(cfg.get("rekordbox_folder") or "BrainOrder")
     sub.mkdir(parents=True, exist_ok=True)
     stats = {"playlists_updated": 0, "tracks_added": 0, "folder": str(sub)}
     analysis = [p for p in analysis if not p.get("pending")]

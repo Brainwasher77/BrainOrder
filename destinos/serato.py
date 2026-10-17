@@ -7,8 +7,8 @@ Subcrates: _Serato_/Subcrates/<Padre>%%<Hijo>.crate
 Cada disco tiene su propia carpeta _Serato_ (la del disco principal está en ~/Music/_Serato_).
 
 - Serato tiene que estar cerrado.
-- Antes de escribir se copian los crates que se van a cambiar a _Serato_/SpotiSync respaldos/.
-- Si SpotiSync mueve archivos, corrige las rutas en los crates y en «database V2».
+- Antes de escribir se copian los crates que se van a cambiar a _Serato_/BrainOrder respaldos/.
+- Si BrainOrder mueve archivos, corrige las rutas en los crates y en «database V2».
 """
 import os
 import re
@@ -155,7 +155,7 @@ def _crate_name(s):
 
 class _Backup:
     def __init__(self, serato_dir):
-        self.dir = Path(serato_dir) / "SpotiSync respaldos" / f"{datetime.now():%Y%m%d-%H%M%S}"
+        self.dir = Path(serato_dir) / "BrainOrder respaldos" / f"{datetime.now():%Y%m%d-%H%M%S}"
         self.done = set()
 
     def save(self, f):
@@ -187,7 +187,7 @@ def sync(analysis, cfg, progress=None):
         raise SeratoError(f"No encontré la carpeta de Serato ({home_serato(cfg)}). Abre Serato una vez o elígela en Conexiones.")
     if running():
         raise SeratoError("Serato está abierto. Ciérralo y vuelve a intentarlo.")
-    parent = _crate_name(cfg.get("rekordbox_folder") or "SpotiSync")
+    parent = _crate_name(cfg.get("rekordbox_folder") or "BrainOrder")
     backups = {}
     stats = {"playlists_updated": 0, "tracks_added": 0, "skipped_drives": 0}
     analysis = [p for p in analysis if not p.get("pending")]
@@ -257,4 +257,4 @@ def fix_paths(cfg, moved, repoint=None):
             if c:
                 _write(db, data, b)
                 n += c
-    return {"refs": n, "backup": "SpotiSync respaldos"}
+    return {"refs": n, "backup": "BrainOrder respaldos"}

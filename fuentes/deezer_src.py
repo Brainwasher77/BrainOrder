@@ -21,7 +21,7 @@ def _get(url, tries=3):
     if wait > 0:
         time.sleep(wait)
     _last[0] = time.time()
-    req = urllib.request.Request(url, headers={"User-Agent": "SpotiSync/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "BrainOrder/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read())
@@ -59,7 +59,7 @@ def _resolve(text):
         return "user", t
     if re.search(r"(link\.deezer\.com|deezer\.page\.link)", t):
         try:
-            req = urllib.request.Request(t, headers={"User-Agent": "SpotiSync/1.0"})
+            req = urllib.request.Request(t, headers={"User-Agent": "BrainOrder/1.0"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 t = r.geturl()
         except Exception:

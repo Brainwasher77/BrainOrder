@@ -1,4 +1,4 @@
-"""Configuración y rutas de SpotiSync."""
+"""Configuración y rutas de BrainOrder."""
 import json
 import threading
 import os
@@ -10,7 +10,7 @@ HOME = Path.home()
 SUPPORT_DIR = plataforma.support_dir()
 CONFIG_FILE = SUPPORT_DIR / "config.json"
 TOKEN_FILE = SUPPORT_DIR / "token.json"
-LOG_FILE = SUPPORT_DIR / "spotisync.log"
+LOG_FILE = SUPPORT_DIR / "brainorder.log"
 
 AUDIO_EXT = {".mp3", ".m4a", ".aif", ".aiff", ".wav", ".flac", ".alac", ".ogg", ".aac", ".mp4"}
 
@@ -18,16 +18,16 @@ DEFAULTS = {
     "client_id": "",
     "redirect_uri": "http://127.0.0.1:8888/callback",
     # Carpeta espejo de Spotify: una subcarpeta por playlist
-    "dest_root": str(HOME / "Music" / "Playlists SpotiSync"),
+    "dest_root": str(HOME / "Music" / "Playlists BrainOrder"),
     # Bandeja de entrada: donde caen las descargas nuevas
-    "inbox": str(HOME / "Music" / "Descargas SpotiSync"),
+    "inbox": str(HOME / "Music" / "Descargas BrainOrder"),
     # Dónde buscar canciones que ya tienes (además de dest_root e inbox)
     # (vacío en instalaciones nuevas: cada usuario elige las suyas en Ajustes)
     "library_roots": [],
     "liked_name": "Me gusta",
     "include_liked": True,
     # Carpeta de playlists en Rekordbox que replica Spotify
-    "rekordbox_folder": "Spotify",
+    "rekordbox_folder": "BrainOrder",
     # Subcarpeta dentro de la bandeja a donde van los originales ya organizados
     "inbox_done": "_organizadas",
     # Fuentes de playlists y programas de DJ (pantalla Conexiones)

@@ -1,4 +1,4 @@
-"""SpotiSync — Spotify ↔ archivos locales ↔ Rekordbox.
+"""BrainOrder — tus playlists (Spotify, Deezer, archivos…) ↔ tu música ↔ tus programas de DJ.
 
 Ventana nativa de macOS (pywebview). Ejecutar: python app.py
 """
@@ -352,7 +352,7 @@ class Api:
             self._progress("Guardando conexiones…", 0.5)
             out = self._apply_connections({"sources": payload.get("sources") or {},
                                            "destinations": payload.get("destinations") or {},
-                                           "folder_name": payload.get("folder_name") or "SpotiSync"})
+                                           "folder_name": payload.get("folder_name") or "BrainOrder"})
             self._cfg["setup_done"] = True
             config.save(self._cfg)
             self._progress("¡Listo!", 1)
@@ -365,7 +365,7 @@ class Api:
         for k in keys or destinos.enabled_keys(self._cfg):
             m = destinos.DESTINATIONS[k]
             if k != "rekordbox" and m.running():
-                raise TraktorError(f"{m.LABEL} está abierto. Ciérralo para que SpotiSync pueda corregir sus rutas.")
+                raise TraktorError(f"{m.LABEL} está abierto. Ciérralo para que BrainOrder pueda corregir sus rutas.")
 
     def _dj_fix(self, moved, repoint=None):
         out, warn = {}, []
@@ -1059,9 +1059,9 @@ class Api:
             return {"status": "error"}
 
     def restart(self):
-        """Cierra y vuelve a abrir SpotiSync (así se instala la actualización descargada)."""
+        """Cierra y vuelve a abrir BrainOrder (así se instala la actualización descargada)."""
         arr = config.SUPPORT_DIR / "arranque.py"
-        bundle = os.environ.get("SPOTISYNC_BUNDLE")
+        bundle = os.environ.get("BRAINORDER_BUNDLE") or os.environ.get("SPOTISYNC_BUNDLE")
         try:
             if plataforma.IS_MAC and bundle and Path(bundle).exists():
                 subprocess.Popen(["/bin/sh", "-c", f'sleep 1; open -n "{bundle}"'])
@@ -1085,12 +1085,12 @@ class Api:
         try:
             import excel
         except ImportError:
-            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir 'Instalar SpotiSync.command' y listo."}
+            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder» y listo."}
         from datetime import datetime
         analysis = _read_json(CACHE_ANALYSIS, None)
         if not analysis:
             return {"ok": False, "error": "Primero dale a Analizar."}
-        name = f"SpotiSync faltantes {datetime.now():%Y-%m-%d}.xlsx"
+        name = f"BrainOrder faltantes {datetime.now():%Y-%m-%d}.xlsx"
         default_dir = self._cfg["inbox"] if Path(self._cfg["inbox"]).exists() else str(Path.home() / "Music")
         path = None
         try:
@@ -1128,7 +1128,7 @@ class Api:
         try:
             import excel
         except ImportError:
-            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir 'Instalar SpotiSync.command'."}
+            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder»."}
         from datetime import datetime
         analysis = _read_json(CACHE_ANALYSIS, None) or []
         try:
@@ -1162,7 +1162,7 @@ class Api:
         try:
             import excel
         except ImportError:
-            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir 'Instalar SpotiSync.command'."}
+            return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder»."}
         from datetime import datetime
         analysis = _read_json(CACHE_ANALYSIS, None) or []
         if not analysis:
@@ -1231,8 +1231,9 @@ def main():
         except Exception:
             pass
     import webview
+    plataforma.migrate_launcher(config.log)  # antes se llamaba SpotiSync: renombra el ícono
     api = Api()
-    win = webview.create_window("SpotiSync", str(HERE / "ui.html"), js_api=api,
+    win = webview.create_window("BrainOrder", str(HERE / "ui.html"), js_api=api,
                                 width=1280, height=820, min_size=(900, 600),
                                 background_color="#0d0e12")
     api._window = win

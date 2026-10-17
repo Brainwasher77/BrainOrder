@@ -10,12 +10,19 @@ HOME = Path.home()
 
 
 def support_dir() -> Path:
-    """Ajustes, token, cachés y log de SpotiSync."""
+    """Instalación, ajustes, token, cachés y log de BrainOrder.
+    Instalaciones hechas cuando la app se llamaba SpotiSync siguen usando su carpeta (no se mueve nada
+    mientras la app corre); el instalador nuevo la renombra a BrainOrder."""
+    new, old = _support_base() / "BrainOrder", _support_base() / "SpotiSync"
+    return new if new.exists() or not old.exists() else old
+
+
+def _support_base() -> Path:
     if IS_WIN:
-        return Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming")) / "SpotiSync"
+        return Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming"))
     if IS_MAC:
-        return HOME / "Library" / "Application Support" / "SpotiSync"
-    return Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "SpotiSync"
+        return HOME / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
 
 
 def rekordbox_dir() -> Path:
@@ -130,3 +137,56 @@ def safe_name(name: str) -> str:
             name = "_" + name
     name = name.strip().lstrip(".")
     return name or "Sin nombre"
+
+
+def migrate_launcher(log=print):
+    """La app antes se llamaba SpotiSync: renombra su ícono/accesos directos a BrainOrder.
+    Mac: SpotiSync.app -> BrainOrder.app (con su lanzador nuevo). Windows: SpotiSync.lnk -> BrainOrder.lnk.
+    No toca la carpeta de datos (eso lo hace el instalador). Seguro de repetir."""
+    import shutil
+    try:
+        if IS_MAC:
+            import plistlib
+            bundle = os.environ.get("BRAINORDER_BUNDLE") or os.environ.get("SPOTISYNC_BUNDLE")
+            if not bundle or not bundle.endswith("SpotiSync.app") or not Path(bundle).is_dir():
+                return None
+            old = Path(bundle)
+            new = old.with_name("BrainOrder.app")
+            if new.exists():
+                return None
+            plist = old / "Contents" / "Info.plist"
+            info = plistlib.loads(plist.read_bytes())
+            info.update(CFBundleName="BrainOrder", CFBundleDisplayName="BrainOrder",
+                        CFBundleIdentifier="com.brainwasher.brainorder", CFBundleExecutable="BrainOrder")
+            launcher = support_dir() / "app" / "mac" / "lanzador.sh"
+            exe_dir = old / "Contents" / "MacOS"
+            if launcher.exists():
+                shutil.copy2(launcher, exe_dir / "BrainOrder")
+            else:
+                shutil.copy2(exe_dir / "SpotiSync", exe_dir / "BrainOrder")
+            os.chmod(exe_dir / "BrainOrder", 0o755)
+            plist.write_bytes(plistlib.dumps(info))
+            try:
+                (exe_dir / "SpotiSync").unlink()
+            except OSError:
+                pass
+            os.rename(old, new)
+            os.utime(new, None)
+            subprocess.run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/"
+                            "Support/lsregister", "-f", str(new)], capture_output=True, timeout=20)
+            os.environ["BRAINORDER_BUNDLE"] = str(new)
+            log(f"app renombrada: {old} -> {new}")
+            return str(new)
+        if IS_WIN:
+            done = []
+            for d in (HOME / "Desktop", Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"):
+                o, n = d / "SpotiSync.lnk", d / "BrainOrder.lnk"
+                if o.exists() and not n.exists():
+                    os.rename(o, n)
+                    done.append(str(n))
+            if done:
+                log(f"accesos directos renombrados: {done}")
+            return done or None
+    except Exception as e:
+        log(f"no pude renombrar la app a BrainOrder: {e!r}")
+    return None

@@ -45,7 +45,7 @@ def build(analysis, path):
     ws = wb.active
     ws.title = "Faltantes"
 
-    ws["A1"] = "SpotiSync — Canciones por descargar"
+    ws["A1"] = "BrainOrder — Canciones por descargar"
     ws["A1"].font = TITLE_FONT
     ws["A2"] = f"{len(rows)} canciones · generado {datetime.now():%Y-%m-%d %H:%M}"
     ws["A2"].font = SUB_FONT
@@ -127,7 +127,7 @@ def build_playlist(pl, path):
     ws.title = "Informe"
     ws["A1"] = f"{'♥ ' if pl.get('liked') else ''}{pl['name']}"
     ws["A1"].font = TITLE_FONT
-    ws["A2"] = f"Informe SpotiSync · {datetime.now():%Y-%m-%d %H:%M} · carpeta: {_short(pl['folder'])}"
+    ws["A2"] = f"Informe BrainOrder · {datetime.now():%Y-%m-%d %H:%M} · carpeta: {_short(pl['folder'])}"
     ws["A2"].font = SUB_FONT
 
     # Resumen

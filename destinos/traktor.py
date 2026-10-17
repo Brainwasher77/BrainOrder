@@ -3,7 +3,7 @@
 - Traktor tiene que estar cerrado (al cerrarse reescribe su colección y borraría los cambios).
 - Antes de tocar nada se respalda collection.nml (se guardan los 5 respaldos más recientes).
 - Las canciones nuevas entran con título, artista y ruta; Traktor las analiza al abrirlas.
-- Si SpotiSync mueve archivos (Reorganizar / Unificar), corrige sus rutas aquí también.
+- Si BrainOrder mueve archivos (Reorganizar / Unificar), corrige sus rutas aquí también.
 """
 import os
 import re
@@ -210,16 +210,17 @@ class Collection:
         self.coll.set("ENTRIES", str(len(self.coll.findall("ENTRY"))))
         ET.indent(self.tree, space="")
         body = ET.tostring(self.root, encoding="unicode", short_empty_elements=False)  # como lo escribe Traktor
-        tmp = self.path.with_name(f".{self.path.name}.spotisync.tmp")
+        tmp = self.path.with_name(f".{self.path.name}.brainorder.tmp")
         tmp.write_text('<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n' + body, "utf-8")
         os.replace(tmp, self.path)
 
 
 def backup(path):
     p = Path(path)
-    dst = p.with_name(f"collection.spotisync-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
+    dst = p.with_name(f"collection.brainorder-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
     shutil.copy2(p, dst)
-    for old in sorted(p.parent.glob("collection.spotisync-*.nml.bak"))[:-5]:
+    for old in sorted(list(p.parent.glob("collection.spotisync-*.nml.bak")) + list(p.parent.glob("collection.brainorder-*.nml.bak")),
+                     key=lambda x: x.stat().st_mtime)[:-5]:
         try:
             old.unlink()
         except OSError:
@@ -240,7 +241,7 @@ def sync(analysis, cfg, progress=None):
     path = _open(cfg)
     bk = backup(path)
     col = Collection(path)
-    folder = cfg.get("rekordbox_folder") or "SpotiSync"
+    folder = cfg.get("rekordbox_folder") or "BrainOrder"
     stats = {"playlists_updated": 0, "tracks_added": 0, "backup": bk}
     analysis = [p for p in analysis if not p.get("pending")]
     for i, pl in enumerate(analysis, 1):

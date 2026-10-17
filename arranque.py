@@ -1,12 +1,12 @@
-"""Arranque de SpotiSync (solo librería estándar).
+"""Arranque de BrainOrder (solo librería estándar).
 
 Lo ejecuta el lanzador (la app de Mac o el acceso directo de Windows) con el Python del
-entorno de SpotiSync. Antes de abrir la ventana:
+entorno de BrainOrder. Antes de abrir la ventana:
   1. Si hay una actualización descargada, la instala.
   2. Si falta algún componente (por ejemplo después de reparar el entorno), lo instala.
   3. Abre la app.
 
-Estructura instalada (carpeta de datos de SpotiSync):
+Estructura instalada (carpeta de datos de BrainOrder):
   arranque.py   <- este archivo
   app/          <- código de la app
   update/       <- versión nueva descargada, esperando el próximo arranque
@@ -24,7 +24,7 @@ from pathlib import Path
 SUP = Path(__file__).resolve().parent
 APP = SUP / "app"
 UPDATE = SUP / "update"
-LOG = SUP / "spotisync.log"
+LOG = SUP / "brainorder.log"
 IS_WIN = sys.platform.startswith("win")
 NEEDED = ("webview", "pyrekordbox", "mutagen", "openpyxl")
 
@@ -41,7 +41,7 @@ def notify(msg):
     """Aviso del sistema (sin depender de la ventana de la app)."""
     try:
         if sys.platform == "darwin":
-            subprocess.run(["osascript", "-e", f'display notification "{msg}" with title "SpotiSync"'],
+            subprocess.run(["osascript", "-e", f'display notification "{msg}" with title "BrainOrder"'],
                            timeout=5, capture_output=True)
     except Exception:
         pass
@@ -108,7 +108,7 @@ def main():
     ensure_deps()
     if not (APP / "app.py").exists():
         log("no encuentro el código de la app; vuelve a correr el instalador")
-        notify("No encuentro SpotiSync instalado. Vuelve a correr el instalador.")
+        notify("No encuentro BrainOrder instalado. Vuelve a correr el instalador.")
         sys.exit(1)
     sys.path.insert(0, str(APP))
     os.chdir(APP)
