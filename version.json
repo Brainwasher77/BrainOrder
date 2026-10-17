@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
-  "build": 16,
-  "notes": "Key (Camelot), energía y BPM de Mixed In Key en cada playlist, con orden, filtro «Sin Mixed In Key» y búsqueda por key."
+  "version": "2.1.1",
+  "build": 17,
+  "notes": "Mixed In Key siempre tiene prioridad: su key, energía y BPM ganan sobre lo que haya escrito cualquier otro programa."
 }

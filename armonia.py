@@ -1,10 +1,10 @@
 """Key (Camelot), energía y BPM de cada archivo — lo que dejó Mixed In Key (10 u 11) u otro programa.
 
-Orden de confianza (se usa lo primero que aparezca):
-  1. Campos propios de Mixed In Key (JSON): GEOB «Key» / «Energy» en MP3/AIFF/WAV,
-     «----:com.mixedinkey.mixedinkey:key/energy» en M4A, «key»/«energy» (base64) en FLAC.
-  2. Campos estándar: Initial Key (TKEY / initialkey / key), EnergyLevel.
-  3. Comentario «8A - Energy 6» y grouping «Energy 6».
+Mixed In Key SIEMPRE tiene prioridad sobre cualquier otro programa:
+  1. Campos propios de MIK (JSON): GEOB «Key» / «Energy» / «BeatGrid» en MP3/AIFF/WAV,
+     «----:com.mixedinkey.mixedinkey:…» en M4A, «key»/«energy»/«beatgrid» (base64) en FLAC.
+  2. Textos con el formato de MIK: comentario «8A - Energy 6», EnergyLevel, grouping «Energy 6».
+  3. Solo si no hay nada de MIK: Initial Key / TKEY, BPM estándar, comentario con solo la key.
 Cualquier notación de tonalidad (Camelot 8A, Open Key 1m, musical «Am», «C#m», «Eb major») se pasa a Camelot.
 Solo lee: nunca modifica los archivos. Se guarda en caché por ruta + tamaño + fecha.
 """
@@ -24,7 +24,7 @@ _CACHE = {}
 _FILE = [None]
 _DIRTY = [False]
 _LOCK = threading.Lock()
-VERSION = 1  # subir si cambia la lógica, para releer
+VERSION = 2  # subir si cambia la lógica, para releer
 
 # ---------------------------------------------------------------- notación
 _NOTES = {"C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4, "E#": 5, "F": 5, "F#": 6, "GB": 6,
@@ -130,8 +130,23 @@ def _bpm(v):
         return None
 
 
+def _mik(j, field):
+    """Valor de un JSON de Mixed In Key (solo si de verdad viene de MIK)."""
+    if not isinstance(j, dict):
+        return None
+    if j.get("source") not in (None, "mixedinkey"):
+        return None
+    return j.get(field)
+
+
 def read_tags(path):
-    """-> {'key','energy','bpm','mik'} sin caché."""
+    """-> {'key','energy','bpm','mik'} sin caché.
+
+    Prioridad SIEMPRE para Mixed In Key:
+      1. JSON propio de MIK (Key, Energy, BeatGrid→tempo).
+      2. Formatos de texto que escribe MIK: comentario «8A - Energy 6», EnergyLevel, grouping «Energy 6».
+      3. Recién ahí, lo de otros programas: Initial Key / TKEY, BPM estándar, comentario con solo la key.
+    """
     out = {"key": None, "energy": None, "bpm": None, "mik": False}
     if not mutagen:
         return out
@@ -143,75 +158,78 @@ def read_tags(path):
         return out
     t = f.tags
     ext = Path(path).suffix.lower()
-    mik_key = mik_energy = None
-    std_key = std_energy = bpm = None
+    mik_key = mik_energy = mik_bpm = None
+    std_key = mik_energy_txt = std_bpm = None
     comments, groupings = [], []
     try:
-        if ext in (".mp3", ".aif", ".aiff", ".wav") or hasattr(t, "getall"):
+        if hasattr(t, "getall"):  # ID3: MP3, AIFF, WAV
             for frame in t.getall("GEOB"):
                 d = getattr(frame, "desc", "")
                 if d == "Key":
-                    j = _json_b64(frame.data) or {}
-                    mik_key = j.get("key")
+                    mik_key = _mik(_json_b64(frame.data), "key")
                 elif d == "Energy":
-                    j = _json_b64(frame.data) or {}
-                    mik_energy = j.get("energyLevel")
+                    mik_energy = _mik(_json_b64(frame.data), "energyLevel")
+                elif d == "BeatGrid":
+                    mik_bpm = _mik(_json_b64(frame.data), "tempo")
             k = t.getall("TKEY")
             std_key = _first(k[0]) if k else None
             for fr in t.getall("TXXX"):
                 if fr.desc.lower() in ("energylevel", "energy"):
-                    std_energy = _first(fr)
+                    mik_energy_txt = _first(fr)
                 elif fr.desc.lower() in ("initialkey", "initial key") and not std_key:
                     std_key = _first(fr)
             b = t.getall("TBPM")
-            bpm = _first(b[0]) if b else None
+            std_bpm = _first(b[0]) if b else None
             comments = [_first(c) for c in t.getall("COMM")]
             groupings = [_first(g) for g in t.getall("TIT1")]
         elif ext in (".m4a", ".mp4", ".aac", ".alac"):
-            mik_key = (_json_b64(t.get("----:com.mixedinkey.mixedinkey:key")) or {}).get("key")
-            mik_energy = (_json_b64(t.get("----:com.mixedinkey.mixedinkey:energy")) or {}).get("energyLevel")
+            mik_key = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:key")), "key")
+            mik_energy = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:energy")), "energyLevel")
+            mik_bpm = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:beatgrid")), "tempo")
             std_key = _first(t.get("----:com.apple.iTunes:initialkey"))
-            std_energy = _first(t.get("----:com.apple.iTunes:energylevel"))
+            mik_energy_txt = _first(t.get("----:com.apple.iTunes:energylevel"))
             tm = t.get("tmpo")
-            bpm = tm[0] if tm else None
+            std_bpm = tm[0] if tm else None
             comments = [_first(t.get("©cmt"))]
             groupings = [_first(t.get("©grp"))]
         else:  # FLAC / OGG (comentarios Vorbis)
             low = {k.lower(): v for k, v in t.items()} if hasattr(t, "items") else {}
-            j = _json_b64(low.get("key"))
-            mik_key = j.get("key") if isinstance(j, dict) else None
-            j = _json_b64(low.get("energy"))
-            mik_energy = j.get("energyLevel") if isinstance(j, dict) else None
+            mik_key = _mik(_json_b64(low.get("key")), "key")
+            mik_energy = _mik(_json_b64(low.get("energy")), "energyLevel")
+            mik_bpm = _mik(_json_b64(low.get("beatgrid")), "tempo")
             std_key = _first(low.get("initialkey")) or (_first(low.get("key")) if not mik_key else None)
-            std_energy = _first(low.get("energylevel"))
-            bpm = _first(low.get("bpm"))
+            mik_energy_txt = _first(low.get("energylevel"))
+            std_bpm = _first(low.get("bpm"))
             comments = [_first(low.get("comment")), _first(low.get("description"))]
             groupings = [_first(low.get("grouping"))]
     except Exception:
         pass
-    key = to_camelot(mik_key)
-    out["mik"] = bool(key)
-    if not key:
-        key = to_camelot(std_key)
-    energy = _energy(mik_energy) if mik_energy is not None else None
-    if energy:
-        out["mik"] = True
-    if energy is None and std_energy:
-        energy = _energy(std_energy)
+
+    # textos con el formato de MIK: «8A - Energy 6» (comentario) y «Energy 6» (grouping)
+    mik_txt_key = mik_txt_energy = bare_key = None
     for c in comments:
         if not c:
             continue
         m = _COMMENT.search(c)
-        if m:
-            key = key or to_camelot(m.group(1))
-            if energy is None and m.group(2):
-                energy = _energy(m.group(2))
-        if energy is None and _ENERGY.search(c):
-            energy = _energy(c)
-    for g in groupings:
-        if energy is None and g:
-            energy = _energy(g)
-    out.update(key=key, energy=energy, bpm=_bpm(bpm))
+        if m and m.group(2):
+            mik_txt_key = mik_txt_key or to_camelot(m.group(1))
+            mik_txt_energy = mik_txt_energy or _energy(m.group(2))
+        elif m:
+            bare_key = bare_key or to_camelot(m.group(1))
+        if mik_txt_energy is None and _ENERGY.search(c):
+            mik_txt_energy = _energy(c)
+    group_energy = next((_energy(g) for g in groupings if g and _energy(g)), None)
+
+    # KEY: MIK (JSON) > MIK (comentario «8A - Energy») > otros programas
+    key_mik = to_camelot(mik_key) or mik_txt_key
+    key = key_mik or to_camelot(std_key) or bare_key
+    # ENERGÍA: solo la escribe MIK; el JSON manda
+    energy = (_energy(mik_energy) if mik_energy is not None else None) or _energy(mik_energy_txt) \
+        or mik_txt_energy or group_energy
+    # BPM: el de MIK (BeatGrid) manda sobre el estándar
+    bpm = _bpm(mik_bpm) or _bpm(std_bpm)
+    # «analizada con MIK» = cualquier dato salió de MIK (la energía solo la escribe MIK)
+    out.update(key=key, energy=energy, bpm=bpm, mik=bool(key_mik or energy or _bpm(mik_bpm)))
     return out
 
 
