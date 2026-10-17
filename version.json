@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
-  "build": 14,
+  "version": "2.0.1",
+  "build": 15,
   "notes": "SpotiSync ahora se llama BrainOrder. Conserva tu configuración, historial y conexiones."
 }
