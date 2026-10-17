@@ -3,9 +3,9 @@
 Cada destino expone: KEY, LABEL, available(cfg), enabled(cfg), running(),
 sync(analysis, cfg, progress) -> stats, fix_paths(cfg, moved, repoint) (rutas tras mover archivos).
 """
-from . import m3u, rekordbox, traktor
+from . import engine, m3u, rekordbox, serato, traktor
 
-DESTINATIONS = {m.KEY: m for m in (rekordbox, traktor, m3u)}
+DESTINATIONS = {m.KEY: m for m in (rekordbox, traktor, serato, engine, m3u)}
 
 
 def enabled_keys(cfg):
@@ -26,6 +26,10 @@ def status(cfg):
             info["nml"] = m.nml_path(cfg)
         if k == "m3u":
             info["folder"] = m.folder(cfg)
+        if k == "serato":
+            info["dir"] = str(m.home_serato(cfg))
+        if k == "engine":
+            info["dir"] = str(m.library_dir(cfg))
         info["wanted"] = bool(s.get("enabled", k == "rekordbox"))
         out[k] = info
     return out

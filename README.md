@@ -63,8 +63,8 @@ En la barra lateral, **Conexiones**:
   - **Deezer**: playlists públicas de tu perfil y links sueltos, sin login.
   - **Archivos exportados**: una carpeta donde cada `.m3u`, `.csv` o `.txt` es una playlist. Sirve para Apple Music (Archivo → Biblioteca → Exportar playlist), SoundCloud, Tidal o YouTube Music (exporta con TuneMyMusic o Soundiiz) y Exportify.
 - **Programas de DJ** (se actualizan al Organizar; cada uno con respaldo y cerrado):
-  - **Rekordbox** (master.db) y **Traktor Pro** (collection.nml). Al Reorganizar o Unificar también se corrigen sus rutas.
-  - **Playlists M3U** para Serato, VirtualDJ, Engine DJ, djay, Mixxx…
+  - **Rekordbox** (master.db), **Traktor Pro** (collection.nml), **Serato DJ** (crates en `_Serato_/Subcrates`) y **Engine DJ** (`Engine Library/Database2/m.db`). Al Reorganizar o Unificar también se corrigen sus rutas.
+  - **Playlists M3U** para VirtualDJ, djay, Mixxx o cualquier otro.
 
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:

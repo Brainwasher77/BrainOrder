@@ -279,6 +279,14 @@ class Api:
                     warnings.append("El archivo de Traktor debe ser collection.nml")
                     nml = ""
                 dst["traktor"] = {"enabled": bool(t.get("enabled")), "nml": nml}
+            for k in ("serato", "engine"):
+                if k in q:
+                    v = q[k] or {}
+                    d = (v.get("dir") or "").strip()
+                    if d and not Path(d).is_dir():
+                        warnings.append(f"No existe la carpeta {d}")
+                        d = ""
+                    dst[k] = {"enabled": bool(v.get("enabled")), "dir": d}
             if "m3u" in q:
                 m = q["m3u"] or {}
                 dst["m3u"] = {"enabled": bool(m.get("enabled")), "folder": (m.get("folder") or "").strip()}
