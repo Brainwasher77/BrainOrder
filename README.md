@@ -56,6 +56,12 @@ Carpetas por defecto (se cambian en Ajustes con el selector de carpetas):
 - Música por playlist: `Música/Spotify playlists/<playlist>`
 - Descargas por organizar: `Música/descargas para organizar`
 
+## Reglas (a tu gusto)
+En la barra lateral, **Reglas**:
+- **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que SpotiSync nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.
+- **Prioridad de playlists**: si una canción está en varias playlists, su archivo vive en la carpeta de la primera de la lista. Arrastra para ordenar. Cada playlist puede **Organizar** o **Ignorar**.
+- **Comparación**: tolerancia de duración para decidir si es la misma grabación, y qué formato se queda cuando hay repetidos.
+
 ## Seguridad de tus archivos
 - Nunca se borra música: lo repetido se aparta en carpetas `_duplicados` para que lo revises tú.
 - Antes de escribir en Rekordbox se respalda `master.db` (se guardan los últimos 5 respaldos `master.backup.spotisync-…db`).
