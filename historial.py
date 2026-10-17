@@ -2,7 +2,7 @@
 
 Cada operación que mueve archivos (Organizar, Reorganizar, Unificar) guarda aquí la lista exacta de
 (origen, destino). Deshacer devuelve cada archivo a su lugar si:
-  - el archivo sigue donde SpotiSync lo dejó, y
+  - el archivo sigue donde BrainOrder lo dejó, y
   - en su lugar original no apareció otro archivo con el mismo nombre.
 Lo que no cumpla eso se salta y se informa: nunca se pisa ni se borra nada.
 """
@@ -80,7 +80,7 @@ def plan_undo(op):
     todo, skipped = [], []
     for src, dst in reversed(op.get("moves") or []):
         if not Path(dst).exists():
-            skipped.append({"file": Path(dst).name, "why": "ya no está donde SpotiSync lo dejó"})
+            skipped.append({"file": Path(dst).name, "why": "ya no está donde BrainOrder lo dejó"})
         elif Path(src).exists():
             skipped.append({"file": Path(src).name, "why": "en su lugar original ya hay otro archivo con ese nombre"})
         else:

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>SpotiSync</title>
+<title>BrainOrder</title>
 <style>
 :root{
   --bg:#0d0e12; --panel:#15171d; --panel2:#1c1f27; --line:#2a2e39; --text:#e9ebf0; --mute:#8b91a1;
@@ -199,7 +199,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 <body>
 <div class="app">
   <header>
-    <div class="logo">Spoti<span>Sync</span></div>
+    <div class="logo">Brain<span>Order</span></div>
     <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span></div>
     <button class="ghost" id="btnConn" onclick="connect()">Conectar Spotify</button>
     <button onclick="openSettings()">Ajustes</button>
@@ -480,7 +480,7 @@ function foreignView(){
   if(!fl.length) return `<div class="empty"><h3>No sigues playlists de otros</h3></div>`;
   return `<div class="vhead"><h2>Playlists de otros</h2><span class="sub">Elige cuáles quieres integrar.</span></div>
     <div class="box">Spotify no deja que apps personales lean las canciones de playlists ajenas. Las que marques como <b>Integrar</b> quedan <b>pendientes</b>:
-    en Spotify ábrela, selecciona todo (${S.win?'Ctrl+A':'⌘A'}) → clic derecho → <b>Añadir a playlist → Nueva playlist</b>. Esa copia ya es tuya y SpotiSync la sincroniza en el próximo Analizar.</div>
+    en Spotify ábrela, selecciona todo (${S.win?'Ctrl+A':'⌘A'}) → clic derecho → <b>Añadir a playlist → Nueva playlist</b>. Esa copia ya es tuya y BrainOrder la sincroniza en el próximo Analizar.</div>
     ${fl.map(([id,f])=>foreignRow(id,f)).join('')}`;
 }
 function foreignRow(id,f){
@@ -694,7 +694,7 @@ async function checkUpdates(){
     const r = await api().check_updates();
     if(r && r.status==='ready' && r.new){
       const t=$('toast');
-      t.innerHTML = `<b>SpotiSync ${esc(r.new.version)} está lista.</b><br>${esc(r.new.notes||'')}<br>
+      t.innerHTML = `<b>BrainOrder ${esc(r.new.version)} está lista.</b><br>${esc(r.new.notes||'')}<br>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
         <button onclick="$('toast').className='toast'">Después</button>
         <button class="primary" onclick="restartApp()">Reiniciar ahora</button></div>`;
@@ -809,7 +809,7 @@ function cxInit(){
     m3u:{enabled:!!(de.m3u||{}).wanted, folder:(de.m3u||{}).folder||''},
     serato:{enabled:!!(de.serato||{}).wanted, dir:(de.serato||{}).dir||'', available:!!(de.serato||{}).available},
     engine:{enabled:!!(de.engine||{}).wanted, dir:(de.engine||{}).dir||'', available:!!(de.engine||{}).available},
-    folder_name: S.settings.rekordbox_folder||'SpotiSync'};
+    folder_name: S.settings.rekordbox_folder||'BrainOrder'};
   CX.deezer.enabled = !!(so.deezer||{}).enabled; CX.archivos.enabled = !!(so.archivos||{}).enabled;
 }
 function cxDirty(){ CX.dirty=true; const b=$('cxSave'); if(b) b.disabled=false; }
@@ -846,13 +846,13 @@ function connView(){
   </section>
 
   <section><h3>🎛️ Programas de DJ</h3>
-    <label class="f">Nombre de la carpeta que SpotiSync crea en cada programa</label>
+    <label class="f">Nombre de la carpeta que BrainOrder crea en cada programa</label>
     <input class="t" value="${esc(c.folder_name)}" oninput="CX.folder_name=this.value;cxDirty()" style="max-width:280px">
     <div class="cx"><div class="cxh"><b>Rekordbox</b><span class="tag ${c.rekordbox.available?'ok':''}">${c.rekordbox.available?'librería encontrada':'no encontrada'}</span>${tog(c.rekordbox.enabled,"CX.rekordbox.enabled=this.checked;cxDirty()")}</div>
       <div class="hint">Escribe directo en tu librería (master.db). Rekordbox debe estar cerrado.</div></div>
     <div class="cx"><div class="cxh"><b>Traktor Pro</b><span class="tag ${c.traktor.available||c.traktor.nml?'ok':''}">${c.traktor.nml?'collection.nml encontrado':'no encontrado'}</span>${tog(c.traktor.enabled,"CX.traktor.enabled=this.checked;cxDirty();render()")}</div>
       ${c.traktor.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.traktor.nml?'📄 '+esc(short(c.traktor.nml)):'<span class="hint">elige tu collection.nml</span>'}</span><button onclick="cxPickNml()">Cambiar…</button></div>`:''}
-      <div class="hint">Crea las playlists en tu colección (collection.nml) y corrige rutas cuando SpotiSync mueve archivos. Traktor debe estar cerrado.</div></div>
+      <div class="hint">Crea las playlists en tu colección (collection.nml) y corrige rutas cuando BrainOrder mueve archivos. Traktor debe estar cerrado.</div></div>
     <div class="cx"><div class="cxh"><b>Serato DJ</b><span class="tag ${c.serato.available?'ok':''}">${c.serato.available?'carpeta _Serato_ encontrada':'no encontrada'}</span>${tog(c.serato.enabled,"CX.serato.enabled=this.checked;cxDirty();render()")}</div>
       ${c.serato.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">📁 ${esc(short(c.serato.dir))}</span><button onclick="cxPick('serato')">Cambiar…</button></div>`:''}
       <div class="hint">Crea un crate por playlist dentro del crate «${esc(c.folder_name)}». Canciones en discos externos van al _Serato_ de ese disco. Corrige rutas al mover archivos. Serato debe estar cerrado.</div></div>
@@ -901,7 +901,7 @@ async function openWizard(){
   try{ info = await api().setup_info(); }catch(e){ toast('No pude abrir el asistente: '+esc(e), true); return; }
   const dj = {}; Object.entries(info.dj).forEach(([k,x])=>{ if(k!=='m3u') dj[k] = x.available; });
   const d = info.defaults;
-  W = {step:0, info, dj, m3u:false, m3uFolder:'', folder_name:S.settings.rekordbox_folder||'SpotiSync',
+  W = {step:0, info, dj, m3u:false, m3uFolder:'', folder_name:S.settings.rekordbox_folder||'BrainOrder',
     spotify:true, client_id:d.client_id||'', deezer:false, dzUser:'', files:false, filesFolder:'',
     dest_root:d.dest_root, inbox:d.inbox, roots:new Set(d.library_roots||[])};
   wizRender();
@@ -912,12 +912,12 @@ function wizRender(){
   const bar = `<div class="steps">${Array.from({length:WSTEPS},(_,k)=>`<i class="${k<=st?'on':''}"></i>`).join('')}</div>`;
   const pickRow = (label, val, fn) => `<label class="f">${label}</label><div style="display:flex;gap:8px;align-items:center"><span class="path" style="flex:1">${val?'📁 '+esc(short(val)):'<span class="hint">sin elegir</span>'}</span><button onclick="${fn}">Elegir…</button></div>`;
   let body = '';
-  if(st===0) body = `<div class="big">Bienvenido a SpotiSync 👋</div>
+  if(st===0) body = `<div class="big">Bienvenido a BrainOrder 👋</div>
     <p>Te ayuda a tener en tu computador las canciones de tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…), ordenadas en carpetas y listas dentro de tus programas de DJ.</p>
     <div class="box">En 4 pasos: programas de DJ → de dónde vienen tus playlists → carpetas → listo. Puedes cambiar todo después en <b>Conexiones</b>, <b>Reglas</b> y <b>Ajustes</b>.</div>
-    <div class="box">🔒 SpotiSync nunca borra música: lo repetido se aparta en una carpeta <code>_duplicados</code>, cada programa de DJ se respalda antes de tocarlo y todo lo que mueve se puede deshacer desde <b>Historial</b>.</div>`;
+    <div class="box">🔒 BrainOrder nunca borra música: lo repetido se aparta en una carpeta <code>_duplicados</code>, cada programa de DJ se respalda antes de tocarlo y todo lo que mueve se puede deshacer desde <b>Historial</b>.</div>`;
   if(st===1) body = `<div class="big">¿Qué programas de DJ usas?</div>
-    <p class="hint">Marqué los que encontré en este computador. SpotiSync crea ahí tus playlists, en el mismo orden.</p>
+    <p class="hint">Marqué los que encontré en este computador. BrainOrder crea ahí tus playlists, en el mismo orden.</p>
     ${Object.entries(i.dj).filter(([k])=>k!=='m3u').map(([k,x])=>`<label class="opt"><input type="checkbox" ${w.dj[k]?'checked':''} onchange="W.dj['${k}']=this.checked">
       <div><b>${esc(x.label)}</b><span class="tag ${x.available?'ok':''}">${x.available?'encontrado':'no encontrado'}</span>
       ${x.available?'':'<div class="hint" style="margin:2px 0 0">Si lo usas, ábrelo una vez y luego actívalo en Conexiones.</div>'}</div></label>`).join('')}
@@ -981,7 +981,7 @@ async function wizFinish(){
   if(!r.ok){ toast(esc(r.error), true); if(b){ b.disabled=false; b.textContent='Terminar'; } return; }
   const st = r.state; S.settings = st.settings; S.settings.setup_done = true; S.sources = st.sources; S.dests = st.destinations; S.inboxCount = st.inbox_count||0;
   closeModal(); render();
-  toast('¡Listo! SpotiSync quedó configurado.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'')
+  toast('¡Listo! BrainOrder quedó configurado.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'')
     + (w.spotify&&w.client_id?'<br>Ahora toca <b>Conectar Spotify</b>.':'<br>Ahora dale <b>⟳</b> en Tus playlists.'), !!(r.warnings||[]).length);
   if(!(w.spotify&&w.client_id)) loadPlaylists();
 }
@@ -994,20 +994,20 @@ function histView(){
   const ops = S.hist;
   if(!ops) return '<div class="empty"><p>Cargando…</p></div>';
   return `<div class="rules"><h2 style="margin-top:0">Historial</h2>
-    <p class="hint" style="margin-top:-6px">Cada vez que SpotiSync mueve archivos queda aquí. <b>Deshacer</b> devuelve cada archivo a donde estaba y corrige las rutas en tus programas de DJ. Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta.</p>
+    <p class="hint" style="margin-top:-6px">Cada vez que BrainOrder mueve archivos queda aquí. <b>Deshacer</b> devuelve cada archivo a donde estaba y corrige las rutas en tus programas de DJ. Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta.</p>
     ${ops.length? ops.map(o=>{ const d = new Date(o.time); const busyK = running('undo:'+o.id);
       return `<div class="cx" style="${o.undone?'opacity:.55':''}"><div class="cxh"><b>${esc(KIND[o.kind]||o.kind)}</b>
         <span class="tag">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
         ${o.undone?'<span class="art">deshecho</span>':`<button ${o.ready&&!busyK?'':'disabled'} onclick="askUndo(${jsq(o.id)})">${busyK?'Deshaciendo…':'↩ Deshacer'}</button>`}</div>
         <div>${esc(o.label)} · <b>${o.count}</b> archivo${o.count!==1?'s':''}${!o.undone&&o.ready<o.count?` <span class="art">(${o.ready} se pueden devolver; los demás cambiaron desde entonces)</span>`:''}</div>
         <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.sample.map(esc).join(' · ')}${o.count>o.sample.length?' …':''}</div></div>`; }).join('')
-      : '<div class="hint">Todavía no has movido archivos con SpotiSync.</div>'}</div>`;
+      : '<div class="hint">Todavía no has movido archivos con BrainOrder.</div>'}</div>`;
 }
 function askUndo(id){
   const o = (S.hist||[]).find(x=>x.id===id); if(!o) return;
   modal(`<h3>Deshacer «${esc(o.label)}»</h3>
     <p>Se devuelven <b>${o.ready}</b> archivo${o.ready!==1?'s':''} a donde estaban y se corrigen sus rutas en tus programas de DJ (con respaldo).</p>
-    <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que SpotiSync creó se quedan; solo cambian las rutas.</div>
+    <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que BrainOrder creó se quedan; solo cambian las rutas.</div>
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();undoOp(${jsq(id)})">Deshacer</button></div>`);
 }
 async function undoOp(id){

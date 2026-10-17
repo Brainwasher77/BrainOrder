@@ -26,7 +26,7 @@ def _get(url):
     if wait > 0:
         time.sleep(wait)
     _last[0] = time.time()
-    req = urllib.request.Request(url, headers={"User-Agent": "SpotiSync/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "BrainOrder/1.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     if isinstance(data, dict) and (data.get("error") or {}).get("code") == 4:  # cuota excedida

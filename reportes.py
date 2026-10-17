@@ -36,7 +36,7 @@ def write_reports(analysis, cfg):
             elsewhere = [r for r in others if r["status"] in ("ok", "elsewhere")]
             inbox = [r for r in others if r["status"] == "inbox"]
             missing = [r for r in others if r["status"] == "missing"]
-            L = [f"SpotiSync — {pl['name']}",
+            L = [f"BrainOrder — {pl['name']}",
                  f"Actualizado: {now}",
                  f"Esta carpeta tiene {len(here)} de {len(pl['tracks'])} canciones de la playlist.",
                  "Las demás no están aquí para no duplicar archivos; abajo está dónde encontrarlas.", ""]

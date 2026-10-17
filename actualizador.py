@@ -2,7 +2,7 @@
 
 Al abrir la app se revisa (en segundo plano) si en GitHub hay un version.json con un
 número de build mayor. Si lo hay, se descarga el código nuevo a <datos>/update/ y se
-instala solo la próxima vez que se abra SpotiSync (o al tocar "Reiniciar").
+instala solo la próxima vez que se abra BrainOrder (o al tocar "Reiniciar").
 """
 import io
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from config import SUPPORT_DIR, log
 
-REPO = "Brainwasher77/SpotiSync"
+REPO = "Brainwasher77/BrainOrder"
 BRANCH = "main"
 VERSION_URL = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/version.json"
 ZIP_URL = f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}"
@@ -23,7 +23,7 @@ UPDATE = SUPPORT_DIR / "update"
 
 
 def _get(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": "SpotiSync-updater", "Cache-Control": "no-cache"})
+    req = urllib.request.Request(url, headers={"User-Agent": "BrainOrder-updater", "Cache-Control": "no-cache"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
@@ -64,14 +64,14 @@ def check_and_download(progress=None):
         return {"status": "ready", "current": cur, "new": p}
     try:
         if progress:
-            progress(f"Descargando SpotiSync {remote.get('version')}…")
+            progress(f"Descargando BrainOrder {remote.get('version')}…")
         data = _get(ZIP_URL, timeout=60)
         with tempfile.TemporaryDirectory() as tmp:
             zipfile.ZipFile(io.BytesIO(data)).extractall(tmp)
             roots = [d for d in Path(tmp).iterdir() if d.is_dir()]
             src = roots[0] if len(roots) == 1 else Path(tmp)
             if not (src / "app.py").exists() or not (src / "arranque.py").exists():
-                raise RuntimeError("el paquete descargado no parece SpotiSync")
+                raise RuntimeError("el paquete descargado no parece BrainOrder")
             if UPDATE.exists():
                 shutil.rmtree(UPDATE, ignore_errors=True)
             UPDATE.mkdir(parents=True)

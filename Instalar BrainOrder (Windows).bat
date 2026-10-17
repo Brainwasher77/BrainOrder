@@ -1,13 +1,18 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableExtensions
-title Instalar SpotiSync
+title Instalar BrainOrder
 cd /d "%~dp0"
 set "SRC=%~dp0"
 if "%SRC:~-1%"=="\" set "SRC=%SRC:~0,-1%"
-set "SUP=%APPDATA%\SpotiSync"
+set "SUP=%APPDATA%\BrainOrder"
+set "OLD=%APPDATA%\SpotiSync"
 
-echo == SpotiSync: instalacion ==
+echo == BrainOrder: instalacion ==
+rem La app antes se llamaba SpotiSync: se traslada su carpeta (ajustes, historial, caches) sin perder nada.
+if exist "%OLD%" if not exist "%SUP%" (
+  move "%OLD%" "%SUP%" >nul && echo Tu configuracion de SpotiSync paso a BrainOrder.
+)
 echo.
 
 rem --- Buscar Python 3.9 o superior ---
@@ -59,19 +64,20 @@ echo Componentes listos.
 rem --- 3. Accesos directos (Escritorio y Menu Inicio) ---
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
-  "$sup = Join-Path $env:APPDATA 'SpotiSync';" ^
+  "$sup = Join-Path $env:APPDATA 'BrainOrder';" ^
   "$targets = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'));" ^
   "foreach ($d in $targets) {" ^
-  "  $l = $ws.CreateShortcut((Join-Path $d 'SpotiSync.lnk'));" ^
+  "  Remove-Item -ErrorAction SilentlyContinue (Join-Path $d 'SpotiSync.lnk');" ^
+  "  $l = $ws.CreateShortcut((Join-Path $d 'BrainOrder.lnk'));" ^
   "  $l.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe';" ^
   "  $l.Arguments = '\"' + (Join-Path $sup 'abrir.vbs') + '\"';" ^
   "  $l.WorkingDirectory = $sup;" ^
   "  $l.IconLocation = (Join-Path $sup 'app\icon.ico');" ^
-  "  $l.Description = 'SpotiSync: Spotify, tu musica y Rekordbox';" ^
+  "  $l.Description = 'BrainOrder: tus playlists, tu musica y tus programas de DJ';" ^
   "  $l.Save() }"
 
 echo.
-echo Listo. SpotiSync quedo en el Escritorio y en el Menu Inicio.
+echo Listo. BrainOrder quedo en el Escritorio y en el Menu Inicio.
 echo Se actualiza sola desde GitHub y, si Python cambia, se repara sola al abrirla.
 echo Ya puedes borrar esta carpeta descargada si quieres.
 echo Si Windows pregunta por permisos de red la primera vez (para conectar con Spotify), acepta "Redes privadas".

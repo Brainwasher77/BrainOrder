@@ -110,7 +110,7 @@ class Spotify:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                msg = "Listo, ya puedes volver a SpotiSync." if result["code"] else "No se pudo conectar."
+                msg = "Listo, ya puedes volver a BrainOrder." if result["code"] else "No se pudo conectar."
                 self.wfile.write(f"<html><body style='font-family:-apple-system;background:#111;color:#eee;"
                                  f"display:grid;place-items:center;height:100vh'><h2>{msg}</h2></body></html>".encode())
 

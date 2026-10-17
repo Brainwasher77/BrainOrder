@@ -366,7 +366,7 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
     if log_lines:
         dupdir.mkdir(parents=True, exist_ok=True)
         rep = dupdir / f"_registro {datetime.now():%Y-%m-%d %H-%M}.txt"
-        rep.write_text("SpotiSync — Unificar repetidos\n\n" + "\n".join(log_lines) + "\n", "utf-8")
+        rep.write_text("BrainOrder — Unificar repetidos\n\n" + "\n".join(log_lines) + "\n", "utf-8")
 
     res = {"retired": len(retired), "moved": len(path_change), "empty_removed": removed,
            "backup": backup, "rekordbox": rb_stats, "dup_dir": str(dupdir),

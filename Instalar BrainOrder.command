@@ -1,13 +1,20 @@
 #!/bin/bash
-# Instalador de SpotiSync para macOS.
-# Copia la app a tu carpeta de datos, prepara Python y crea SpotiSync.app.
+# Instalador de BrainOrder para macOS.
+# Copia la app a tu carpeta de datos, prepara Python y crea BrainOrder.app.
 # Después de instalar puedes borrar la carpeta descargada: la app se actualiza sola.
 set -e
 cd "$(dirname "$0")"
 SRC="$(pwd)"
-SUP="$HOME/Library/Application Support/SpotiSync"
+SUP="$HOME/Library/Application Support/BrainOrder"
+OLD="$HOME/Library/Application Support/SpotiSync"
 
-echo "== SpotiSync: instalación =="
+echo "== BrainOrder: instalación =="
+
+# La app antes se llamaba SpotiSync: se traslada su carpeta (ajustes, historial, cachés) sin perder nada.
+if [ -d "$OLD" ] && [ ! -d "$SUP" ]; then
+  pkill -f "$OLD/arranque.py" 2>/dev/null || true
+  mv "$OLD" "$SUP" && echo "Tu configuración de SpotiSync pasó a BrainOrder."
+fi
 
 ok_py() { [ -x "$1" ] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; }
 PY=""
@@ -43,10 +50,10 @@ fi
 "$SUP/venv/bin/python" -m pip install --upgrade -q -r "$SUP/app/requirements.txt"
 echo "Componentes listos."
 
-# 3. SpotiSync.app (en /Applications si se puede, si no en ~/Applications)
+# 3. BrainOrder.app (en /Applications si se puede, si no en ~/Applications)
 if [ -w /Applications ]; then DEST="/Applications"; else DEST="$HOME/Applications"; mkdir -p "$DEST"; fi
-APP="$DEST/SpotiSync.app"
-for old in "$HOME/Applications/SpotiSync.app" "/Applications/SpotiSync.app"; do
+APP="$DEST/BrainOrder.app"
+for old in "$HOME/Applications/SpotiSync.app" "/Applications/SpotiSync.app" "$HOME/Applications/BrainOrder.app" "/Applications/BrainOrder.app"; do
   [ -d "$old" ] && [ "$old" != "$APP" ] && rm -rf "$old" && echo "Quité la versión anterior de $old"
 done
 rm -rf "$APP"
@@ -56,20 +63,20 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>SpotiSync</string>
-  <key>CFBundleDisplayName</key><string>SpotiSync</string>
-  <key>CFBundleIdentifier</key><string>com.brainwasher.spotisync</string>
+  <key>CFBundleName</key><string>BrainOrder</string>
+  <key>CFBundleDisplayName</key><string>BrainOrder</string>
+  <key>CFBundleIdentifier</key><string>com.brainwasher.brainorder</string>
   <key>CFBundleVersion</key><string>$VER</string>
   <key>CFBundleShortVersionString</key><string>$VER</string>
-  <key>CFBundleExecutable</key><string>SpotiSync</string>
+  <key>CFBundleExecutable</key><string>BrainOrder</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-cp "$SUP/app/mac/lanzador.sh" "$APP/Contents/MacOS/SpotiSync"
-chmod +x "$APP/Contents/MacOS/SpotiSync"
+cp "$SUP/app/mac/lanzador.sh" "$APP/Contents/MacOS/BrainOrder"
+chmod +x "$APP/Contents/MacOS/BrainOrder"
 if [ -f "$SUP/app/icon.png" ]; then
   IS="$(mktemp -d)/icon.iconset"; mkdir -p "$IS"
   for s in 16 32 128 256 512; do
@@ -82,7 +89,7 @@ xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 touch "$APP"
 
 echo ""
-echo "✅ Listo. SpotiSync $VER quedó en $DEST (búscalo con Spotlight: ⌘ + espacio → SpotiSync)."
+echo "✅ Listo. BrainOrder $VER quedó en $DEST (búscalo con Spotlight: ⌘ + espacio → BrainOrder)."
 echo "   Se actualiza sola desde GitHub y, si Python cambia en tu Mac, se repara sola al abrirla."
 echo "   Ya puedes borrar esta carpeta descargada si quieres."
 open "$APP"

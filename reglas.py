@@ -1,6 +1,6 @@
 """Reglas que cada usuario ajusta a su gusto (pantalla «Reglas»).
 
-- Exclusiones: carpetas y patrones que SpotiSync nunca lee, mueve ni cuenta.
+- Exclusiones: carpetas y patrones que BrainOrder nunca lee, mueve ni cuenta.
 - Prioridad de playlists: la primera de la lista donde aparece una canción es su carpeta «hogar».
 - Modo por playlist: «organizar» (normal) o «ignorar» (no se analiza, no tiene carpeta, no toca Rekordbox).
 - Comparación: tolerancia de duración y formato preferido cuando hay copias repetidas.
