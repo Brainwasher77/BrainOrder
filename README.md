@@ -121,6 +121,12 @@ Ajustes, sesión de Spotify, cachés y el log (`brainorder.log`, se rota al pasa
 
 Tu Client ID y tu sesión de Spotify viven solo ahí, nunca en el repositorio.
 
+## Límite de consultas de Spotify
+Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spotify pone a la app en pausa (a veces varias horas).
+- BrainOrder recuerda la pausa (aunque cierres la app) y no le pregunta nada a Spotify hasta que termine: cada consulta extra puede alargarla. Arriba se ve «Spotify en pausa hasta las HH:MM».
+- Mientras tanto usa lo último que leyó de Spotify; Deezer, archivos, organizar, Rekordbox y lo demás siguen funcionando.
+- Para no llegar al límite: «Analizar todo» solo vuelve a leer las playlists que cambiaron en Spotify (y Me gusta solo si cambió), y las consultas van espaciadas.
+
 ## Limitaciones
 - Spotify no deja que apps personales lean canciones de playlists de otras personas. BrainOrder te pregunta si quieres integrarlas; para hacerlo, cópialas en Spotify a una playlist tuya (Seleccionar todo → Añadir a playlist → Nueva playlist).
 - Las pistas nuevas entran a Rekordbox sin analizar: al abrirlo, selecciónalas y analízalas (BPM, waveform).

@@ -32,6 +32,52 @@ class SpotifyError(Exception):
     pass
 
 
+class SpotifyPaused(SpotifyError):
+    """Spotify castigó a la app por exceso de consultas: no se le pregunta nada hasta que pase."""
+
+
+# ---------- pausa por exceso de consultas (se recuerda aunque cierres la app) ----------
+PAUSE_FILE = TOKEN_FILE.with_name("spotify_pausa.json")
+_PACE = {"t": 0.0, "lock": threading.Lock()}
+MIN_GAP = 0.12  # como mucho ~8 consultas por segundo entre todas las tareas
+
+
+def paused_until():
+    """Hora (epoch) hasta la que Spotify pidió no consultar, o None."""
+    try:
+        until = float(json.loads(PAUSE_FILE.read_text("utf-8")).get("until", 0))
+    except Exception:
+        return None
+    return until if until > time.time() else None
+
+
+def _hora(epoch):
+    return time.strftime("%H:%M", time.localtime(epoch)) + \
+        (" de mañana" if time.localtime(epoch).tm_yday != time.localtime().tm_yday else "")
+
+
+def _pause_error(until):
+    mins = max(1, round((until - time.time()) / 60))
+    when = f"{mins} min" if mins < 90 else f"{mins // 60} h {mins % 60:02d} min"
+    return SpotifyPaused(f"Spotify puso a tu app en pausa por exceso de consultas hasta las {_hora(until)} (faltan {when}). "
+                         "Mientras tanto BrainOrder usa lo último que leyó de Spotify; Deezer, archivos y todo lo demás siguen funcionando.")
+
+
+def _check_pause():
+    until = paused_until()
+    if until:
+        raise _pause_error(until)
+
+
+def _pace():
+    """Separa las consultas (entre todas las tareas a la vez) para no volver a exceder el límite."""
+    with _PACE["lock"]:
+        wait = MIN_GAP - (time.time() - _PACE["t"])
+        if wait > 0:
+            time.sleep(wait)
+        _PACE["t"] = time.time()
+
+
 _TOKEN_LOCK = threading.Lock()  # varias tareas a la vez: un solo refresco del token
 _NET_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, OSError)
 
@@ -62,8 +108,13 @@ def _retry_after(e):
     except (TypeError, ValueError):
         secs = 2
     if secs > 30:
-        mins = max(1, round(secs / 60))
-        raise SpotifyError(f"Spotify pidió esperar unos {mins} minuto(s) por exceso de consultas. Intenta más tarde.")
+        until = time.time() + secs
+        try:
+            PAUSE_FILE.write_text(json.dumps({"until": until}), "utf-8")
+        except OSError:
+            pass
+        log(f"Spotify: pausa por exceso de consultas ({secs} s, hasta {_hora(until)})")
+        raise _pause_error(until)
     time.sleep(secs + 1)
 
 
@@ -213,7 +264,9 @@ class Spotify:
         url = path_or_url if path_or_url.startswith("http") else API + path_or_url
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+        _check_pause()  # en pausa no se consulta: cada consulta extra puede alargar el castigo
         access = self._access()
+        _pace()
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access}"})
         try:
             with _urlopen(req, timeout=30) as r:
@@ -255,7 +308,9 @@ class Spotify:
     def send(self, method, path, body=None, _retry=3):
         url = path if path.startswith("http") else API + path
         data = json.dumps(body).encode() if body is not None else None
+        _check_pause()
         access = self._access()
+        _pace()
         req = urllib.request.Request(url, data=data, method=method, headers={
             "Authorization": f"Bearer {access}", "Content-Type": "application/json"})
         try:
@@ -357,13 +412,23 @@ class Spotify:
                 tracks.append(t)
         return tracks
 
-    def my_playlists(self, progress=None):
-        """Playlists propias y colaborativas con sus canciones, en orden."""
+    def my_playlists(self, progress=None, cached=None):
+        """Playlists propias y colaborativas con sus canciones, en orden.
+        cached: {id: {"snapshot", "tracks"}} lo ya leído. Si Spotify dice que la playlist no cambió
+        (mismo snapshot), no se vuelven a pedir sus canciones: así «Analizar todo» hace una fracción
+        de las consultas y no se excede el límite de Spotify."""
         result = []
         own = self.list_mine()
+        cached = cached or {}
+        reused = 0
         for i, p in enumerate(own, 1):
             if progress:
                 progress(f"Playlist {i}/{len(own)}: {p['name']}", (i - 1) / len(own))
+            c = cached.get(p["id"]) or {}
+            if p.get("snapshot") and c.get("tracks") is not None and c.get("snapshot") == p["snapshot"]:
+                result.append({**p, "tracks": c["tracks"]})
+                reused += 1
+                continue
             try:
                 tracks = self.playlist_tracks(
                     p["id"], (lambda m, f, i=i, name=p["name"]: progress(f"Playlist {i}/{len(own)} «{name}»: {m.split(': ',1)[-1]}", f)) if progress else None,
@@ -374,6 +439,8 @@ class Spotify:
                 result.append({**p, "tracks": None, "error": str(e)})
                 continue
             result.append({**p, "tracks": tracks})
+        if reused:
+            log(f"Spotify: {reused} de {len(own)} playlists sin cambios (no se volvieron a leer)")
         return result
 
     def liked(self, progress=None):

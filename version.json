@@ -1,5 +1,5 @@
 {
-  "version": "2.5.0",
-  "build": 21,
-  "notes": "Más rápido y más seguro: análisis hasta 3 veces más rápido, la ventana ya no se traba con playlists grandes, Rekordbox sin copias de 200 MB, mover archivos sin riesgo y «BrainOrder» en el menú de macOS."
+  "version": "2.5.1",
+  "build": 22,
+  "notes": "Spotify: si limita tu app por exceso de consultas, BrainOrder respeta la pausa y sigue con lo último leído. «Analizar todo» ya no vuelve a leer las playlists que no cambiaron (muchas menos consultas)."
 }

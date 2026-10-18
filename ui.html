@@ -298,6 +298,7 @@ function paintTasks(){
 function busy(on, msg){ if(msg && !Object.keys(T).length) $('progTxt').textContent = msg; }
 // Aplicar un análisis nuevo sin pisar uno más reciente que trajo otra tarea, y sin perder la vista actual.
 async function applyAnalysis(r){
+  if(r && r.spotify_paused !== undefined) S.spPause = r.spotify_paused;
   if(!r || !r.analysis) return;
   if(r.rev !== undefined && r.rev !== null && S.rev !== undefined && r.rev < S.rev){
     try{ const st = await api().get_state(S.rev ?? null); if(st.analysis && st.rev >= S.rev){ setAnalysis(st.analysis, st.rev); } }catch(e){}
@@ -311,7 +312,8 @@ function setAnalysis(analysis, rev){
   if(id){ const i = analysis.findIndex(p=>p.id===id); S.view = i>=0 ? `${m[1]}:${i}` : 'missing'; if(m[1]==='reorg' && i>=0) RG.i = i; }
 }
 const plIdx = id => (S.analysis||[]).findIndex(p=>p.id===id);
-function taskErr(r){ if(r.dup) toast(esc(r.error)); else toast(esc(r.error), true); }
+function taskErr(r){ if(r.spotify_paused !== undefined){ S.spPause = r.spotify_paused; renderCore(); } if(r.dup) toast(esc(r.error)); else toast(esc(r.error), true); }
+const warnHtml = r => (r && r.warnings && r.warnings.length) ? '<br><span style="color:var(--org)">' + r.warnings.map(esc).join('<br>') + '</span>' : '';
 function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
 function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
 function closeModal(){ $('mbg').classList.remove('show'); }
@@ -364,7 +366,10 @@ const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2
 function render(){ renderCore(); paintTasks(); }
 function renderCore(){
   $('dot').classList.toggle('on', S.connected);
-  $('connTxt').textContent = S.connected ? 'Spotify conectado' : 'Sin conectar';
+  const pausa = S.spPause && S.spPause*1000 > Date.now();
+  $('connTxt').textContent = pausa ? `Spotify en pausa hasta las ${new Date(S.spPause*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}` : (S.connected ? 'Spotify conectado' : 'Sin conectar');
+  $('connTxt').title = pausa ? 'Spotify limitó a tu app por exceso de consultas. Mientras tanto se usa lo último que se leyó; Deezer, archivos y tu música siguen funcionando.' : '';
+  $('dot').style.background = pausa ? 'var(--org)' : '';
   $('btnConn').textContent = S.connected ? 'Desconectar' : 'Conectar Spotify';
   const a = S.analysis;
   const oc = orgCount();
@@ -1412,7 +1417,7 @@ async function analyze(){
   if(!r.ok){ taskErr(r); render(); return; }
   await applyAnalysis(r); S.foreign = r.foreign || {};
   render();
-  toast(`Análisis listo: faltan <b>${missingUnique().length}</b> canciones y hay <b>${orgCount()}</b> por organizar.`);
+  toast(`Análisis listo: faltan <b>${missingUnique().length}</b> canciones y hay <b>${orgCount()}</b> por organizar.` + warnHtml(r), !!(r.warnings||[]).length);
   askForeign(r.ask_foreign || []);
 }
 let orgPid = null;
@@ -1422,7 +1427,7 @@ async function loadPlaylists(){
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r); S.foreign = r.foreign || {}; render();
   const pend = r.analysis.filter(p=>p.pending && !p.ignored).length, ch = r.analysis.filter(changed).length;
-  toast(`${r.analysis.length} playlists.` + (pend?` <b>${pend}</b> sin analizar.`:'') + (ch?` <b>${ch}</b> cambiaron en Spotify (●).`:'') + ' Elige una y dale <b>🔄 Analizar</b>.');
+  toast(`${r.analysis.length} playlists.` + (pend?` <b>${pend}</b> sin analizar.`:'') + (ch?` <b>${ch}</b> cambiaron en Spotify (●).`:'') + ' Elige una y dale <b>🔄 Analizar</b>.' + warnHtml(r), !!(r.warnings||[]).length);
   askForeign(r.ask_foreign || []);
 }
 async function analyzePlaylist(pid){
@@ -1440,7 +1445,7 @@ async function analyzePlaylist(pid){
 // el vigilante avisa cuando cambia la carpeta de descargas
 window.onInboxChange = async (info) => {
   try{
-    const st = await api().get_state(S.rev ?? null);
+    const st = await api().get_state(S.rev ?? null); S.spPause = st.spotify_paused || null;
     if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
     S.inboxCount = (info && info.count !== undefined) ? info.count : (st.inbox_count || 0);
     render();
@@ -1602,7 +1607,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  S.spPause = st.spotify_paused || null; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500);
   try{ api().start_watch(); }catch(e){}
