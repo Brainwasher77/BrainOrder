@@ -59,8 +59,47 @@ def db_mtime():
         return None
 
 
+def _read_direct(cfg, src):
+    """Lectura directa de solo lectura (rápida: no copia la librería)."""
+    import rekordbox_sync
+    con = rekordbox_sync.connect_ro(src)
+    try:
+        alive = "COALESCE(rb_local_deleted, 0) = 0"
+        folder = cfg.get("rekordbox_folder") or "BrainOrder"
+        row = con.execute(f"SELECT ID FROM djmdPlaylist WHERE ParentID = 'root' AND Name = ? AND Attribute = 1 AND {alive} "
+                          "ORDER BY Seq LIMIT 1", (folder,)).fetchone()
+        if row is None:
+            return {}
+        pls = con.execute(f"SELECT ID, Name FROM djmdPlaylist WHERE ParentID = ? AND COALESCE(Attribute, 0) = 0 AND {alive}",
+                          (row[0],)).fetchall()
+        out = {str(pid): {"name": name, "paths": []} for pid, name in pls}
+        if out:
+            marks = ",".join("?" * len(out))
+            q = (f"SELECT sp.PlaylistID, c.FolderPath FROM djmdSongPlaylist sp JOIN djmdContent c ON c.ID = sp.ContentID "
+                 f"WHERE sp.PlaylistID IN ({marks}) AND COALESCE(sp.rb_local_deleted, 0) = 0 "
+                 f"ORDER BY sp.PlaylistID, COALESCE(sp.TrackNo, 0)")
+            for pid, fp in con.execute(q, list(out)):
+                if fp:
+                    out[str(pid)]["paths"].append(native(fp))
+        return out
+    finally:
+        con.close()
+
+
 def read_state(cfg, path=None):
     """Playlists dentro de la carpeta de BrainOrder en Rekordbox -> {id: {name, paths}} (None si no hay librería)."""
+    import rekordbox_sync
+    src = Path(path) if path else rekordbox_sync.RB_DIR / "master.db"
+    if not src.exists():
+        return None
+    try:
+        return _read_direct(cfg, src)
+    except Exception as e:
+        log(f"Rekordbox: lectura directa falló ({e!r}); uso una copia")
+    return _read_copy(cfg, path)
+
+
+def _read_copy(cfg, path=None):
     import rekordbox_sync
     try:
         from pyrekordbox import MasterDatabase as DB

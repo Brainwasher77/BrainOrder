@@ -10,9 +10,7 @@ Reglas de Engine para herramientas externas que respetamos:
 - Antes de cambiar nada se respalda m.db (fuera de Database2).
 """
 import os
-import shutil
 import sqlite3
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -54,14 +52,11 @@ def enabled(cfg):
 
 def running():
     try:
+        import plataforma
         if IS_MAC:
-            out = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True, timeout=5).stdout
-            return any("Engine DJ" in l or "Engine Prime" in l for l in out.splitlines())
+            return bool(plataforma.any_process(lambda l: "Engine DJ" in l or "Engine Prime" in l))
         if IS_WIN:
-            r = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            low = r.stdout.lower()
-            return "engine dj" in low or "enginedj" in low
+            return bool(plataforma.any_process(lambda l: "engine dj" in l.lower() or "enginedj" in l.lower()))
     except Exception:
         return False
     return False

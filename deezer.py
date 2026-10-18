@@ -21,17 +21,23 @@ _MIN_GAP = 0.12  # ~8 consultas/seg, por debajo del límite de Deezer (50 cada 5
 _last = [0.0]
 
 
-def _get(url):
-    wait = _MIN_GAP - (time.time() - _last[0])
-    if wait > 0:
-        time.sleep(wait)
-    _last[0] = time.time()
+_GAP_LOCK = threading.Lock()
+
+
+def _get(url, tries=4):
+    with _GAP_LOCK:  # varias tareas a la vez respetan juntas el límite de Deezer
+        wait = _MIN_GAP - (time.time() - _last[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last[0] = time.time()
     req = urllib.request.Request(url, headers={"User-Agent": "BrainOrder/1.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     if isinstance(data, dict) and (data.get("error") or {}).get("code") == 4:  # cuota excedida
+        if tries <= 1:
+            raise RuntimeError("Deezer: límite de consultas")
         time.sleep(5)
-        return _get(url)
+        return _get(url, tries - 1)
     return data
 
 

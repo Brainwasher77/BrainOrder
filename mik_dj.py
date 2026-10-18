@@ -169,9 +169,9 @@ def flac_seek_info(path, ms):
 
 
 # ---------------------------------------------------------------- Rekordbox
-def run_rekordbox(cfg, apply=False, progress=None):
+def run_rekordbox(cfg, apply=False, progress=None, backup=True):
     import mik_rekordbox
-    return mik_rekordbox.run(cfg, apply=apply, progress=progress)
+    return mik_rekordbox.run(cfg, apply=apply, progress=progress, backup=backup)
 
 
 # ---------------------------------------------------------------- Traktor
@@ -231,7 +231,7 @@ def plan_traktor(col, cfg, apply=False, info=None, progress=None):
     return changes
 
 
-def run_traktor(cfg, apply=False, progress=None):
+def run_traktor(cfg, apply=False, progress=None, backup=True):
     from destinos import traktor as T
     path = T.nml_path(cfg)
     if not path or not Path(path).exists():
@@ -242,7 +242,7 @@ def run_traktor(cfg, apply=False, progress=None):
     changes = plan_traktor(col, cfg, False, progress=progress)
     if not apply or not changes:
         return {"changes": changes, "backup": None}
-    bk = T.backup(path)
+    bk = T.backup(path) if backup else None
     col = T.Collection(path)
     plan_traktor(col, cfg, True)
     col.save()
@@ -305,7 +305,7 @@ def plan_serato_db(data, root, cfg, apply=False, info=None):
     return changes, S.dump(out), no_cues
 
 
-def run_serato(cfg, apply=False, progress=None):
+def run_serato(cfg, apply=False, progress=None, backup=True):
     from destinos import serato as S
     if not S.available(cfg):
         raise S.SeratoError("No encontré la carpeta de Serato.")
@@ -458,7 +458,7 @@ def plan_engine(db, lib_dir, cfg, apply=False, info=None, progress=None):
     return changes
 
 
-def run_engine(cfg, apply=False, progress=None):
+def run_engine(cfg, apply=False, progress=None, backup=True):
     import sqlite3
     from destinos import engine as E
     if not E.available(cfg):
@@ -482,7 +482,7 @@ def run_engine(cfg, apply=False, progress=None):
         if not changes:
             return {"changes": [], "backup": None}
         db.close()
-        bk = E.backup(cfg)
+        bk = E.backup(cfg) if backup else None
         db = sqlite3.connect(E.db_path(cfg), timeout=10)
         with db:
             plan_engine(db, lib_dir, cfg, True)
@@ -498,8 +498,9 @@ def run_engine(cfg, apply=False, progress=None):
 RUNNERS = {"rekordbox": run_rekordbox, "traktor": run_traktor, "serato": run_serato, "engine": run_engine}
 
 
-def run(cfg, key, apply=False, progress=None):
-    res = RUNNERS[key](cfg, apply=apply, progress=progress)
+def run(cfg, key, apply=False, progress=None, backup=True):
+    """backup=False: cuando la misma operación ya respaldó la librería de ese programa (Organizar)."""
+    res = RUNNERS[key](cfg, apply=apply, progress=progress, backup=backup)
     if apply and res.get("changes"):
         armonia.save()
     return res

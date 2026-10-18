@@ -27,7 +27,8 @@ def write_reports(analysis, cfg):
         txt = folder / TXT_NAME
         here = [r for r in pl["tracks"] if r["status"] == "ok" and r["source"]
                 and str(Path(r["source"]).parent) == pl["folder"]]
-        others = [r for r in pl["tracks"] if r not in here]
+        here_ids = {id(r) for r in here}
+        others = [r for r in pl["tracks"] if id(r) not in here_ids]  # antes «r not in here»: lentísimo en listas grandes
         try:
             if not others:
                 if txt.exists():
@@ -64,8 +65,15 @@ def write_reports(analysis, cfg):
                     if dz.get("url"):
                         L.append(f"        Deezer:  {dz['url']}" + ("" if dz.get("found") else "  (búsqueda)"))
                 L.append("")
+            body = "\n".join(L)
+            try:  # si solo cambiaría la fecha, no se reescribe (cientos de carpetas en cada análisis)
+                old = txt.read_text("utf-8").split("\n")
+                if old[:1] + old[2:] == L[:1] + L[2:]:
+                    continue
+            except OSError:
+                pass
             folder.mkdir(parents=True, exist_ok=True)
-            txt.write_text("\n".join(L), encoding="utf-8")
+            txt.write_text(body, encoding="utf-8")
             written += 1
         except Exception as e:
             log(f"No pude escribir el reporte de {pl['name']}: {e}")

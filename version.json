@@ -1,5 +1,5 @@
 {
-  "version": "2.4.0",
-  "build": 20,
-  "notes": "Mixed In Key ahora llega a todos tus programas de DJ (Rekordbox, Traktor, Serato y Engine DJ): key, energía y sus hot cues, solo en canciones que aún no tienen hot cues."
+  "version": "2.5.0",
+  "build": 21,
+  "notes": "Más rápido y más seguro: análisis hasta 3 veces más rápido, la ventana ya no se traba con playlists grandes, Rekordbox sin copias de 200 MB, mover archivos sin riesgo y «BrainOrder» en el menú de macOS."
 }

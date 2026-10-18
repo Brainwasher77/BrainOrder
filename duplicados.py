@@ -82,7 +82,6 @@ def scan(cfg, analysis=None, rb=None, progress=None):
             pass
     cands = [g for g in by_song.values() if len(g) > 1]
     exact_cands = [g for g in by_size.values() if len(g) > 1]
-    total = len(cands) + len(exact_cands)
 
     groups, seen_sets = [], set()
 

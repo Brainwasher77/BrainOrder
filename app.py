@@ -2,7 +2,6 @@
 
 Ventana nativa de macOS (pywebview). Ejecutar: python app.py
 """
-import csv
 import json
 import os
 import subprocess
@@ -22,6 +21,8 @@ import destinos  # noqa: E402
 import mik_dj  # noqa: E402
 import fuentes  # noqa: E402
 from destinos.traktor import TraktorError  # noqa: E402
+from destinos.serato import SeratoError  # noqa: E402
+from destinos.engine import EngineError  # noqa: E402
 from fuentes.deezer_src import DeezerError  # noqa: E402
 import organizador  # noqa: E402
 import plataforma  # noqa: E402
@@ -52,6 +53,26 @@ def _write_json(p, data):
     os.replace(tmp, p)
 
 
+def _os_error_text(e):
+    """Errores del sistema de archivos explicados en simple."""
+    import errno
+    if getattr(e, "errno", None) is None:
+        return str(e)
+    where = f" ({e.filename})" if getattr(e, "filename", None) else ""
+    if e.errno == errno.ENOSPC:
+        return f"El disco está lleno{where}. Libera espacio y vuelve a intentar: no se perdió nada."
+    if e.errno in (errno.EACCES, errno.EPERM):
+        return (f"El sistema no dio permiso para tocar un archivo o carpeta{where}. "
+                "En Mac: Ajustes del Sistema → Privacidad y seguridad → Acceso total al disco → activa BrainOrder/Python.")
+    if e.errno == errno.ENOENT:
+        return f"No encontré un archivo o carpeta{where}. ¿Se desconectó un disco externo?"
+    if e.errno in (errno.EROFS,):
+        return f"Ese disco es de solo lectura{where}."
+    if e.errno == errno.EEXIST:
+        return f"Ya existe un archivo con ese nombre{where}; no se pisó nada."
+    return f"Error del sistema de archivos{where}: {e.strerror or e}"
+
+
 class Api:
     def __init__(self):
         self._window = None
@@ -72,6 +93,8 @@ class Api:
         self._task_seq = 0
         self._inbox_sig = None
         self._inbox_path = None
+        self._an = None             # análisis en memoria (el archivo solo se lee una vez)
+        self._inbox_n = (0.0, 0)    # (cuándo, cuántos) último conteo de descargas
 
     # ---------- utilidades ----------
     def _sp(self):
@@ -148,8 +171,11 @@ class Api:
                 out["rev"] = self._tl.rev
             return {"ok": True, **out}
         except (SpotifyError, rekordbox_sync.RekordboxError, unificar.UnifyError, TraktorError, DeezerError,
-                FileNotFoundError) as e:
+                SeratoError, EngineError) as e:
             return {"ok": False, "error": str(e)}
+        except OSError as e:
+            config.log(traceback.format_exc())
+            return {"ok": False, "error": _os_error_text(e)}
         except Exception as e:
             config.log(traceback.format_exc())
             return {"ok": False, "error": f"Error inesperado: {e}"}
@@ -177,25 +203,50 @@ class Api:
         with self._state:
             self._rev += 1
             _write_json(CACHE_ANALYSIS, analysis)
+            self._an = analysis
             self._tl.rev = self._rev
             return analysis
 
+    def _analysis(self):
+        """Último análisis (de memoria; la primera vez se lee del disco). Solo lectura: no modificarlo."""
+        an = self._an
+        if an is None:
+            an = _read_json(CACHE_ANALYSIS, None)
+            if an is not None:
+                self._an = an
+        return an
+
+    def _inbox_count(self, max_age=5.0):
+        """Cuántos audios hay en descargas (el vigilante lo mide cada 4 s; si es reciente se reutiliza)."""
+        import time
+        t, n = self._inbox_n
+        if time.time() - t <= max_age and getattr(self, "_watching", False):
+            return n
+        n = self._inbox_signature()[1]
+        self._inbox_n = (time.time(), n)
+        return n
+
     # ---------- estado ----------
-    def get_state(self):
+    def get_state(self, rev=None):
+        """Estado para la ventana. rev: la versión del análisis que ya tiene la ventana; si coincide
+        no se vuelve a mandar el análisis completo (puede pesar varios MB)."""
         sp = self._sp()
+        same = rev is not None and rev == self._rev and self._an is not None
+        with self._reg:
+            running = list(self._running)
         return {
             "connected": sp.connected,
             "settings": {k: self._cfg[k] for k in ("client_id", "redirect_uri", "dest_root", "inbox",
                                                    "library_roots", "liked_name", "include_liked",
                                                    "rekordbox_folder")},
-            "analysis": _read_json(CACHE_ANALYSIS, None),
+            "analysis": None if same else self._analysis(),
             "rev": self._rev,
-            "running": list(self._running),
+            "running": running,
             "foreign": self._cfg.get("foreign", {}),
             "rekordbox_running": rekordbox_sync.rekordbox_running(),
             "home": str(Path.home()),
             "pinned": self._cfg.get("pinned_paths", []),
-            "inbox_count": self._inbox_signature()[1],
+            "inbox_count": self._inbox_count(),
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
@@ -428,6 +479,7 @@ class Api:
             # cambiaron las carpetas: el vigilante toma la nueva como punto de partida (sin avisar de
             # todo lo que ya había) y los estados se recalculan en segundo plano
             self._inbox_sig = None
+            self._inbox_n = (0.0, 0)
             self._inbox_path = self._cfg.get("inbox")
 
             def refresh():
@@ -662,6 +714,8 @@ class Api:
                 playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress)]
                 for p in playlists:
                     p["analyzed_snapshot"] = p.get("snapshot")
+                    if p.get("error"):
+                        warnings.append(f"Spotify «{p['name']}»: {p.pop('error')} (se mantiene lo último que leí)")
                 if self._cfg.get("include_liked"):
                     lm = {**self._liked_meta(sp), "source": "spotify"}
                     lm["tracks"] = sp.liked(self._progress)
@@ -706,6 +760,11 @@ class Api:
                 raise SpotifyError("No hay ninguna fuente activa. Conecta Spotify o activa Deezer / archivos en Conexiones.")
 
             def put(data):
+                old = {p["id"]: p for p in data["playlists"]}
+                for p in playlists + others:  # lo que no se pudo leer conserva lo guardado
+                    o = old.get(p["id"]) or {}
+                    if p.get("tracks") is None and o.get("tracks") is not None:
+                        p["tracks"], p["analyzed_snapshot"] = o["tracks"], o.get("analyzed_snapshot")
                 keep = [] if spotify_ok else [p for p in data["playlists"] if fuentes.source_of(p["id"]) == "spotify"]
                 data["playlists"] = (playlists if spotify_ok else keep) + others
                 if foreign_ok is not None:
@@ -768,6 +827,7 @@ class Api:
             self._cfg["rules"] = r
             config.save(self._cfg)
             self._inbox_sig = None
+            self._inbox_n = (0.0, 0)
             analysis = None
             if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
                 self._progress("Aplicando las reglas a tu música…", 0)
@@ -781,7 +841,7 @@ class Api:
 
     # ---------- organizar ----------
     def organize(self, targets=True, pid=None, extra=None):
-        label = "Organizar" + (f" «{next((p['name'] for p in (_read_json(CACHE_ANALYSIS, None) or []) if p['id'] == pid), '')}»" if pid else " descargas")
+        label = "Organizar" + (f" «{next((p['name'] for p in (self._analysis() or []) if p['id'] == pid), '')}»" if pid else " descargas")
         """Organiza todo, o solo una playlist (pid).
         extra (solo en el general): {"groups": [nombres de subcarpetas de descargas],
                                      "files": [{"src", "dest"}]} para descargas sin playlist."""
@@ -790,7 +850,7 @@ class Api:
             with self._state:
                 self._set_stage(0, 50)
                 sp_data = self._load_sp()
-                analysis = _read_json(CACHE_ANALYSIS, None) or []
+                analysis = self._analysis() or []
                 subset = [p for p in analysis if p["id"] == pid] if pid else analysis
                 if pid and not subset:
                     raise SpotifyError("No encontré esa playlist.")
@@ -816,6 +876,7 @@ class Api:
                 op_id = historial.record("organize", label, journal)
                 if not sp_data["playlists"] or not analysis:
                     self._inbox_sig = None
+                    self._inbox_n = (0.0, 0)
                     return {"files": files, "extra": extra_res, "rekordbox": None, "rekordbox_error": None,
                             "analysis": analysis or None, "op_id": op_id}
                 self._progress("Re-escaneando tu música…")
@@ -847,7 +908,9 @@ class Api:
                     if isinstance(st, dict) and k in mik_dj.PROGRAMS and self._cfg.get("rb_mik_auto", True):
                         # lo que analizó Mixed In Key (key, energía y hot cues) va también a ese programa
                         try:
-                            mres = mik_dj.run(self._cfg, k, apply=True, progress=self._progress)
+                            # el programa ya se respaldó al sincronizar: no se hace otro respaldo enorme
+                            mres = mik_dj.run(self._cfg, k, apply=True, progress=self._progress,
+                                              backup=not st.get("backup"))
                             sm = mik_dj.summary(mres["changes"])
                             st["mik"], st["mik_cues"] = sm["count"], sm["cues"]
                         except Exception as e:
@@ -861,6 +924,7 @@ class Api:
             with self._state:
                 reportes.write_reports([p for p in analysis if not pid or p["id"] == pid], self._cfg)
             self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
+            self._inbox_n = (0.0, 0)
             self._progress("Organización terminada.", 1)
             return {"files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
                     "dj": dj, "analysis": analysis, "op_id": op_id}
@@ -911,6 +975,7 @@ class Api:
                     analysis = self._build_analysis(light=True)
                     reportes.write_reports(analysis, self._cfg)
             self._inbox_sig = None
+            self._inbox_n = (0.0, 0)
             self._progress("Listo.", 1)
             return {"restored": len(done), "skipped": skipped, "rekordbox": rb_stats, "dj": dj,
                     "warnings": warnings, "analysis": analysis}
@@ -921,7 +986,7 @@ class Api:
         """moves: [{src, dest}] archivos a mover; keep: rutas que se dejan donde están."""
         def run():
             with self._state:
-                analysis = _read_json(CACHE_ANALYSIS, None) or []
+                analysis = self._analysis() or []
                 pl = next((p for p in analysis if p["id"] == pid), None)
                 if not pl:
                     raise SpotifyError("No encontré esa playlist. Vuelve a analizarla.")
@@ -965,7 +1030,7 @@ class Api:
         """Qué hay en descargas: listos para su playlist, repetidos y sin playlist (por subcarpeta)."""
         sig, n = self._inbox_signature()
         files = [p for p, _, _ in sig]
-        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        analysis = self._analysis() or []
         ready, dups = set(), set()
         for pl in analysis:
             for r in pl["tracks"]:
@@ -1028,6 +1093,7 @@ class Api:
         de copiarse), recalcula lo que hay por organizar y avisa a la ventana."""
         import time
         self._inbox_sig = None
+        self._inbox_n = (0.0, 0)
         self._inbox_path = self._cfg.get("inbox")
         last_seen, stable = None, 0
         while True:
@@ -1037,6 +1103,7 @@ class Api:
                     self._inbox_path = self._cfg.get("inbox")
                     self._inbox_sig, last_seen, stable = None, None, 0
                 sig, n = self._inbox_signature()
+                self._inbox_n = (time.time(), n)
                 if sig != last_seen:          # algo cambió: esperar a que deje de cambiar (descarga en curso)
                     last_seen, stable = sig, 0
                     continue
@@ -1086,7 +1153,7 @@ class Api:
         if not destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
             return [], None
         state = rb_cambios.read_state(self._cfg)
-        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        analysis = self._analysis() or []
         if not rb_cambios.BASELINE.exists():
             by_name = {p["name"]: p["id"] for p in analysis}
             rb_cambios.save_baseline({rid: {"pid": by_name.get(v["name"]), "name": v["name"], "paths": v["paths"]}
@@ -1182,7 +1249,7 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"No pude leer Rekordbox: {e}"}
         self._rb_state = state
-        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        analysis = self._analysis() or []
         by_id = {p["id"]: p for p in analysis}
         for c in changes:
             pl = by_id.get(c.get("pid")) or {}
@@ -1203,7 +1270,7 @@ class Api:
             if not todo:
                 return {"done": [], "errors": [], "unresolved": []}
             sp = self._sp()
-            analysis = _read_json(CACHE_ANALYSIS, None) or []
+            analysis = self._analysis() or []
             by_id = {p["id"]: p for p in analysis}
             need_sp = [c for c in todo if decisions[c["id"]] == "spotify"]
             if need_sp and not sp.can_write:
@@ -1339,25 +1406,32 @@ class Api:
         time.sleep(60)
         while True:
             try:
-                if self._cfg.get("rb_mik_auto", True) and not self._running and self._files.acquire(blocking=False):
-                    try:
-                        done = {}
-                        for k in self._mik_targets():
-                            m = destinos.DESTINATIONS[k]
+                if self._cfg.get("rb_mik_auto", True) and not self._running:
+                    done = {}
+                    for k in self._mik_targets():
+                        m = destinos.DESTINATIONS[k]
+                        try:
+                            # mirar no necesita turno (solo lee); escribir sí, y solo con el programa cerrado
+                            if m.running() or not mik_dj.run(self._cfg, k, apply=False)["changes"]:
+                                continue
+                            if not self._files.acquire(blocking=False):
+                                break  # hay otra tarea moviendo archivos: se reintenta en 5 min
                             try:
-                                if m.running() or not mik_dj.run(self._cfg, k, apply=False)["changes"] or m.running():
+                                if m.running() or self._running:
                                     continue
-                                res = mik_dj.run(self._cfg, k, apply=True)
-                                sm = mik_dj.summary(res["changes"])
-                                if sm["count"]:
-                                    done[k] = {"label": m.LABEL, "count": sm["count"], "cues": sm["cues"],
-                                               "backup": res.get("backup")}
-                            except Exception as e:
-                                config.log(f"MIK -> {m.LABEL} automático: {e!r}")
-                        if done and self._window:
-                            self._window.evaluate_js(f"window.onMikDj && onMikDj({json.dumps(done)})")
-                    finally:
-                        self._files.release()
+                                # Rekordbox: como mucho un respaldo por hora en el automático (cada uno pesa ~200 MB)
+                                bk = not (k == "rekordbox" and rekordbox_sync.recent_backup(60))
+                                res = mik_dj.run(self._cfg, k, apply=True, backup=bk)
+                            finally:
+                                self._files.release()
+                            sm = mik_dj.summary(res["changes"])
+                            if sm["count"]:
+                                done[k] = {"label": m.LABEL, "count": sm["count"], "cues": sm["cues"],
+                                           "backup": res.get("backup")}
+                        except Exception as e:
+                            config.log(f"MIK -> {m.LABEL} automático: {e!r}")
+                    if done and self._window:
+                        self._window.evaluate_js(f"window.onMikDj && onMikDj({json.dumps(done)})")
             except Exception as e:
                 config.log(f"MIK automático: {e!r}")
             time.sleep(300)
@@ -1420,7 +1494,7 @@ class Api:
         except ImportError:
             return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder» y listo."}
         from datetime import datetime
-        analysis = _read_json(CACHE_ANALYSIS, None)
+        analysis = self._analysis()
         if not analysis:
             return {"ok": False, "error": "Primero dale a Analizar."}
         name = f"BrainOrder faltantes {datetime.now():%Y-%m-%d}.xlsx"
@@ -1463,7 +1537,7 @@ class Api:
         except ImportError:
             return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder»."}
         from datetime import datetime
-        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        analysis = self._analysis() or []
         try:
             pl = analysis[int(index)]
         except Exception:
@@ -1497,7 +1571,7 @@ class Api:
         except ImportError:
             return {"ok": False, "error": "Falta un componente para Excel. Vuelve a abrir «Instalar BrainOrder»."}
         from datetime import datetime
-        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        analysis = self._analysis() or []
         if not analysis:
             return {"ok": False, "error": "Primero dale a Analizar."}
         folder = self.pick_folder(self._reports_dir())
@@ -1525,7 +1599,7 @@ class Api:
     def unify_plan(self):
         """Revisa la carpeta espejo y propone qué unificar (no mueve nada)."""
         def run():
-            analysis = _read_json(CACHE_ANALYSIS, None)
+            analysis = self._analysis()
             pl = unificar.plan(self._cfg, analysis, self._progress)
             self._unify_plan = pl
             self._progress("Revisión lista. Nada se ha movido todavía.", 1)
@@ -1536,7 +1610,7 @@ class Api:
     def dup_scan(self):
         def run():
             import duplicados
-            analysis = _read_json(CACHE_ANALYSIS, None)
+            analysis = self._analysis()
             self._set_stage(0, 15)
             rb = unificar.rb_index(self._progress) or {}
             self._set_stage(15, 100)
@@ -1604,12 +1678,22 @@ def main():
             pass
     import webview
     plataforma.migrate_launcher(config.log)  # antes se llamaba SpotiSync: renombra el ícono
+    plataforma.refresh_launcher(config.log)  # el lanzador de BrainOrder.app también se actualiza
+    icon = HERE / "icon.png"
+    plataforma.mac_branding("BrainOrder", icon)  # «BrainOrder» junto a la manzana, no «Python»
     api = Api()
     win = webview.create_window("BrainOrder", str(HERE / "ui.html"), js_api=api,
                                 width=1280, height=820, min_size=(900, 600),
                                 background_color="#0d0e12")
     api._window = win
-    webview.start()
+    import inspect
+    kw = {}
+    try:
+        if icon.exists() and "icon" in inspect.signature(webview.start).parameters:
+            kw["icon"] = str(icon)
+    except (TypeError, ValueError):
+        pass
+    webview.start(**kw)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Escaneo de la música local y cruce con Spotify."""
 import difflib
+import heapq
 import json
 import threading
 import os
@@ -267,12 +268,67 @@ def scan(roots, progress=None, excluder=None):
     return files
 
 
+# Parecidos aproximados ya calculados (se conservan entre análisis de la misma sesión):
+# {"known": núcleos de la biblioteca cuando se calculó, "memo": {núcleo buscado: {núcleo: similitud}}}
+_FUZZY = {"known": set(), "memo": {}}
+_FUZZY_LOCK = threading.Lock()
+FUZZY_CUTOFF = 0.9
+
+
+def _similar_all(core, candidates, cutoff=FUZZY_CUTOFF):
+    """{núcleo: similitud} de los candidatos con similitud >= cutoff (mismo cálculo que difflib)."""
+    L = len(core)
+    lo, hi = int(L * 0.818), int(L * 1.2223) + 1  # con largos más distintos nunca llega a 0.9
+    s = difflib.SequenceMatcher()
+    s.set_seq2(core)
+    out = {}
+    for x in candidates:
+        if not lo <= len(x) <= hi:
+            continue
+        s.set_seq1(x)
+        if s.real_quick_ratio() >= cutoff and s.quick_ratio() >= cutoff:
+            r = s.ratio()
+            if r >= cutoff:
+                out[x] = r
+    return out
+
+
 class Index:
     def __init__(self, files):
         self.by_core = {}
         for f in files:
             self.by_core.setdefault(f.core, []).append(f)
         self.cores = list(self.by_core)
+        self.by_len = {}
+        for c in self.cores:
+            self.by_len.setdefault(len(c), []).append(c)
+        # poner al día los parecidos ya calculados: solo se comparan los núcleos nuevos
+        with _FUZZY_LOCK:
+            now = set(self.cores)
+            added, removed = now - _FUZZY["known"], _FUZZY["known"] - now
+            memo = _FUZZY["memo"]
+            if len(added) > 2000 or len(memo) * max(1, len(added)) > 3_000_000:
+                memo.clear()  # cambió casi todo: se recalcula a medida que se necesite
+            else:
+                for q, m in memo.items():
+                    for x in removed:
+                        m.pop(x, None)
+                    if added:
+                        m.update(_similar_all(q, added))
+            _FUZZY["known"] = now
+
+    def _close(self, core, n=3):
+        """Igual que difflib.get_close_matches(core, cores, n=3, cutoff=0.9), mucho más rápido:
+        solo mira núcleos de largo compatible y recuerda lo calculado entre un análisis y otro."""
+        with _FUZZY_LOCK:
+            m = _FUZZY["memo"].get(core)
+        if m is None:
+            L = len(core)
+            cands = (x for ln in range(int(L * 0.818), int(L * 1.2223) + 2) for x in self.by_len.get(ln, ()))
+            m = _similar_all(core, cands)
+            with _FUZZY_LOCK:
+                _FUZZY["memo"][core] = m
+        return [x for _, x in heapq.nlargest(n, ((r, x) for x, r in m.items()))]
 
     def find(self, track):
         """Todas las copias locales que corresponden al track de Spotify."""
@@ -280,7 +336,7 @@ class Index:
         ex = extras(track["name"])
         cands = list(self.by_core.get(core, []))
         if not cands and len(core) >= 4:
-            for c in difflib.get_close_matches(core, self.cores, n=3, cutoff=0.9):
+            for c in self._close(core):
                 cands += self.by_core[c]
         out = []
         self.last_extras = ex

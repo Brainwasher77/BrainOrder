@@ -14,7 +14,6 @@ import os
 import re
 import shutil
 import struct
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -136,13 +135,11 @@ def enabled(cfg):
 
 def running():
     try:
+        import plataforma
         if IS_MAC:
-            out = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True, timeout=5).stdout
-            return any("Serato DJ" in l for l in out.splitlines())
+            return bool(plataforma.any_process(lambda l: "Serato DJ" in l))
         if IS_WIN:
-            r = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return "serato" in r.stdout.lower()
+            return bool(plataforma.any_process(lambda l: "serato" in l.lower()))
     except Exception:
         return False
     return False

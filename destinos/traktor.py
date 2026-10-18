@@ -8,7 +8,6 @@
 import os
 import re
 import shutil
-import subprocess
 import sys
 import uuid
 import xml.etree.ElementTree as ET
@@ -56,13 +55,11 @@ def enabled(cfg):
 
 def running():
     try:
+        import plataforma
         if IS_MAC:
-            out = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True, timeout=5).stdout
-            return any("/Traktor" in l and ".app/" in l for l in out.splitlines())
+            return bool(plataforma.any_process(lambda l: "/Traktor" in l and ".app/" in l))
         if IS_WIN:
-            r = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return "traktor" in r.stdout.lower()
+            return bool(plataforma.any_process(lambda l: "traktor" in l.lower()))
     except Exception:
         return False
     return False
@@ -220,7 +217,7 @@ def backup(path):
     dst = p.with_name(f"collection.brainorder-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
     shutil.copy2(p, dst)
     for old in sorted(list(p.parent.glob("collection.spotisync-*.nml.bak")) + list(p.parent.glob("collection.brainorder-*.nml.bak")),
-                     key=lambda x: x.stat().st_mtime)[:-5]:
+                     key=lambda x: x.name.split("-", 1)[-1])[:-5]:  # por la fecha del nombre
         try:
             old.unlink()
         except OSError:

@@ -79,6 +79,12 @@ def check_and_download(progress=None):
         return {"status": "error", "current": cur}
     if int(remote.get("build", 0)) <= int(cur.get("build", 0)):
         return {"status": "up_to_date", "current": cur}
+    try:  # esa versión ya falló al arrancar en esta compu: esperar a la siguiente
+        skip = json.loads((SUPPORT_DIR / "update_skip.json").read_text("utf-8")).get("build")
+        if skip is not None and int(skip) == int(remote.get("build", 0)):
+            return {"status": "up_to_date", "current": cur}
+    except Exception:
+        pass
     p = pending()
     if p and int(p.get("build", 0)) >= int(remote.get("build", 0)):
         return {"status": "ready", "current": cur, "new": p}

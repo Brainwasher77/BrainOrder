@@ -190,3 +190,147 @@ def migrate_launcher(log=print):
     except Exception as e:
         log(f"no pude renombrar la app a BrainOrder: {e!r}")
     return None
+
+
+# ---------------- nombre e ícono en macOS ----------------
+def mac_branding(name="BrainOrder", icon=None):
+    """Que la barra de menú (junto a la manzana), el Dock y ⌘-Tab digan BrainOrder y no «Python».
+
+    Python corre dentro de Python.app, así que macOS toma ese nombre. Se cambia el nombre del bundle en
+    memoria ANTES de crear la ventana (macOS lo lee al arrancar la app) y se pone el ícono de BrainOrder.
+    El lanzador nuevo además arranca Python desde dentro de BrainOrder.app (ver mac/lanzador.sh)."""
+    if not IS_MAC:
+        return False
+    try:
+        from Foundation import NSBundle, NSProcessInfo
+        b = NSBundle.mainBundle()
+        for d in (b.infoDictionary(), b.localizedInfoDictionary()):
+            if d is None:
+                continue
+            try:  # en la práctica es un diccionario modificable (truco que usan rumps y py2app)
+                d["CFBundleName"] = name
+                d["CFBundleDisplayName"] = name
+            except Exception:
+                pass
+        NSProcessInfo.processInfo().setProcessName_(name)
+    except Exception:
+        return False
+    if icon and Path(icon).exists():
+        try:
+            from AppKit import NSApplication, NSImage
+            img = NSImage.alloc().initByReferencingFile_(str(icon))
+            if img is not None:
+                NSApplication.sharedApplication().setApplicationIconImage_(img)
+        except Exception:
+            pass
+    return True
+
+
+def refresh_launcher(log=print):
+    """Las actualizaciones automáticas cambian el código pero no el lanzador que está dentro de
+    BrainOrder.app: si cambió, se copia el nuevo (se usa desde la próxima vez que se abra)."""
+    if not IS_MAC:
+        return False
+    import filecmp
+    import shutil
+    bundle = os.environ.get("BRAINORDER_BUNDLE")
+    if not bundle or not bundle.endswith(".app"):
+        return False
+    exe = Path(bundle) / "Contents" / "MacOS" / "BrainOrder"
+    new = support_dir() / "app" / "mac" / "lanzador.sh"
+    try:
+        if exe.is_file() and new.is_file() and not filecmp.cmp(exe, new, shallow=False):
+            tmp = exe.with_name(".BrainOrder.new")
+            shutil.copy2(new, tmp)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, exe)
+            log("lanzador de BrainOrder.app actualizado")
+            return True
+    except Exception as e:
+        log(f"no pude actualizar el lanzador: {e!r}")
+    return False
+
+
+# ---------------- mover archivos sin riesgo ----------------
+def safe_move(src, dst):
+    """Mueve un archivo sin que nunca quede una copia a medias.
+
+    - Mismo disco: renombrar (instantáneo y atómico).
+    - Otro disco: se copia a un temporal oculto junto al destino, se comprueba el tamaño, se
+      renombra al nombre final y solo entonces se borra el original. Si algo falla (disco lleno,
+      se desconectó el disco…) se borra el temporal y el original queda intacto.
+    Nunca pisa un archivo existente en el destino."""
+    import errno
+    import shutil
+    src, dst = str(src), str(dst)
+    if os.path.lexists(dst):
+        raise FileExistsError(errno.EEXIST, "Ya existe un archivo con ese nombre en el destino", dst)
+    try:
+        os.rename(src, dst)  # en Windows os.rename no pisa; en Mac ya comprobamos que no existe
+        return dst
+    except OSError as e:
+        if e.errno not in (errno.EXDEV, getattr(errno, "ENOTSUP", -1)) and not (IS_WIN and getattr(e, "winerror", 0) == 17):
+            raise
+    d = Path(dst)
+    tmp = d.with_name(f".{d.name}.brainorder-partial")
+    try:
+        shutil.copy2(src, tmp)
+        if os.path.getsize(tmp) != os.path.getsize(src):
+            raise OSError(errno.EIO, "La copia quedó incompleta", dst)
+        if os.path.lexists(dst):
+            raise FileExistsError(errno.EEXIST, "Ya existe un archivo con ese nombre en el destino", dst)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        os.unlink(src)
+    except OSError:
+        # no se pudo borrar el original: se deja como estaba (sin duplicar) y se avisa
+        try:
+            os.unlink(dst)
+        except OSError:
+            pass
+        raise
+    return dst
+
+
+# ---------------- programas abiertos (una sola consulta para todos) ----------------
+_PROCS = {"t": 0.0, "list": None}
+_PROCS_TTL = 2.5
+
+
+def processes():
+    """Nombres/rutas de los procesos abiertos. Se consulta una vez cada 2,5 s como máximo y lo
+    comparten todos los chequeos («¿Rekordbox/Traktor/Serato/Engine está abierto?»). En Windows
+    tasklist tarda casi un segundo: antes se llamaba una vez por programa."""
+    import threading
+    import time
+    lock = _PROCS.setdefault("lock", threading.Lock())
+    with lock:
+        if _PROCS["list"] is not None and time.time() - _PROCS["t"] < _PROCS_TTL:
+            return _PROCS["list"]
+        out = []
+        try:
+            if IS_WIN:
+                r = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=15,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                out = [line.split('","')[0].strip('"') for line in r.stdout.splitlines() if line.strip()]
+            else:
+                r = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True, timeout=5)
+                out = [line.strip() for line in r.stdout.splitlines()[1:] if line.strip()]
+        except Exception:
+            out = None
+        _PROCS["list"], _PROCS["t"] = out, time.time()
+        return out
+
+
+def any_process(pred):
+    """True si algún proceso abierto cumple pred(nombre_o_ruta). None si no se pudo consultar."""
+    procs = processes()
+    if procs is None:
+        return None
+    return any(pred(p) for p in procs)
