@@ -1,5 +1,5 @@
 {
-  "version": "2.7.0",
-  "build": 24,
-  "notes": "Si creas una carpeta nueva con música en tu carpeta de playlists, BrainOrder te pregunta si la importa como playlist: en Spotify, en otra plataforma (con archivo para TuneMyMusic/Soundiiz) o solo en BrainOrder y tus programas de DJ."
+  "version": "2.8.0",
+  "build": 25,
+  "notes": "Te pregunta al crear una carpeta en cualquiera de tus carpetas de música (aunque esté vacía) y al crear una playlist en Rekordbox, Traktor, Serato o Engine DJ: la importa en Spotify, en otra plataforma o solo en BrainOrder."
 }

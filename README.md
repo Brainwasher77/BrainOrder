@@ -65,12 +65,17 @@ Carpetas por defecto (se cambian en Ajustes con el selector de carpetas):
 - **Clic derecho en una canción**: moverla a su carpeta, a la de esta playlist, a la de otra playlist que también la tenga o a cualquier carpeta de tu biblioteca; fijarla donde está; mostrarla en Finder; abrirla en Spotify/Deezer o copiar su nombre. Cada movimiento corrige Rekordbox y demás programas y se puede deshacer en Historial.
 - **Reorganizar** te propone las canciones siempre. Solo si marcas «No volver a proponer las que dejo» se dejan de mostrar las que dejas donde están (esa elección se recuerda, y las fijadas se pueden soltar cuando quieras).
 
-## Carpetas nuevas → playlist
-Si creas una carpeta con música dentro de tu carpeta de playlists, BrainOrder la detecta (cuando terminas de copiar) y te pregunta si la importa como playlist:
-- **Spotify**: crea la playlist en tu cuenta buscando cada canción (por ISRC o artista + título) y te dice cuáles no encontró.
-- **Deezer, Apple Music, Tidal, SoundCloud u otra**: esas plataformas no dejan que una app personal cree playlists, así que BrainOrder deja un archivo `… (para importar).csv` en `_Informes` para subirlo en TuneMyMusic o Soundiiz. En BrainOrder queda como playlist.
-- **Ninguna**: solo en BrainOrder y tus programas de DJ.
-Opcionalmente la pasa enseguida a Rekordbox, Traktor, Serato y Engine. Las carpetas que ya existían cuando instalaste esta versión no generan preguntas, pero aparecen en «Carpetas sin playlist» para importarlas cuando quieras. Una carpeta importada sin plataforma se actualiza sola: sus canciones son los audios de la carpeta.
+## Playlists nuevas (carpetas y programas de DJ)
+BrainOrder te pregunta si quieres importar como playlist:
+- **Una carpeta nueva** que creas en tu carpeta de playlists o en cualquiera de tus carpetas de música (Ajustes), aunque esté vacía. Espera a que termines de copiar.
+- **Una playlist nueva** que creas en Rekordbox, Engine DJ o Serato (al momento) o en Traktor (cuando lo cierras, que es cuando Traktor guarda), en cuanto tiene canciones.
+
+Al importar eliges la plataforma:
+- **Spotify**: crea la playlist buscando cada canción (por ISRC o artista + título) y te dice cuáles no encontró.
+- **Deezer, Apple Music, Tidal, SoundCloud u otra**: esas plataformas no dejan que una app personal cree playlists; BrainOrder deja un `… (para importar).csv` en `_Informes` para subirlo en TuneMyMusic o Soundiiz.
+- **Ninguna**: solo en BrainOrder. Una carpeta importada así se llena sola con lo que pongas en ella; una playlist de un programa de DJ se relee de ese programa.
+
+Opcionalmente la pasa enseguida a tus otros programas de DJ. Una playlist que nació en un programa no se vuelve a copiar a ese mismo programa. «Ahora no» vuelve a preguntar la próxima vez que abras BrainOrder; «No preguntar por esta» no. Lo que ya existía cuando instalaste esta función no genera preguntas, pero aparece en **Playlists nuevas** para importarlo cuando quieras.
 
 ## Conexiones: fuentes y programas de DJ
 En la barra lateral, **Conexiones**:
