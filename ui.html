@@ -247,6 +247,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
         <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
+        <a data-v="folders" onclick="show('folders')"><div class="row"><span class="name">Carpetas sin playlist</span><span class="cnt mono" id="nFolders">–</span></div></a>
         <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
       </div>
       <h4 style="display:flex;align-items:center;justify-content:space-between">Tus playlists
@@ -372,6 +373,85 @@ function energyBar(e){
   return `<span class="eb" title="Energía ${e} de 10"><i style="width:${e*10}%;background:hsl(${120-e*12} 75% 52%)"></i></span><span class="mono" style="font-size:11.5px;color:var(--mute)">${e}</span>`;
 }
 const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2 + (m[2]==='B'?1:0) : 999; };
+
+// ---------- carpetas nuevas en tu carpeta de playlists -> ¿importarlas como playlist? ----------
+let FD = {data:null};
+async function fdLoad(){ try{ const r = await api().folders(); if(r.ok){ FD.data = r; if(S.view==='folders') render(); else renderCore(); } }catch(e){} }
+window.onNewFolders = list => {
+  fdLoad();
+  if($('mbg').classList.contains('show')){  // ya hay una ventana abierta: solo avisar
+    toast(`📁 Carpeta nueva en tus playlists: <b>${list.map(f=>esc(f.name)).join(', ')}</b>. <a class="lnk" onclick="show('folders')">¿Importarla?</a>`);
+    return;
+  }
+  fdAsk(list[0], list.slice(1));
+};
+function fdPlatformOptions(sp){
+  const why = !sp.connected ? 'conecta Spotify primero' : sp.paused ? 'Spotify está en pausa por exceso de consultas' : !sp.can_write ? 'reconecta Spotify para dar permiso de crear playlists' : '';
+  return [
+    ['spotify', '🟢 Spotify', 'Se crea en tu cuenta y busco cada canción (por ISRC o artista + título). Te digo cuáles no encontré.', why],
+    ['otra', '🎵 Deezer, Apple Music, Tidal, SoundCloud u otra', 'Esas plataformas no dejan que una app personal cree playlists: te dejo un archivo listo para importarla con TuneMyMusic o Soundiiz (2 clics). En BrainOrder queda como playlist.', ''],
+    ['ninguna', '💻 Ninguna', 'Solo en BrainOrder y tus programas de DJ.', ''],
+  ];
+}
+async function fdAsk(f, rest){
+  if(!FD.data) await fdLoad();
+  const sp = (FD.data && FD.data.spotify) || {};
+  const opts = fdPlatformOptions(sp), def = opts[0][3] ? 'ninguna' : 'spotify';
+  modal(`<h3>📁 Carpeta nueva: «${esc(f.name)}»</h3>
+    <p>Tiene <b>${f.count ?? '?'}</b> ${f.count===1?'canción':'canciones'} y todavía no es una playlist. ¿La importo como playlist?</p>
+    <div class="art" style="margin:-4px 0 10px">${esc(short(f.path))}</div>
+    <div style="font-weight:650;margin:8px 0 6px">¿También en qué plataforma?</div>
+    ${opts.map(([v,t,d,dis])=>`<label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:${dis?'not-allowed':'pointer'};opacity:${dis?.5:1}">
+      <input type="radio" name="fdp" value="${v}" ${v===def?'checked':''} ${dis?'disabled':''} style="margin-top:3px">
+      <span><b>${t}</b><br><span class="art">${esc(d)}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}
+    <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="fdDj" checked> Pasarla ya a mis programas de DJ (Rekordbox, Traktor…)</label>
+    ${rest && rest.length ? `<div class="art" style="margin-top:8px">También hay ${rest.length} carpeta${rest.length!==1?'s':''} nueva${rest.length!==1?'s':''} más: las ves en «Carpetas sin playlist».</div>` : ''}
+    <div class="actions"><button class="ghost" onclick="fdDismiss(${jsq(f.path)}, true)">No preguntar por esta</button>
+      <button onclick="closeModal()">Ahora no</button><button class="primary" onclick="fdImport(${jsq(f.path)})">Importar</button></div>`);
+}
+async function fdDismiss(path, forever){
+  closeModal(); await api().folder_dismiss(path, !!forever); fdLoad();
+  if(forever) toast('Listo: no te vuelvo a preguntar por esa carpeta. La puedes importar cuando quieras desde «Carpetas sin playlist».');
+}
+async function fdImport(path){
+  const plat = (document.querySelector('input[name=fdp]:checked')||{}).value || 'ninguna';
+  const dj = $('fdDj') && $('fdDj').checked;
+  closeModal();
+  toast(plat==='spotify' ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
+  const r = await api().folder_import(path, {spotify: plat==='spotify', csv: plat==='otra'});
+  if(!r.ok){ taskErr(r); fdLoad(); return; }
+  await applyAnalysis(r); fdLoad();
+  const x = r.result; let msg = `✅ «${esc(x.name)}» ahora es una playlist (${x.files} canciones).`;
+  if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones agregadas.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
+  if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
+  if(r.index !== null && r.index !== undefined){ S.view = 'pl:' + r.index; }
+  render(); toast(msg);
+  if(dj && r.pid){
+    const o = await api().organize(true, r.pid, null);
+    if(o.ok){ await applyAnalysis(o); render(); toast(msg + djSummary(o.dj)); } else toast(msg + `<br><span style="color:var(--org)">Programas de DJ: ${esc(o.error)}</span>`, true);
+  }
+}
+async function fdUnimport(path){
+  const r = await api().folder_unimport(path);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); fdLoad(); render(); toast('Listo: esa carpeta ya no es una playlist (no se tocó ningún archivo).');
+}
+function foldersView(){
+  const d = FD.data;
+  if(!d) return `<div class="empty"><h3>Revisando tu carpeta de playlists…</h3></div>`;
+  const row = f => `<tr><td><div><b>${esc(f.name)}</b>${f.new?' <span class="bdg" style="color:var(--org);border-color:var(--org)">nueva</span>':''}</div>
+      <div class="art path" onclick="reveal(${jsq(f.path)})">${esc(short(f.path))}</div></td>
+      <td class="mono" style="color:var(--mute)">${f.count} ${f.count===1?'canción':'canciones'}</td>
+      <td style="text-align:right;white-space:nowrap">${f.count?`<button class="primary" onclick='fdAsk(${esc(JSON.stringify(f))}, [])'>Importar…</button>`:'<span class="art">vacía</span>'}
+      <button class="ghost" onclick="fdDismiss(${jsq(f.path)}, true)" title="Que no aparezca más aquí">Ocultar</button></td></tr>`;
+  const imp = d.imported || [];
+  return `<div class="vhead"><h2>📁 Carpetas sin playlist</h2>
+    <span class="sub">Carpetas dentro de <span class="path" onclick="reveal(${jsq(S.settings.dest_root)})">${esc(short(S.settings.dest_root))}</span> que no son de ninguna playlist. Cuando creas una nueva con música, te pregunto si la importo.</span></div>
+    ${d.folders.length ? `<table>${d.folders.map(row).join('')}</table>` : '<div class="empty"><h3>Todas tus carpetas son playlists 🎉</h3></div>'}
+    ${imp.length ? `<h3 style="margin-top:26px">Importadas como playlist (sin plataforma)</h3>
+      <table>${imp.map(e=>`<tr><td><b>${esc(e.name)}</b><div class="art path" onclick="reveal(${jsq(e.path)})">${esc(short(e.path))}</div></td>
+        <td style="text-align:right"><button class="ghost" onclick="fdUnimport(${jsq(e.path)})">Dejar de usarla como playlist</button></td></tr>`).join('')}</table>` : ''}`;
+}
 
 // ---------- menú del clic derecho sobre una canción ----------
 let CM = null;  // {items: [[texto, fn] | '-' | ['#', título]]}
@@ -508,6 +588,8 @@ function renderCore(){
   $('nOrg').textContent = a ? oc : '–';
   const fl = Object.values(S.foreign||{});
   $('nForeign').textContent = fl.length || '–';
+  const nf = (FD.data && FD.data.folders || []).filter(f=>f.new).length;
+  $('nFolders').innerHTML = FD.data ? (nf ? `<span style="color:var(--org)">${nf} nueva${nf!==1?'s':''}</span>` : (FD.data.folders.length || '–')) : '–';
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
@@ -568,6 +650,7 @@ function renderMain(){
       <button onclick="analyze()">Analizar todo</button></div></div>`; return;
   }
   if(S.view==='foreign'){ m.innerHTML = foreignView(); return; }
+  if(S.view==='folders'){ m.innerHTML = foldersView(); return; }
   if(S.view==='stats'){ m.innerHTML = statsView(); return; }
   if(S.view.startsWith('reorg:')){ m.innerHTML = reorgView(+S.view.split(':')[1]); rgCount(); return; }
   let head = '';
@@ -758,11 +841,11 @@ function statsView(){
       <td><div class="bar" style="margin:6px 0 0;height:7px"><i style="width:${nf/max*100}%;background:var(--info)"></i></div></td><td class="mono" style="width:60px;text-align:right">${nf}</td></tr>`).join('')}</table>`;
 }
 
-function anySource(){ const so=S.sources||{}; return S.connected || (so.deezer&&so.deezer.enabled) || (so.archivos&&so.archivos.enabled); }
+function anySource(){ const so=S.sources||{}; return S.connected || (so.deezer&&so.deezer.enabled) || (so.archivos&&so.archivos.enabled) || (so.carpetas&&so.carpetas.enabled); }
 function hostLabel(u){ const h=(u||'').toLowerCase();
   return h.includes('spotify')?'Spotify':h.includes('deezer')?'Deezer':h.includes('soundcloud')?'SoundCloud':h.includes('tidal')?'Tidal'
     :h.includes('apple')?'Apple Music':h.includes('youtu')?'YouTube':'Link'; }
-const SRC_TAG = {deezer:'DZ', archivos:'📄'};
+const SRC_TAG = {deezer:'DZ', archivos:'📄', carpetas:'📁'};
 const DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', engine:'Engine DJ', m3u:'M3U'};
 function links(r){
   const out=[];
@@ -1004,7 +1087,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='hist') loadHist(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -1744,7 +1827,7 @@ window.addEventListener('pywebviewready', async () => {
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   PREF = {...PREF, ...(st.ui||{})}; S.spPause = st.spotify_paused || null; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
-  loadHist(); setTimeout(rbLoad, 2500);
+  loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
   try{ api().start_watch(); }catch(e){}
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';

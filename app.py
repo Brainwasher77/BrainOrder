@@ -1166,8 +1166,15 @@ class Api:
         self._inbox_n = (0.0, 0)
         self._inbox_path = self._cfg.get("inbox")
         last_seen, stable = None, 0
+        tick = 0
         while True:
             time.sleep(4)
+            tick += 1
+            if tick % 3 == 0:  # cada ~12 s: ¿creaste una carpeta nueva en tu carpeta de playlists?
+                try:
+                    self._check_new_folders()
+                except Exception as e:
+                    config.log(f"vigilante de carpetas nuevas: {e!r}")
             try:
                 if self._cfg.get("inbox") != self._inbox_path:   # cambiaste la carpeta en Ajustes
                     self._inbox_path = self._cfg.get("inbox")
@@ -1196,6 +1203,147 @@ class Api:
             except Exception as e:
                 config.log(f"vigilante de descargas: {e!r}")
 
+    # ---------- carpetas nuevas en tu carpeta de playlists ----------
+    def _check_new_folders(self):
+        """Avisa (una vez por sesión) de carpetas nuevas con música que todavía no son playlist.
+        Espera a que la carpeta deje de cambiar (por si todavía estás copiando archivos)."""
+        import carpetas_nuevas as CN
+        seen = getattr(self, "_fold_seen", None)
+        if seen is None:
+            seen = self._fold_seen = {}
+            self._fold_told = set()
+        new = [x for x in CN.pending(self._cfg, self._analysis(), with_counts=False) if x["new"]]
+        ready = []
+        for x in new:
+            n = CN.count_audio(x["path"])
+            if n and seen.get(x["path"]) == n and x["path"] not in self._fold_told:
+                ready.append({**x, "count": n})
+            seen[x["path"]] = n
+        if ready and self._window:
+            self._fold_told |= {x["path"] for x in ready}
+            self._window.evaluate_js(f"window.onNewFolders && onNewFolders({json.dumps(ready)})")
+
+    def folders(self):
+        """Carpetas sin playlist (las nuevas primero) y las que importaste como playlist."""
+        import carpetas_nuevas as CN
+        try:
+            pend = CN.pending(self._cfg, self._analysis())
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        sp = self._sp()
+        return {"ok": True, "folders": pend, "imported": self._cfg.get("folder_playlists") or [],
+                "spotify": {"connected": sp.connected, "can_write": sp.can_write,
+                            "paused": spotify_api.paused_until()}}
+
+    def folder_dismiss(self, path, forever=False):
+        import carpetas_nuevas as CN
+        if forever:
+            CN.mark(path, dismissed=True)
+        getattr(self, "_fold_told", set()).add(path)
+        return {"ok": True}
+
+    def folder_import(self, path, opts=None):
+        """Convierte una carpeta de tu carpeta de playlists en playlist.
+        opts: {"spotify": crear la playlist en Spotify (buscando cada canción),
+               "csv": además un archivo para importarla en Deezer / Apple Music / Tidal / SoundCloud}.
+        Sin Spotify queda como playlist de BrainOrder (sus canciones = los audios de la carpeta)."""
+        opts = opts or {}
+
+        def run():
+            import carpetas_nuevas as CN
+            from fuentes import carpetas as FC
+            p = Path(path)
+            root = Path(self._cfg["dest_root"])
+            try:
+                ok = p.is_dir() and p.resolve().parent == root.resolve()
+            except OSError:
+                ok = False
+            if not ok:
+                raise unificar.UnifyError("Esa carpeta ya no está dentro de tu carpeta de playlists.")
+            files = FC.audio_files(p)
+            if not files:
+                raise unificar.UnifyError(f"«{p.name}» no tiene canciones.")
+            name = p.name
+            res = {"name": name, "files": len(files)}
+            self._set_stage(0, 80)
+            if opts.get("spotify"):
+                sp = self._sp()
+                if not sp.connected:
+                    raise SpotifyError("Spotify no está conectado. Conéctalo o importa la carpeta solo en BrainOrder.")
+                if not sp.can_write:
+                    raise SpotifyError("Para crear playlists en Spotify reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
+                analysis, cache, uris, unresolved = self._analysis() or [], {}, [], []
+                for n, f in enumerate(files, 1):
+                    self._progress(f"Buscando en Spotify {n}/{len(files)}: {Path(f).name}", n / len(files))
+                    r = self._spotify_uri_for(f, analysis, sp, cache)
+                    if r and r["uri"] not in uris:
+                        uris.append(r["uri"])
+                    elif not r:
+                        unresolved.append(Path(f).name)
+                if not uris:
+                    raise SpotifyError(f"No encontré en Spotify ninguna canción de «{name}». Impórtala solo en BrainOrder.")
+                self._progress("Creando la playlist en Spotify…", 1)
+                created = sp.create_playlist(name, description="Importada desde tu carpeta con BrainOrder")
+                sp.add_items(created["id"], uris)
+                pid = created["id"]
+                tracks = self._read_tracks({"id": pid, "name": name, "source": "spotify"})
+                entry = {"id": pid, "name": name, "source": "spotify", "snapshot": None, "analyzed_snapshot": None,
+                         "total": len(tracks), "tracks": tracks, "url": (created.get("external_urls") or {}).get("spotify")}
+                res["spotify"] = {"found": len(uris), "unresolved": unresolved, "url": entry["url"]}
+            else:
+                fp = [e for e in self._cfg.get("folder_playlists") or [] if CN._key(e.get("path")) != CN._key(p)]
+                self._cfg["folder_playlists"] = fp + [{"name": name, "path": str(p)}]
+                config.save(self._cfg)
+                pid = FC.pid_for(p)
+                meta = next(m for m in FC.list_playlists(self._cfg) if m["id"] == pid)
+                tracks = FC.tracks(self._cfg, meta, self._progress)
+                entry = {**meta, "analyzed_snapshot": meta["snapshot"], "tracks": tracks}
+                res["local"] = {"tracks": len(tracks)}
+
+            def put(data):
+                data["playlists"] = [x for x in data["playlists"] if x["id"] != pid] + [entry]
+            self._update_sp(put)
+            if opts.get("csv"):
+                res["csv"] = self._export_platform_csv(name, files)
+            CN.mark(p, known=True)
+            self._set_stage(80, 100)
+            analysis = self._build_analysis(light=True)
+            self._progress(f"«{name}» importada.", 1)
+            idx = next((i for i, a in enumerate(analysis) if a["id"] == pid), None)
+            return {"analysis": analysis, "result": res, "pid": pid, "index": idx}
+        return self._task(run, f"folder:{path}", f"Importar «{Path(path).name}»")
+
+    def _export_platform_csv(self, name, files):
+        """CSV para importar la playlist en Deezer, Apple Music, Tidal, SoundCloud… con TuneMyMusic o Soundiiz
+        (esas plataformas no dejan que una app personal cree playlists)."""
+        import csv
+        from fuentes import carpetas as FC
+        out = Path(self._reports_dir()) / f"{config.safe_name(name)} (para importar).csv"
+        with open(out, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["Track name", "Artist name", "Album", "Duration", "Playlist name"])
+            for path in files:
+                t = FC.track_for(path)
+                secs = t["duration_ms"] // 1000
+                w.writerow([t["name"], ", ".join(t["artists"]), t["album"], f"{secs // 60}:{secs % 60:02d}" if secs else "", name])
+        plataforma.reveal(out)
+        return str(out)
+
+    def folder_unimport(self, path):
+        """Deja de tratar esa carpeta como playlist (no toca los archivos)."""
+        import carpetas_nuevas as CN
+        from fuentes import carpetas as FC
+
+        def run():
+            pid = FC.pid_for(path)
+            self._cfg["folder_playlists"] = [e for e in self._cfg.get("folder_playlists") or []
+                                             if CN._key(e.get("path")) != CN._key(path)]
+            config.save(self._cfg)
+            self._update_sp(lambda d: d.__setitem__("playlists", [x for x in d["playlists"] if x["id"] != pid]))
+            CN.mark(path, known=True)
+            return {"analysis": self._build_analysis(light=True)}
+        return self._task(run, f"folder_un:{path}", "Quitar carpeta importada")
+
     def _emit_inbox(self, n, nuevos):
         if self._window:
             payload = json.dumps({"count": n, "new": [Path(p).name for p in nuevos][:20],
@@ -1209,6 +1357,14 @@ class Api:
         if getattr(self, "_watching", False):
             return {"ok": True}
         self._watching = True
+
+        def first_look():  # la primera vez, las carpetas que ya tienes no generan preguntas
+            try:
+                import carpetas_nuevas
+                carpetas_nuevas.baseline_if_needed(self._cfg, self._analysis())
+            except Exception as e:
+                config.log(f"carpetas nuevas: {e!r}")
+        threading.Thread(target=first_look, daemon=True).start()
         threading.Thread(target=self._watch_inbox, daemon=True).start()
         threading.Thread(target=self._watch_rekordbox, daemon=True).start()
         threading.Thread(target=self._watch_mik, daemon=True).start()
