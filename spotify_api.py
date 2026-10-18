@@ -22,7 +22,10 @@ from config import TOKEN_FILE, log
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
-SCOPES = "playlist-read-private playlist-read-collaborative user-library-read"
+# Lectura + modificar tus playlists (para pasar a Spotify los cambios que hagas en Rekordbox)
+SCOPES = ("playlist-read-private playlist-read-collaborative user-library-read "
+          "playlist-modify-public playlist-modify-private user-library-modify")
+WRITE_SCOPES = {"playlist-modify-public", "playlist-modify-private"}
 
 
 class SpotifyError(Exception):
@@ -184,6 +187,67 @@ class Spotify:
 
     def me(self):
         return self.get("/me")
+
+    # ---------- escribir (Rekordbox -> Spotify) ----------
+    @property
+    def can_write(self):
+        """La sesión guardada tiene permiso para modificar playlists (si no, hay que reconectar)."""
+        granted = set(((self.token or {}).get("scope") or "").split())
+        return WRITE_SCOPES <= granted
+
+    def send(self, method, path, body=None, _retry=3):
+        url = path if path.startswith("http") else API + path
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method, headers={
+            "Authorization": f"Bearer {self._access()}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = r.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and _retry:
+                time.sleep(int(e.headers.get("Retry-After", "2")) + 1)
+                return self.send(method, path, body, _retry - 1)
+            if e.code == 401 and _retry:
+                self._refresh()
+                return self.send(method, path, body, _retry - 1)
+            detail = e.read().decode(errors="ignore")[:200]
+            if e.code == 403:
+                raise SpotifyError("Spotify no dejó modificar (403). Reconecta Spotify para dar permiso de edición; "
+                                   f"si sigue, tu app de desarrollador no tiene permiso de escritura. Detalle: {detail}")
+            raise SpotifyError(f"Error {e.code} en {method} {url.split('?')[0]}: {detail}")
+
+    def create_playlist(self, name, public=False, description="Creada desde Rekordbox con BrainOrder"):
+        return self.send("POST", "/me/playlists", {"name": name, "public": public, "description": description})
+
+    def rename_playlist(self, pid, name):
+        return self.send("PUT", f"/playlists/{pid}", {"name": name})
+
+    def add_items(self, pid, uris, position=None):
+        for i in range(0, len(uris), 100):
+            body = {"uris": uris[i:i + 100]}
+            if position is not None:
+                body["position"] = position + i
+            self.send("POST", f"/playlists/{pid}/items", body)
+
+    def remove_items(self, pid, uris):
+        for i in range(0, len(uris), 100):
+            self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in uris[i:i + 100]]})
+
+    def save_to_library(self, uris):
+        for i in range(0, len(uris), 40):
+            self.send("PUT", "/me/library", {"uris": uris[i:i + 40]})
+
+    def remove_from_library(self, uris):
+        """También sirve para dejar de seguir (borrar de tu biblioteca) una playlist: spotify:playlist:ID."""
+        for i in range(0, len(uris), 40):
+            self.send("DELETE", "/me/library", {"uris": uris[i:i + 40]})
+
+    def search_track(self, isrc=None, artist="", title=""):
+        """-> lista de tracks simplificados (máx. 10, límite de Spotify)."""
+        q = f"isrc:{isrc}" if isrc else f'track:"{title}" artist:"{artist}"' if artist else title
+        res = self.get("/search", {"q": q, "type": "track", "limit": 10})
+        return [t for t in (self._track(x) for x in (res.get("tracks") or {}).get("items") or []) if t]
 
     @staticmethod
     def _track(raw):

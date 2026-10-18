@@ -814,7 +814,21 @@ class Api:
                 m = destinos.DESTINATIONS[k]
                 self._sub_stage(j / len(keys), (j + 1) / len(keys))
                 try:
-                    dj[k] = {"label": m.LABEL, "stats": m.sync(target, self._cfg, self._progress)}
+                    cfg_k = self._cfg
+                    if k == "rekordbox":
+                        # no pisar playlists con cambios tuyos en Rekordbox que aún no decidiste
+                        pend = self._rb_pending_pids()
+                        cfg_k = {**self._cfg, "_rb_pending": pend}
+                    st = m.sync(target, cfg_k, self._progress)
+                    if k == "rekordbox" and isinstance(st, dict):
+                        import rb_cambios
+                        base = st.pop("baseline", None)
+                        rb_cambios.merge_baseline(base)
+                        synced = {v["pid"] for v in (base or {}).values()}
+                        if self._cfg.get("rb_revert"):
+                            self._cfg["rb_revert"] = [p for p in self._cfg["rb_revert"] if p not in synced]
+                            config.save(self._cfg)
+                    dj[k] = {"label": m.LABEL, "stats": st}
                 except Exception as e:
                     config.log(f"{m.LABEL} falló: {e!r}")
                     dj[k] = {"label": m.LABEL, "error": str(e)}
@@ -1035,7 +1049,242 @@ class Api:
             return {"ok": True}
         self._watching = True
         threading.Thread(target=self._watch_inbox, daemon=True).start()
+        threading.Thread(target=self._watch_rekordbox, daemon=True).start()
         return {"ok": True}
+
+    # ---------- cambios hechos a mano en Rekordbox -> ¿también en Spotify? ----------
+    def _rb_changes(self):
+        """(cambios, estado actual). La primera vez solo toma la foto (no hay nada que preguntar)."""
+        import rb_cambios
+        if not rekordbox_sync.RB_DIR.joinpath("master.db").exists():
+            return [], None
+        if not destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+            return [], None
+        state = rb_cambios.read_state(self._cfg)
+        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        if not rb_cambios.BASELINE.exists():
+            by_name = {p["name"]: p["id"] for p in analysis}
+            rb_cambios.save_baseline({rid: {"pid": by_name.get(v["name"]), "name": v["name"], "paths": v["paths"]}
+                                      for rid, v in (state or {}).items()})
+            return [], state
+        return rb_cambios.diff(rb_cambios.load_baseline(), state, analysis), state
+
+    def _rb_pending_pids(self):
+        try:
+            changes, _ = self._rb_changes()
+        except Exception as e:
+            config.log(f"No pude revisar cambios de Rekordbox: {e!r}")
+            return []
+        revert = set(self._cfg.get("rb_revert") or [])
+        return sorted({c["pid"] for c in changes if c.get("pid")} - revert)
+
+    def _watch_rekordbox(self):
+        """Cada 15 s mira si cambió la librería de Rekordbox; si hay cambios tuyos en la carpeta de BrainOrder, avisa."""
+        import time
+        import rb_cambios
+        last_mtime, last_ids = None, None
+        while True:
+            time.sleep(15)
+            try:
+                mt = rb_cambios.db_mtime()
+                if mt is None or mt == last_mtime or self._files.locked():
+                    continue
+                last_mtime = mt
+                changes, _ = self._rb_changes()
+                ids = sorted(c["id"] for c in changes)
+                if ids and ids != last_ids and self._window:
+                    payload = json.dumps({"count": len(changes), "names": sorted({c["name"] for c in changes})[:5]})
+                    self._window.evaluate_js(f"window.onRbChanges && onRbChanges({payload})")
+                last_ids = ids
+            except Exception as e:
+                config.log(f"vigilante de Rekordbox: {e!r}")
+
+    def _spotify_uri_for(self, path, analysis, sp, cache):
+        """Archivo local -> spotify:track:… (de tus playlists, por ISRC o buscando artista + título)."""
+        import re as _re
+        if path in cache:
+            return cache[path]
+        for pl in analysis:
+            if pl.get("source", "spotify") != "spotify":
+                continue
+            for r in pl["tracks"]:
+                if r.get("source") == path and _re.fullmatch(r"[A-Za-z0-9]{22}", r.get("id", "")):
+                    cache[path] = ({"uri": f"spotify:track:{r['id']}", "name": r["name"],
+                                    "artists": r["artists"], "how": "de tus playlists"})
+                    return cache[path]
+        isrc = None
+        try:
+            import mutagen
+            mf = mutagen.File(path)
+            t = mf.tags if mf is not None else None
+            if t is not None:
+                if hasattr(t, "getall"):
+                    f = t.getall("TSRC")
+                    isrc = str(f[0].text[0]) if f else None
+                else:
+                    v = t.get("isrc") or t.get("ISRC") or t.get("----:com.apple.iTunes:ISRC")
+                    isrc = (bytes(v[0]).decode() if v and not isinstance(v[0], str) else (v[0] if v else None))
+        except Exception:
+            isrc = None
+        artist, title = biblioteca.parse_file(Path(path))
+        hit, how = None, None
+        try:
+            if isrc:
+                res = sp.search_track(isrc=isrc.strip())
+                hit, how = (res[0], "por ISRC") if res else (None, None)
+            if not hit and title:
+                core, ex = biblioteca.core_title(title), biblioteca.extras(title)
+                dur = biblioteca.duration(path)
+                for t in sp.search_track(artist=artist, title=biblioteca.core_title(title) if not artist else title):
+                    if biblioteca.core_title(t["name"]) != core or biblioteca.version_diff(ex, biblioteca.extras(t["name"])):
+                        continue
+                    if artist and not biblioteca.artist_ok(t["artists"], biblioteca.norm(artist)):
+                        continue
+                    if dur and t.get("duration_ms") and not biblioteca.same_length(dur, t["duration_ms"] / 1000):
+                        continue
+                    hit, how = t, "buscando artista y título"
+                    break
+        except SpotifyError as e:
+            config.log(f"búsqueda en Spotify falló para {path}: {e}")
+        cache[path] = ({"uri": f"spotify:track:{hit['id']}", "name": hit["name"], "artists": hit["artists"], "how": how}
+                       if hit else None)
+        return cache[path]
+
+    def rb_check(self):
+        """Cambios hechos en Rekordbox que todavía no decidiste qué hacer."""
+        try:
+            changes, state = self._rb_changes()
+        except Exception as e:
+            return {"ok": False, "error": f"No pude leer Rekordbox: {e}"}
+        self._rb_state = state
+        analysis = _read_json(CACHE_ANALYSIS, None) or []
+        by_id = {p["id"]: p for p in analysis}
+        for c in changes:
+            pl = by_id.get(c.get("pid")) or {}
+            c["source"] = pl.get("source") or (fuentes.source_of(c["pid"]) if c.get("pid") else None)
+            c["files"] = [Path(p).name for p in c.get("paths") or []][:200]
+        sp = self._sp()
+        return {"ok": True, "changes": changes, "spotify": {"connected": sp.connected, "can_write": sp.can_write},
+                "rekordbox_running": rekordbox_sync.rekordbox_running(), "keep": self._cfg.get("rb_keep") or []}
+
+    def rb_apply(self, decisions):
+        """decisions: {id del cambio: "spotify" | "keep" | "revert"}."""
+        decisions = decisions or {}
+
+        def run():
+            import rb_cambios
+            changes, state = self._rb_changes()
+            todo = [c for c in changes if decisions.get(c["id"])]
+            if not todo:
+                return {"done": [], "errors": [], "unresolved": []}
+            sp = self._sp()
+            analysis = _read_json(CACHE_ANALYSIS, None) or []
+            by_id = {p["id"]: p for p in analysis}
+            need_sp = [c for c in todo if decisions[c["id"]] == "spotify"]
+            if need_sp and not sp.can_write:
+                raise SpotifyError("Para pasar cambios a Spotify reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
+            done, errors, unresolved, accepted, new_pid, refresh, revert = [], [], [], set(), {}, set(), set()
+            keep = set(self._cfg.get("rb_keep") or [])
+            cache = {}
+            for n, c in enumerate(todo, 1):
+                d = decisions[c["id"]]
+                self._progress(f"{c['name']}: {c['type']}", n / len(todo))
+                pid = c.get("pid") or new_pid.get(c["rb_id"])
+                try:
+                    if d == "keep":
+                        if pid:
+                            keep.add(pid)
+                        accepted.add(c["rb_id"])
+                        done.append(f"«{c['name']}»: se queda como está en Rekordbox")
+                    elif d == "revert":
+                        if pid:
+                            revert.add(pid)
+                            keep.discard(pid)
+                    elif d == "spotify":
+                        is_liked = pid == "liked"
+                        if c["type"] == "created":
+                            uris = []
+                            for p in c["paths"]:
+                                r = self._spotify_uri_for(p, analysis, sp, cache)
+                                (uris.append(r["uri"]) if r else unresolved.append({"playlist": c["name"], "file": Path(p).name}))
+                            created = sp.create_playlist(c["name"])
+                            new_pid[c["rb_id"]] = created["id"]
+                            if uris:
+                                sp.add_items(created["id"], uris)
+                            refresh.add(created["id"])
+                            done.append(f"«{c['name']}»: creada en Spotify con {len(uris)} canciones")
+                        elif not pid or (by_id.get(pid) or {}).get("source", "spotify") != "spotify" or \
+                                fuentes.source_of(pid) != "spotify":
+                            errors.append(f"«{c['name']}» no viene de Spotify: el cambio se queda solo en Rekordbox")
+                            if pid:
+                                keep.add(pid)
+                        elif c["type"] == "added":
+                            uris = []
+                            for p in c["paths"]:
+                                r = self._spotify_uri_for(p, analysis, sp, cache)
+                                (uris.append(r["uri"]) if r else unresolved.append({"playlist": c["name"], "file": Path(p).name}))
+                            if uris:
+                                sp.save_to_library(uris) if is_liked else sp.add_items(pid, uris)
+                            refresh.add(pid)
+                            done.append(f"«{c['name']}»: {len(uris)} canción(es) agregada(s) en Spotify")
+                        elif c["type"] == "removed":
+                            gone = set(c["paths"])
+                            uris = sorted({f"spotify:track:{r['id']}" for r in (by_id.get(pid) or {}).get("tracks", [])
+                                           if r.get("source") in gone and r.get("id")})
+                            if uris:
+                                sp.remove_from_library(uris) if is_liked else sp.remove_items(pid, uris)
+                            refresh.add(pid)
+                            done.append(f"«{c['name']}»: {len(uris)} canción(es) quitada(s) en Spotify")
+                        elif c["type"] == "renamed" and not is_liked:
+                            sp.rename_playlist(pid, c["name"])
+                            refresh.add(pid)
+                            done.append(f"«{c.get('old_name')}» ahora se llama «{c['name']}» en Spotify")
+                        elif c["type"] == "deleted" and not is_liked:
+                            sp.remove_from_library([f"spotify:playlist:{pid}"])
+                            done.append(f"«{c['name']}»: quitada de tu biblioteca de Spotify")
+                        accepted.add(c["rb_id"])
+                except SpotifyError as e:
+                    errors.append(f"«{c['name']}»: {e}")
+            self._cfg["rb_keep"] = sorted(keep)
+            config.save(self._cfg)
+            rb_cambios.accept(state, [rid for rid in accepted], {**{rid: p for rid, p in new_pid.items()}})
+            # volver a como está en la plataforma: se reescribe la playlist en Rekordbox ya mismo
+            if revert:
+                if rekordbox_sync.rekordbox_running():
+                    self._cfg["rb_revert"] = sorted(set(self._cfg.get("rb_revert") or []) | revert)
+                    config.save(self._cfg)
+                    errors.append("Rekordbox está abierto: ciérralo y dale Organizar para devolver esas playlists a como están en la plataforma.")
+                else:
+                    target = [p for p in analysis if p["id"] in revert]
+                    st = rekordbox_sync.sync(target, {**self._cfg, "rb_keep": []}, self._progress)
+                    rb_cambios.merge_baseline(st.pop("baseline", None))
+                    done.append(f"{len(target)} playlist(s) devuelta(s) en Rekordbox a como están en la plataforma")
+            # traer de Spotify lo que cambió para que BrainOrder quede al día
+            for pid in refresh:
+                try:
+                    meta = {"id": pid, "name": next((c["name"] for c in todo if c.get("pid") == pid or
+                                                     new_pid.get(c["rb_id"]) == pid), pid), "source": "spotify"}
+                    tracks = self._read_tracks(dict(meta))
+
+                    def put(data, pid=pid, tracks=tracks, meta=meta):
+                        cur = next((p for p in data["playlists"] if p["id"] == pid), None)
+                        if cur is None:
+                            cur = dict(meta)
+                            data["playlists"].append(cur)
+                        cur["tracks"] = tracks
+                    self._update_sp(put)
+                except Exception as e:
+                    config.log(f"No pude releer {pid} de Spotify: {e!r}")
+            analysis2 = self._build_analysis(light=True) if refresh else None
+            return {"done": done, "errors": errors, "unresolved": unresolved, "analysis": analysis2,
+                    "keep": self._cfg.get("rb_keep")}
+        return self._task(run, "rb_apply", "Cambios de Rekordbox")
+
+    def rb_unkeep(self, pid):
+        """Vuelve a sincronizar esa playlist desde su plataforma (deja de mandar Rekordbox)."""
+        self._cfg["rb_keep"] = [p for p in self._cfg.get("rb_keep") or [] if p != pid]
+        config.save(self._cfg)
+        return {"ok": True, "keep": self._cfg["rb_keep"]}
 
     # ---------- utilidades de UI ----------
     def reveal(self, path):
@@ -1200,6 +1449,45 @@ class Api:
             self._progress("Revisión lista. Nada se ha movido todavía.", 1)
             return {"plan": pl, "rekordbox_running": rekordbox_sync.rekordbox_running()}
         return self._task(run, "unify_plan", "Revisar repetidos")
+
+    # ---------- duplicados físicos en toda la biblioteca ----------
+    def dup_scan(self):
+        def run():
+            import duplicados
+            analysis = _read_json(CACHE_ANALYSIS, None)
+            self._set_stage(0, 15)
+            rb = unificar.rb_index(self._progress) or {}
+            self._set_stage(15, 100)
+            res = duplicados.scan(self._cfg, analysis, rb, self._progress)
+            self._dup_scan = res
+            return {"scan": res, "rekordbox_running": rekordbox_sync.rekordbox_running()}
+        return self._task(run, "dup_scan", "Buscar duplicados")
+
+    def dup_apply(self, choices):
+        """choices: {grupo: {keep, remove: [rutas]}}. Aparta en _duplicados (con Historial) y corrige programas de DJ."""
+        def run():
+            import duplicados
+            scan = getattr(self, "_dup_scan", None)
+            if not scan:
+                raise unificar.UnifyError("Primero dale a Buscar duplicados.")
+            plan = duplicados.to_unify_plan(scan, choices or {})
+            if not plan["dups"]:
+                raise unificar.UnifyError("No marcaste ningún archivo para apartar.")
+            self._dj_precheck()
+            with self._state:
+                res = unificar.apply(plan, self._cfg, [], [g["id"] for g in plan["dups"]], False, self._progress)
+                moved_map = res.pop("moved_map", {})
+                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, res.pop("repoint", {}))
+                res["op_id"] = historial.record("unify", "Apartar duplicados", list(moved_map.items()))
+                analysis = None
+                if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
+                    self._progress("Actualizando el análisis…")
+                    analysis = self._build_analysis(light=True)
+            done = {gid for gid in (choices or {})}
+            scan["groups"] = [g for g in scan["groups"] if g["id"] not in done]
+            self._progress("Duplicados apartados.", 1)
+            return {"result": res, "analysis": analysis, "scan": scan}
+        return self._task(run, "dup_apply", "Apartar duplicados", files=True)
 
     def unify_apply(self, merge_ids, dup_ids, remove_empty):
         def run():

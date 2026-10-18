@@ -40,6 +40,17 @@ header *{-webkit-app-region:no-drag}
 .progress.haspct::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:var(--p,0%);background:var(--acid);transition:width .25s ease}
 .pcard{max-width:520px;margin:60px auto;text-align:center}
 .rules{max-width:860px}
+.dg{border:1px solid var(--line);border-radius:10px;margin:10px 0;background:var(--panel)}
+.dg .dh{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.dg .dh b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.df{display:grid;grid-template-columns:24px 24px 1fr auto;gap:10px;align-items:center;padding:8px 14px;border-top:1px solid rgba(255,255,255,.03)}
+.df.keep{background:rgba(61,220,151,.06)}
+.df .meta{font-size:12px;color:var(--mute);display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.bdg{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--mute)}
+.bdg.rb{color:#ff7a59;border-color:rgba(255,122,89,.4)}
+.bdg.mik{color:#b48cff;border-color:rgba(180,140,255,.4)}
+.bdg.pl{color:var(--info);border-color:rgba(106,168,255,.4)}
+.df select{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;max-width:340px}
 .wiz{max-width:640px;width:100%}
 .wiz .steps{display:flex;gap:6px;margin:0 0 16px}
 .wiz .steps i{flex:1;height:4px;border-radius:3px;background:var(--line)}
@@ -221,8 +232,10 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="missing" onclick="show('missing')"><div class="row"><span class="name">Faltan por descargar</span><span class="cnt mono" id="nMissing">–</span></div></a>
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
+        <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
+        <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
         <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="foreign" onclick="show('foreign')"><div class="row"><span class="name">Playlists de otros</span><span class="cnt mono" id="nForeign">–</span></div></a>
@@ -358,6 +371,8 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
+  $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
   $('nHist').textContent = (S.hist||[]).filter(o=>!o.undone).length || '–';
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
@@ -396,6 +411,8 @@ function renderMain(){
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(S.view==='conn'){ m.innerHTML = connView(); return; }
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
+  if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
+  if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
   if(!anySource() && !S.analysis){
     m.innerHTML = `<div class="empty"><h3>¿De dónde vienen tus playlists?</h3>
       <p><b>Spotify</b>: pon el Client ID de tu app de desarrollador en Ajustes y toca Conectar Spotify.<br>
@@ -824,7 +841,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='hist') loadHist(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='hist') loadHist(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -1014,6 +1031,153 @@ async function wizFinish(){
   toast('¡Listo! BrainOrder quedó configurado.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'')
     + (w.spotify&&w.client_id?'<br>Ahora toca <b>Conectar Spotify</b>.':'<br>Ahora dale <b>⟳</b> en Tus playlists.'), !!(r.warnings||[]).length);
   if(!(w.spotify&&w.client_id)) loadPlaylists();
+}
+
+// ---------- cambios hechos a mano en Rekordbox -> ¿también en Spotify? ----------
+let RBC = {data:null, dec:{}, loading:false};
+const RB_TXT = {
+  added: c => `Agregaste <b>${c.paths.length}</b> ${c.paths.length===1?'canción':'canciones'}`,
+  removed: c => `Quitaste <b>${c.paths.length}</b> ${c.paths.length===1?'canción':'canciones'}`,
+  created: c => `Creaste la playlist (${c.paths.length} ${c.paths.length===1?'canción':'canciones'})`,
+  deleted: c => `Borraste la playlist`,
+  renamed: c => `Le cambiaste el nombre (antes «${esc(c.old_name)}»)`,
+};
+const SRC_NAME = {spotify:'Spotify', deezer:'Deezer', archivos:'el archivo exportado'};
+function rbOptions(c){
+  const sp = c.type==='created' || c.source==='spotify';
+  const w = RBC.data && RBC.data.spotify.can_write;
+  const o = [];
+  if(c.type==='created'){ o.push(['spotify','Crear también en Spotify', !w]); o.push(['keep','Dejar solo en Rekordbox']); return o; }
+  if(sp) o.push(['spotify', c.type==='deleted' ? 'Borrar también de Spotify' : c.type==='renamed' ? 'Renombrar también en Spotify' : 'Hacer lo mismo en Spotify', !w]);
+  o.push(['keep', c.type==='deleted' ? 'No volver a crearla (manda Rekordbox)' : 'Solo en Rekordbox (manda Rekordbox)']);
+  o.push(['revert', c.type==='deleted' ? 'Volver a crearla en Rekordbox' : `Deshacer en Rekordbox (como está en ${SRC_NAME[c.source]||'la plataforma'})`]);
+  return o;
+}
+async function rbLoad(){
+  if(RBC.loading) return; RBC.loading = true;
+  try{ const r = await api().rb_check(); if(r.ok){ RBC.data = r; RBC.dec = {};
+      r.changes.forEach(c=>{ const o = rbOptions(c).filter(x=>!x[2]); RBC.dec[c.id] = o.length ? o[0][0] : 'keep'; }); }
+    else RBC.err = r.error; }
+  catch(e){} RBC.loading = false; render();
+}
+window.onRbChanges = info => {
+  rbLoad();
+  toast(`🎛️ Cambiaste ${info.count} cosa${info.count!==1?'s':''} en Rekordbox (${info.names.map(esc).join(', ')}).<br><a class="lnk" onclick="show('rbchg')">¿Lo hago también en Spotify? → Revisar</a>`);
+};
+async function reconnectSpotify(){ try{ await api().disconnect(); }catch(e){} S.connected=false; await connect(); rbLoad(); }
+function rbView(){
+  const d = RBC.data;
+  const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox. Elige si también va a Spotify.</span>
+    <div class="sp"><button onclick="rbLoad()">⟳ Revisar</button></div></div>`;
+  if(!d) return head + `<div class="empty"><p>${RBC.err?esc(RBC.err):'Leyendo Rekordbox…'}</p></div>`;
+  const warn = !d.spotify.connected ? `<div class="box warn">Spotify no está conectado. <button onclick="connect()">Conectar Spotify</button></div>`
+    : !d.spotify.can_write ? `<div class="box warn">Para pasar cambios a Spotify, BrainOrder necesita permiso de <b>editar tus playlists</b>. <button onclick="reconnectSpotify()">Reconectar Spotify</button></div>` : '';
+  const keep = (d.keep||[]).map(pid=>({pid, pl:(S.analysis||[]).find(p=>p.id===pid)}));
+  const keepBox = keep.length ? `<div class="vhead" style="margin-top:22px"><h2 style="font-size:16px">Playlists donde manda Rekordbox</h2><span class="sub">BrainOrder no las sobrescribe al Organizar.</span></div>
+    ${keep.map(k=>`<div class="cx" style="display:flex;align-items:center;gap:10px"><b style="flex:1">${esc(k.pl?k.pl.name:k.pid)}</b>
+      <button onclick="rbUnkeep(${jsq(k.pid)})">Volver a sincronizar desde ${esc(SRC_NAME[(k.pl||{}).source]||'la plataforma')}</button></div>`).join('')}` : '';
+  if(!d.changes.length) return head + warn + `<div class="empty"><h3>Todo en orden</h3><p>No hay cambios tuyos en Rekordbox sin decidir. BrainOrder revisa solo cada pocos segundos y te avisa.</p></div>` + keepBox;
+  const byPl = {}; d.changes.forEach(c=>{ (byPl[c.name] = byPl[c.name] || []).push(c); });
+  return head + warn + Object.entries(byPl).map(([name, cs]) => `<div class="dg"><div class="dh"><b>🎛️ ${esc(name)}</b>
+      <span class="bdg">${c0src(cs[0])}</span></div>
+      ${cs.map(c=>`<div class="df" style="grid-template-columns:1fr auto">
+        <div><div>${RB_TXT[c.type](c)}</div>${c.files&&c.files.length&&c.type!=='deleted'?`<div class="meta">${c.files.slice(0,8).map(esc).join(' · ')}${c.files.length>8?' …':''}</div>`:''}
+          ${c.source && c.source!=='spotify' && c.type!=='created' ? `<div class="meta">Esta playlist viene de ${esc(SRC_NAME[c.source]||c.source)}: desde BrainOrder no se puede modificar allá.</div>`:''}</div>
+        <select onchange="RBC.dec['${c.id}']=this.value">${rbOptions(c).map(([v,t,dis])=>`<option value="${v}" ${RBC.dec[c.id]===v?'selected':''} ${dis?'disabled':''}>${t}${dis?' (reconecta Spotify)':''}</option>`).join('')}</select></div>`).join('')}</div>`).join('')
+    + `<div class="rbar"><span class="art" style="flex:1">Al buscar en Spotify se usa la canción de tus playlists, el ISRC del archivo o artista + título (con la misma duración). Lo que no encuentre te lo digo.</span>
+        <button class="primary" ${running('rb_apply')?'disabled':''} onclick="rbApply()">${running('rb_apply')?'Aplicando…':'Aplicar'}</button></div>` + keepBox;
+}
+function c0src(c){ return c.type==='created' && !c.source ? 'nueva' : (SRC_NAME[c.source]||c.source||''); }
+async function rbApply(){
+  setTimeout(()=>{ if(S.view==='rbchg') render(); }, 120);
+  const r = await api().rb_apply(RBC.dec);
+  if(!r.ok){ taskErr(r); render(); return; }
+  await applyAnalysis(r); await rbLoad();
+  let msg = r.done.map(esc).join('<br>') || 'Listo.';
+  if(r.unresolved.length) msg += `<br><span style="color:var(--org)">No encontré en Spotify: ${r.unresolved.slice(0,4).map(u=>esc(u.file)).join(', ')}${r.unresolved.length>4?'…':''}</span>`;
+  if(r.errors.length) msg += `<br><span style="color:var(--org)">${r.errors.map(esc).join('<br>')}</span>`;
+  toast(msg, !!(r.errors.length || r.unresolved.length));
+}
+async function rbUnkeep(pid){ const r = await api().rb_unkeep(pid); if(RBC.data) RBC.data.keep = r.keep; render(); toast('Listo: en el próximo Organizar esa playlist vuelve a quedar como en su plataforma.'); }
+
+// ---------- duplicados físicos ----------
+let DUP = {scan:null, keep:{}, rm:{}, filter:'all', q:''};
+const mb = n => n>=1e9 ? (n/1e9).toFixed(2)+' GB' : (n/1e6).toFixed(1)+' MB';
+const mmss = s => s ? `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}` : '';
+async function dupScan(){
+  setTimeout(()=>{ if(S.view==='dups') render(); }, 150);
+  const r = await api().dup_scan();
+  if(!r.ok){ taskErr(r); render(); return; }
+  dupLoad(r.scan); DUP.rbOpen = r.rekordbox_running; render();
+  toast(r.scan.groups.length ? `<b>${r.scan.groups.length}</b> grupos de duplicados entre ${r.scan.files_scanned} archivos. Se pueden recuperar <b>${mb(r.scan.bytes)}</b>.` : `Sin duplicados entre ${r.scan.files_scanned} archivos. 🎉`);
+}
+function dupLoad(scan){
+  DUP.scan = scan; DUP.keep = {}; DUP.rm = {};
+  scan.groups.forEach(g=>{ DUP.keep[g.id] = g.keep; DUP.rm[g.id] = new Set(g.files.map(f=>f.path).filter(p=>p!==g.keep)); });
+}
+function dupKeep(gid, path){ const prev = DUP.keep[gid]; DUP.keep[gid] = path; DUP.rm[gid].delete(path); if(prev && prev!==path) DUP.rm[gid].add(prev); render(); }
+function dupToggle(gid, path, on){ if(DUP.keep[gid]===path) return; on ? DUP.rm[gid].add(path) : DUP.rm[gid].delete(path); dupSum(); }
+function dupAll(on){ dupGroups().forEach(g=>{ DUP.rm[g.id] = new Set(on ? g.files.map(f=>f.path).filter(p=>p!==DUP.keep[g.id]) : []); }); render(); }
+function dupGroups(){ const q = DUP.q.toLowerCase();
+  return (DUP.scan ? DUP.scan.groups : []).filter(g => (DUP.filter==='all' || g.kind===DUP.filter) && (!q || (g.song + ' ' + g.files.map(f=>f.path).join(' ')).toLowerCase().includes(q))); }
+function dupSel(){ let n=0, bytes=0; (DUP.scan?DUP.scan.groups:[]).forEach(g=>g.files.forEach(f=>{ if(DUP.rm[g.id] && DUP.rm[g.id].has(f.path)){ n++; bytes+=f.size; } })); return {n, bytes}; }
+function dupSum(){ const s = dupSel(), el = $('dupSum'), b = $('dupGo');
+  if(el) el.innerHTML = s.n ? `Se apartarán <b>${s.n}</b> archivo${s.n!==1?'s':''} (${mb(s.bytes)})` : 'Marca lo que quieres apartar';
+  if(b) b.disabled = !s.n || running('dup_apply'); }
+function dupsView(){
+  const sc = DUP.scan, busyScan = running('dup_scan');
+  const head = `<div class="vhead"><h2>Duplicados</h2><span class="sub">Archivos repetidos en toda tu música: carpetas de playlists, descargas y las demás carpetas de Ajustes (respetando tus exclusiones).</span>
+    <div class="sp"><button class="primary" ${busyScan?'disabled':''} onclick="dupScan()">${busyScan?'Buscando…':'🔍 '+(sc?'Volver a buscar':'Buscar duplicados')}</button></div></div>`;
+  if(!sc) return head + `<div class="empty"><h3>Busca archivos repetidos</h3><p>Encuentra <b>copias idénticas</b> (aunque tengan otro nombre) y la <b>misma canción</b> en otro formato o calidad.
+    Te sugiero cuál conservar —el que tiene cues en Rekordbox, el analizado con Mixed In Key, el de mejor calidad— y tú decides. Nada se borra: lo que apartes va a <code>_duplicados</code> y se puede deshacer.</p></div>`;
+  const groups = dupGroups(), nI = sc.groups.filter(g=>g.kind==='identicos').length, nC = sc.groups.length - nI;
+  const chip = (k,t,n) => `<button class="chipf ${DUP.filter===k?'on':''} ${k==='all'?'all':k==='identicos'?'here':'inbox'}" onclick="DUP.filter='${k}';render()">${t} <span class="mono">${n}</span></button>`;
+  return head + `<div class="cards">
+      <div class="card"><div class="k">Grupos</div><div class="v mono">${sc.groups.length}</div></div>
+      <div class="card ok"><div class="k">Copias idénticas</div><div class="v mono">${nI}</div></div>
+      <div class="card org"><div class="k">Misma canción</div><div class="v mono">${nC}</div></div>
+      <div class="card"><div class="k">Recuperable</div><div class="v mono">${mb(sc.bytes)}</div></div></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">${chip('all','Todos',sc.groups.length)}${chip('identicos','Idénticos',nI)}${chip('cancion','Misma canción',nC)}
+      <input class="search" style="margin-left:auto;max-width:260px" placeholder="Buscar…" value="${esc(DUP.q)}" oninput="DUP.q=this.value;clearTimeout(DUP.t);DUP.t=setTimeout(render,250)">
+      <button class="ghost" onclick="dupAll(true)">Marcar sugeridos</button><button class="ghost" onclick="dupAll(false)">Desmarcar todo</button></div>
+    ${!sc.rb_read?'<div class="box warn">No pude leer Rekordbox, así que no se tuvo en cuenta para sugerir qué conservar.</div>':''}
+    ${groups.slice(0,300).map(g=>`<div class="dg"><div class="dh"><b>${esc(g.song)}</b>
+        <span class="bdg">${g.kind==='identicos'?'copia idéntica':'misma canción'}</span><span class="art mono">${mmss(g.seconds)}</span>
+        <span class="art">sugerido: ${esc(g.why)}</span></div>
+      ${g.files.map(f=>{ const keep = DUP.keep[g.id]===f.path, rm = DUP.rm[g.id].has(f.path);
+        return `<div class="df ${keep?'keep':''}">
+          <input type="radio" name="k_${g.id}" ${keep?'checked':''} title="Conservar este" onchange="dupKeep('${g.id}', ${jsq(f.path)})">
+          <input type="checkbox" ${rm?'checked':''} ${keep?'disabled':''} title="Apartar este" onchange="dupToggle('${g.id}', ${jsq(f.path)}, this.checked)">
+          <div style="min-width:0"><div class="path" onclick="reveal(${jsq(f.path)})" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(short(f.path))}</div>
+            <div class="meta"><span class="mono">${f.ext.toUpperCase()}${f.bitrate?' · '+f.bitrate+' kbps':''} · ${mb(f.size)}</span>
+              ${f.key?keyChip({key:f.key, mik:f.mik, source:f.path}):''}${f.energy?`<span class="mono">E${f.energy}</span>`:''}
+              ${f.rb_cues?`<span class="bdg rb">Rekordbox · ${f.rb_cues} cues</span>`:f.in_rb?`<span class="bdg rb">en Rekordbox${f.rb_playlists?' · '+f.rb_playlists+' playlists':''}</span>`:''}
+              ${f.mik?'<span class="bdg mik">MIK</span>':''}${f.used_by.length?`<span class="bdg pl" title="${esc(f.used_by.join(', '))}">♫ ${f.used_by.length} playlist${f.used_by.length!==1?'s':''}</span>`:''}</div></div>
+          <span class="art">${keep?'<b style="color:var(--ok)">conservar</b>':rm?'apartar':''}</span></div>`; }).join('')}</div>`).join('')}
+    ${groups.length>300?`<div class="art">Mostrando 300 de ${groups.length}. Usa el buscador o los filtros.</div>`:''}
+    <div class="rbar"><span id="dupSum" style="flex:1;color:var(--mute)"></span>
+      <button class="warn" id="dupGo" onclick="dupAsk()">Apartar marcados</button></div>`;
+}
+function dupAsk(){
+  const s = dupSel();
+  modal(`<h3>Apartar ${s.n} archivo${s.n!==1?'s':''}</h3>
+    <p>Se mueven a <code>${esc(short(DUP.scan.dest))}/_duplicados</code> (${mb(s.bytes)}). Nada se borra: revísalos y bórralos tú cuando quieras, o deshazlo desde <b>Historial</b>.</p>
+    <div class="box">🎧 Si alguno está en Rekordbox, Traktor, Serato o Engine, sus playlists pasan a usar el archivo que conservas (con respaldo). <b>Tus programas de DJ tienen que estar cerrados.</b></div>
+    ${DUP.rbOpen?'<div class="box warn">⚠️ Rekordbox parece abierto: ciérralo antes de continuar.</div>':''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();dupApply()">Apartar</button></div>`);
+}
+async function dupApply(){
+  const choices = {};
+  DUP.scan.groups.forEach(g=>{ const rm=[...DUP.rm[g.id]]; if(rm.length) choices[g.id] = {keep:DUP.keep[g.id], remove:rm}; });
+  setTimeout(dupSum, 100);
+  const r = await api().dup_apply(choices);
+  if(!r.ok){ taskErr(r); dupSum(); return; }
+  await applyAnalysis(r); dupLoad(r.scan); loadHist(); render();
+  const x = r.result;
+  toast(`<b>${x.retired}</b> archivo${x.retired!==1?'s':''} apartado${x.retired!==1?'s':''} en _duplicados.`
+    + (x.rekordbox?`<br>Rekordbox: ${x.rekordbox.paths} rutas corregidas, ${x.rekordbox.repointed} entradas re-apuntadas.`:'')
+    + Object.entries(x.dj||{}).map(([k,v])=>`<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas.`).join('')
+    + (x.dj_warnings||[]).map(w=>`<br><span style="color:var(--org)">${esc(w)}</span>`).join('') + undoLink(x));
 }
 
 // ---------- historial y deshacer ----------
@@ -1289,7 +1453,9 @@ async function organize(){
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
   msg += djSummary(r.dj);
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
-  msg += undoLink(r); loadHist();
+  const skipped = ((r.dj||{}).rekordbox||{}).stats ? r.dj.rekordbox.stats.skipped||[] : [];
+  if(skipped.length) msg += `<br><span style="color:var(--org)">En Rekordbox no toqué ${skipped.map(esc).join(', ')}: tienen cambios tuyos.</span> <a class="lnk" onclick="show('rbchg')">Revisar</a>`;
+  msg += undoLink(r); loadHist(); rbLoad();
   toast(msg, Object.values(r.dj||{}).some(x=>x.error));
 }
 // programas de DJ que se actualizan al organizar (los activos en Conexiones)
@@ -1369,7 +1535,7 @@ window.addEventListener('pywebviewready', async () => {
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
-  loadHist();
+  loadHist(); setTimeout(rbLoad, 2500);
   try{ api().start_watch(); }catch(e){}
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
