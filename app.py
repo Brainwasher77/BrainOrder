@@ -54,6 +54,12 @@ def _write_json(p, data):
     os.replace(tmp, p)
 
 
+UI_DEFAULTS = {"pl_sort": "spotify",       # orden de la lista de playlists
+               "rg_remember": False}       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
+UI_CHOICES = {"pl_sort": {"spotify", "missing_desc", "missing_asc", "complete", "incomplete", "organize",
+                          "name", "size"}}
+
+
 def _os_error_text(e):
     """Errores del sistema de archivos explicados en simple."""
     import errno
@@ -253,6 +259,7 @@ class Api:
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
             "spotify_paused": spotify_api.paused_until(),
+            "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -1017,16 +1024,35 @@ class Api:
                     raise SpotifyError("No encontré esa playlist. Vuelve a analizarla.")
                 valid_src = {r["source"] for r in pl["tracks"] if r.get("source") and r["status"] in ("ok", "elsewhere")}
                 allowed = {a["folder"] for a in analysis} | {r["dest_dir"] for r in pl["tracks"] if r.get("dest_dir")}
+                roots = [Path(x).resolve() for x in [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or []) if x]
+
+                def dest_ok(dest):
+                    """Carpeta de una playlist, o una carpeta que elegiste dentro de tu biblioteca (no descargas)."""
+                    if dest in allowed:
+                        return True
+                    try:
+                        d = Path(dest).resolve()
+                    except (OSError, TypeError):
+                        return False
+                    inbox = Path(self._cfg["inbox"]).resolve()
+                    return d.is_dir() and d != inbox and inbox not in d.parents and \
+                        any(d == r or r in d.parents for r in roots) and "_duplicados" not in d.parts
                 ops, seen = [], set()
                 for m in moves or []:
                     src, dest = m.get("src"), m.get("dest")
-                    if src in valid_src and dest in allowed and src not in seen and str(Path(src).parent) != dest:
+                    if src in valid_src and dest and dest_ok(dest) and src not in seen and str(Path(src).parent) != dest:
                         ops.append((src, dest))
                         seen.add(src)
                 if ops:
                     self._dj_precheck()
                 res = organizador.relocate(ops, self._cfg, self._progress) if ops else \
                     {"moved": 0, "skipped": [], "rekordbox": None, "backup": None, "changes": {}}
+                okset = {o[0] for o in ops}
+                for m in moves or []:
+                    if m.get("src") and m["src"] not in okset and str(Path(m["src"]).parent) != m.get("dest"):
+                        why = ("esa carpeta no está dentro de tu biblioteca (Ajustes)" if m["src"] in valid_src
+                               else "ya no está en esta playlist; vuelve a analizarla")
+                        res["skipped"].append({"file": Path(m["src"]).name, "why": why})
                 pinned = set(self._cfg.get("pinned_paths", []))
                 if remember:
                     pinned |= {p for p in (keep or []) if p in valid_src}
@@ -1045,6 +1071,25 @@ class Api:
                 res.pop("changes", None)
                 return {"result": res, "analysis": analysis, "pinned": self._cfg["pinned_paths"]}
         return self._task(run, f"relocate:{pid}", "Reorganizar", files=True)
+
+    def save_ui(self, prefs):
+        """Preferencias de la ventana (orden de las playlists, recordar en Reorganizar…)."""
+        cur = dict(self._cfg.get("ui") or {})
+        for k, v in (prefs or {}).items():
+            if k not in UI_DEFAULTS:
+                continue
+            if k in UI_CHOICES and v not in UI_CHOICES[k]:
+                continue
+            cur[k] = bool(v) if isinstance(UI_DEFAULTS[k], bool) else v
+        self._cfg["ui"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "ui": {**UI_DEFAULTS, **cur}}
+
+    def pin(self, paths):
+        """Fijar archivos donde están: Reorganizar no los vuelve a proponer."""
+        self._cfg["pinned_paths"] = sorted(set(self._cfg.get("pinned_paths", [])) | set(paths or []))
+        config.save(self._cfg)
+        return {"ok": True, "pinned": self._cfg["pinned_paths"]}
 
     def unpin(self, paths):
         self._cfg["pinned_paths"] = sorted(set(self._cfg.get("pinned_paths", [])) - set(paths or []))
