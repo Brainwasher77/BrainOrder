@@ -19,6 +19,7 @@ import biblioteca  # noqa: E402
 import reglas  # noqa: E402
 import historial  # noqa: E402
 import destinos  # noqa: E402
+import mik_dj  # noqa: E402
 import fuentes  # noqa: E402
 from destinos.traktor import TraktorError  # noqa: E402
 from fuentes.deezer_src import DeezerError  # noqa: E402
@@ -197,7 +198,8 @@ class Api:
             "inbox_count": self._inbox_signature()[1],
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
-            "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy")},
+            "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
+                       "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
             "destinations": destinos.status(self._cfg),
             "formats": reglas.FORMATS,
@@ -276,6 +278,14 @@ class Api:
             if a.get("enabled") and folder and not Path(folder).is_dir():
                 warnings.append(f"No existe la carpeta {folder}")
             src["archivos"] = {"enabled": bool(a.get("enabled")), "folder": folder}
+        mk = payload.get("mik")
+        if isinstance(mk, dict):
+            if "auto" in mk:
+                self._cfg["rb_mik_auto"] = bool(mk["auto"])
+            if "cues" in mk:
+                self._cfg["rb_mik_cues"] = bool(mk["cues"])
+            if mk.get("comment") in ("key_energy", "energy", "none"):
+                self._cfg["rb_mik_comment"] = mk["comment"]
         q = payload.get("destinations") or {}
         if "rekordbox" in q:
             v = q["rekordbox"] or {}
@@ -831,15 +841,17 @@ class Api:
                         base = st.pop("baseline", None)
                         rb_cambios.merge_baseline(base)
                         synced = {v["pid"] for v in (base or {}).values()}
-                        if self._cfg.get("rb_mik_auto", True):
-                            try:
-                                import mik_rekordbox
-                                st["mik"] = len(mik_rekordbox.run(self._cfg, apply=True, progress=self._progress)["changes"])
-                            except Exception as e:
-                                st["mik_error"] = str(e)
                         if self._cfg.get("rb_revert"):
                             self._cfg["rb_revert"] = [p for p in self._cfg["rb_revert"] if p not in synced]
                             config.save(self._cfg)
+                    if isinstance(st, dict) and k in mik_dj.PROGRAMS and self._cfg.get("rb_mik_auto", True):
+                        # lo que analizó Mixed In Key (key, energía y hot cues) va también a ese programa
+                        try:
+                            mres = mik_dj.run(self._cfg, k, apply=True, progress=self._progress)
+                            sm = mik_dj.summary(mres["changes"])
+                            st["mik"], st["mik_cues"] = sm["count"], sm["cues"]
+                        except Exception as e:
+                            st["mik_error"] = str(e)
                     dj[k] = {"label": m.LABEL, "stats": st}
                 except Exception as e:
                     config.log(f"{m.LABEL} falló: {e!r}")
@@ -1293,38 +1305,61 @@ class Api:
                     "keep": self._cfg.get("rb_keep")}
         return self._task(run, "rb_apply", "Cambios de Rekordbox")
 
-    # ---------- Mixed In Key -> Rekordbox ----------
-    def mik_rb(self, apply=False):
-        """Ver (apply=False, sin cerrar Rekordbox) o pasar ya la key/energía de MIK a Rekordbox."""
+    # ---------- Mixed In Key -> programas de DJ ----------
+    def _mik_targets(self, only=None):
+        keys = [k for k in mik_dj.PROGRAMS if destinos.DESTINATIONS[k].enabled(self._cfg)]
+        return [k for k in keys if not only or k in only]
+
+    def mik_dj(self, apply=False, only=None):
+        """Ver (apply=False, sin cerrar nada) o pasar ya key, energía y hot cues de MIK a cada programa activo."""
         def run():
-            import mik_rekordbox
-            res = mik_rekordbox.run(self._cfg, apply=bool(apply), progress=self._progress)
-            ch = res["changes"]
-            self._progress(f"{len(ch)} canciones {'actualizadas' if apply else 'por actualizar'} en Rekordbox.", 1)
-            return {"count": len(ch), "sample": ch[:30], "backup": res.get("backup"), "applied": bool(apply)}
-        return self._task(run, "mik_rb", "Mixed In Key → Rekordbox", files=bool(apply))
+            out = {}
+            keys = self._mik_targets(only)
+            for j, k in enumerate(keys):
+                m = destinos.DESTINATIONS[k]
+                self._sub_stage(j / len(keys), (j + 1) / len(keys))
+                try:
+                    res = mik_dj.run(self._cfg, k, apply=bool(apply), progress=self._progress)
+                    sm = mik_dj.summary(res["changes"])
+                    sm.update(label=m.LABEL, backup=res.get("backup"), serato_no_cues=res.get("serato_no_cues", 0))
+                    out[k] = sm
+                except Exception as e:
+                    out[k] = {"label": m.LABEL, "error": str(e)}
+            n = sum(v.get("count", 0) for v in out.values())
+            self._progress(f"{n} cambios {'aplicados' if apply else 'pendientes'} de Mixed In Key.", 1)
+            return {"programs": out, "applied": bool(apply), "none": not keys}
+        return self._task(run, "mik_dj", "Mixed In Key → programas de DJ", files=bool(apply))
+
+    def mik_rb(self, apply=False):  # compatibilidad
+        return self.mik_dj(apply, ["rekordbox"])
 
     def _watch_mik(self):
-        """Cada 5 min: si Rekordbox está cerrado y hay canciones con datos nuevos de MIK, se los pasa (con respaldo)."""
+        """Cada 5 min: a cada programa de DJ cerrado le pasa lo nuevo de MIK (con respaldo)."""
         import time
-        import mik_rekordbox
         time.sleep(60)
         while True:
             try:
-                if (self._cfg.get("rb_mik_auto", True) and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg)
-                        and not rekordbox_sync.rekordbox_running() and not self._running
-                        and self._files.acquire(blocking=False)):
+                if self._cfg.get("rb_mik_auto", True) and not self._running and self._files.acquire(blocking=False):
                     try:
-                        if mik_rekordbox.run(self._cfg, apply=False)["changes"] and not rekordbox_sync.rekordbox_running():
-                            res = mik_rekordbox.run(self._cfg, apply=True)
-                            n = len(res["changes"])
-                            if n and self._window:
-                                payload = json.dumps({"count": n, "backup": res.get("backup")})
-                                self._window.evaluate_js(f"window.onMikRb && onMikRb({payload})")
+                        done = {}
+                        for k in self._mik_targets():
+                            m = destinos.DESTINATIONS[k]
+                            try:
+                                if m.running() or not mik_dj.run(self._cfg, k, apply=False)["changes"] or m.running():
+                                    continue
+                                res = mik_dj.run(self._cfg, k, apply=True)
+                                sm = mik_dj.summary(res["changes"])
+                                if sm["count"]:
+                                    done[k] = {"label": m.LABEL, "count": sm["count"], "cues": sm["cues"],
+                                               "backup": res.get("backup")}
+                            except Exception as e:
+                                config.log(f"MIK -> {m.LABEL} automático: {e!r}")
+                        if done and self._window:
+                            self._window.evaluate_js(f"window.onMikDj && onMikDj({json.dumps(done)})")
                     finally:
                         self._files.release()
             except Exception as e:
-                config.log(f"MIK -> Rekordbox automático: {e!r}")
+                config.log(f"MIK automático: {e!r}")
             time.sleep(300)
 
     def rb_unkeep(self, pid):

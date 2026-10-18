@@ -851,8 +851,8 @@ function cxInit(){
     spotify:{enabled: (so.spotify||{}).enabled!==false},
     deezer:{enabled:!!(so.deezer||{}).enabled || !!((so.deezer||{}).user), user:(so.deezer||{}).user||'', playlists:((so.deezer||{}).playlists||[]).join('\n'), include_loved:(so.deezer||{}).include_loved!==false},
     archivos:{enabled:!!(so.archivos||{}).folder && (so.archivos||{}).enabled!==false, folder:(so.archivos||{}).folder||''},
-    rekordbox:{enabled:!!(de.rekordbox||{}).wanted, available:!!(de.rekordbox||{}).available,
-      mik_auto:(S.rbMik||{}).auto!==false, mik_comment:(S.rbMik||{}).comment||'key_energy'},
+    rekordbox:{enabled:!!(de.rekordbox||{}).wanted, available:!!(de.rekordbox||{}).available},
+    mik:{auto:(S.rbMik||{}).auto!==false, comment:(S.rbMik||{}).comment||'key_energy', cues:(S.rbMik||{}).cues!==false},
     traktor:{enabled:!!(de.traktor||{}).wanted, nml:(de.traktor||{}).nml||'', available:!!(de.traktor||{}).available},
     m3u:{enabled:!!(de.m3u||{}).wanted, folder:(de.m3u||{}).folder||''},
     serato:{enabled:!!(de.serato||{}).wanted, dir:(de.serato||{}).dir||'', available:!!(de.serato||{}).available},
@@ -898,15 +898,7 @@ function connView(){
     <input class="t" value="${esc(c.folder_name)}" oninput="CX.folder_name=this.value;cxDirty()" style="max-width:280px">
     <div class="cx"><div class="cxh"><b>Rekordbox</b><span class="tag ${c.rekordbox.available?'ok':''}">${c.rekordbox.available?'librería encontrada':'no encontrada'}</span>${tog(c.rekordbox.enabled,"CX.rekordbox.enabled=this.checked;cxDirty()")}</div>
       <div class="hint">Escribe directo en tu librería (master.db). Rekordbox debe estar cerrado.</div>
-      ${c.rekordbox.enabled?`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px">
-        <label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" ${c.rekordbox.mik_auto?'checked':''} onchange="CX.rekordbox.mik_auto=this.checked;cxDirty()">
-          <b>Pasar key y energía de Mixed In Key a Rekordbox automáticamente</b></label>
-        <div class="hint" style="margin:4px 0 0 24px">Al Organizar y cada 5 minutos con Rekordbox cerrado. La key va a la columna Key (MIK siempre gana) y la energía al comentario; tus comentarios propios no se tocan. No cambia BPM, grid ni cues.</div>
-        <div style="display:flex;gap:8px;align-items:center;margin:8px 0 0 24px;flex-wrap:wrap">Comentario:
-          <select onchange="CX.rekordbox.mik_comment=this.value;cxDirty()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px">
-            ${[['key_energy','«8A - Energy 6» (como MIK)'],['energy','«Energy 6»'],['none','No tocar comentarios']].map(([v,t])=>`<option value="${v}" ${c.rekordbox.mik_comment===v?'selected':''}>${t}</option>`).join('')}</select>
-          <button onclick="mikRb(false)" ${running('mik_rb')?'disabled':''}>Ver cuántas faltan</button>
-          <button class="primary" onclick="mikRb(true)" ${running('mik_rb')?'disabled':''}>Actualizar ahora</button></div></div>`:''}</div>
+</div>
     <div class="cx"><div class="cxh"><b>Traktor Pro</b><span class="tag ${c.traktor.available||c.traktor.nml?'ok':''}">${c.traktor.nml?'collection.nml encontrado':'no encontrado'}</span>${tog(c.traktor.enabled,"CX.traktor.enabled=this.checked;cxDirty();render()")}</div>
       ${c.traktor.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.traktor.nml?'📄 '+esc(short(c.traktor.nml)):'<span class="hint">elige tu collection.nml</span>'}</span><button onclick="cxPickNml()">Cambiar…</button></div>`:''}
       <div class="hint">Crea las playlists en tu colección (collection.nml) y corrige rutas cuando BrainOrder mueve archivos. Traktor debe estar cerrado.</div></div>
@@ -919,6 +911,23 @@ function connView(){
     <div class="cx"><div class="cxh"><b>Playlists M3U</b><span class="tag">VirtualDJ · djay · Mixxx · cualquiera</span>${tog(c.m3u.enabled,"CX.m3u.enabled=this.checked;cxDirty();render()")}</div>
       ${c.m3u.enabled?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="path" style="flex:1">${c.m3u.folder?'📁 '+esc(short(c.m3u.folder)):'<span class="hint">elige dónde guardarlas</span>'}</span><button onclick="cxPick('m3u')">Elegir…</button></div>`:''}
       <div class="hint">Guarda cada playlist como .m3u8, en orden, para importarla en cualquier programa (VirtualDJ, djay, Mixxx…).</div></div>
+  </section>
+
+  <section><h3>🎹 Mixed In Key → tus programas de DJ</h3>
+    <div class="cx"><div class="cxh"><b>Pasar lo que analizó Mixed In Key</b><span class="tag">Rekordbox · Traktor · Serato · Engine DJ</span>${tog(c.mik.auto,"CX.mik.auto=this.checked;cxDirty()")}</div>
+      <div class="hint">Automático al Organizar y cada 5 minutos, en cada programa activo que esté cerrado (antes se respalda su librería). Mixed In Key siempre gana en la key.</div>
+      <div style="margin-top:10px;display:grid;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">🔑 Key → columna Key &nbsp;·&nbsp; ⚡ Energía → comentario:
+          <select onchange="CX.mik.comment=this.value;cxDirty()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px">
+            ${[['key_energy','«8A - Energy 6» (como MIK)'],['energy','«Energy 6»'],['none','No tocar comentarios']].map(([v,t])=>`<option value="${v}" ${c.mik.comment===v?'selected':''}>${t}</option>`).join('')}</select>
+          <span class="art">tus comentarios propios no se tocan</span></div>
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${c.mik.cues?'checked':''} onchange="CX.mik.cues=this.checked;cxDirty()" style="margin-top:3px">
+          <span>🎯 <b>Hot cues de Mixed In Key</b> (A, B, C… con su energía)<br><span class="art">Solo en canciones que todavía no tienen hot cues en ese programa: los tuyos nunca se pisan. En Engine DJ, cuando la pista ya está analizada. Serato los lee del propio archivo (MIK los escribe ahí si tiene activada la opción de Serato).</span></span></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button onclick="mikDj(false)" ${running('mik_dj')?'disabled':''}>Ver qué falta</button>
+        <button class="primary" onclick="mikDj(true)" ${running('mik_dj')?'disabled':''}>Actualizar ahora</button>
+        ${CX.dirty?'<span class="art" style="align-self:center">Guarda primero los cambios.</span>':''}</div></div>
   </section>
 
   <div class="rbar"><button class="primary" id="cxSave" onclick="cxSave()" ${CX.dirty?'':'disabled'}>Guardar</button>
@@ -939,12 +948,13 @@ async function cxSave(){
     sources:{spotify:{enabled:c.spotify.enabled},
       deezer:{enabled:c.deezer.enabled, user:c.deezer.user, playlists:c.deezer.playlists.split('\n').map(x=>x.trim()).filter(Boolean), include_loved:c.deezer.include_loved},
       archivos:{enabled:c.archivos.enabled, folder:c.archivos.folder}},
-    destinations:{rekordbox:{enabled:c.rekordbox.enabled, mik_auto:c.rekordbox.mik_auto, mik_comment:c.rekordbox.mik_comment}, traktor:{enabled:c.traktor.enabled, nml:c.traktor.nml}, m3u:{enabled:c.m3u.enabled, folder:c.m3u.folder},
+    mik:{auto:c.mik.auto, comment:c.mik.comment, cues:c.mik.cues},
+    destinations:{rekordbox:{enabled:c.rekordbox.enabled}, traktor:{enabled:c.traktor.enabled, nml:c.traktor.nml}, m3u:{enabled:c.m3u.enabled, folder:c.m3u.folder},
       serato:{enabled:c.serato.enabled, dir:c.serato.dir}, engine:{enabled:c.engine.enabled, dir:c.engine.dir}}};
   const r = await api().save_connections(payload);
   if(!r.ok){ taskErr(r); return; }
   S.sources = r.sources; S.dests = r.destinations; S.settings.rekordbox_folder = r.folder_name;
-  S.rbMik = {auto:c.rekordbox.mik_auto, comment:c.rekordbox.mik_comment};
+  S.rbMik = {auto:c.mik.auto, comment:c.mik.comment, cues:c.mik.cues};
   if(S.view==='conn') cxInit();
   render();
   const dz = (r.info||{}).deezer;
@@ -1111,15 +1121,27 @@ async function rbApply(){
 }
 async function rbUnkeep(pid){ const r = await api().rb_unkeep(pid); if(RBC.data) RBC.data.keep = r.keep; render(); toast('Listo: en el próximo Organizar esa playlist vuelve a quedar como en su plataforma.'); }
 
-// ---------- Mixed In Key -> Rekordbox ----------
-async function mikRb(apply){
-  const r = await api().mik_rb(!!apply);
-  if(!r.ok){ taskErr(r); return; }
-  const ex = r.sample.slice(0,3).map(c=>esc(c.title||'')+(c.key?` → ${esc(c.key[1])}`:'')).join(', ');
-  toast(apply ? (r.count ? `🎹 Pasé key y energía de Mixed In Key a <b>${r.count}</b> canciones en Rekordbox (respaldo ${esc(r.backup||'')}).<br><span class="art">${ex}</span>` : 'Rekordbox ya tiene todo lo de Mixed In Key.')
-              : (r.count ? `Hay <b>${r.count}</b> canciones con datos de Mixed In Key que Rekordbox no tiene. <a class="lnk" onclick="mikRb(true)">Actualizar ahora</a><br><span class="art">${ex}</span>` : 'Rekordbox ya tiene todo lo de Mixed In Key. ✅'));
+// ---------- Mixed In Key -> programas de DJ ----------
+function mikLine(x, applied){
+  if(x.error) return `<br><span style="color:var(--org)">${esc(x.label)}: ${esc(x.error)}</span>`;
+  const parts = [];
+  if(x.keys) parts.push(`${x.keys} key`); if(x.comments) parts.push(`${x.comments} energía`); if(x.cues) parts.push(`${x.cues} con hot cues`);
+  let t = `<br><b>${esc(x.label)}</b>: ` + (x.count ? `${x.count} canciones ${applied?'actualizadas':'por actualizar'} (${parts.join(' · ')})${x.backup&&applied?` <span class="art">respaldo ${esc(x.backup)}</span>`:''}` : 'ya tiene todo ✅');
+  if(x.serato_no_cues) t += `<br><span class="art">Serato: ${x.serato_no_cues} canciones tienen hot cues de MIK que Serato no ve. En Mixed In Key activa escribir los cue points para Serato y vuelve a analizarlas.</span>`;
+  return t;
 }
-window.onMikRb = info => toast(`🎹 Pasé key y energía de Mixed In Key a <b>${info.count}</b> canciones en Rekordbox (respaldo ${esc(info.backup||'')}).`);
+async function mikDj(apply){
+  const r = await api().mik_dj(!!apply);
+  if(!r.ok){ taskErr(r); return; }
+  if(r.none){ toast('No hay programas de DJ activos (Rekordbox, Traktor, Serato o Engine DJ). Actívalos arriba.', true); return; }
+  const progs = Object.values(r.programs);
+  const pend = progs.reduce((n,x)=>n+(x.count||0),0);
+  toast((apply ? '🎹 Mixed In Key → tus programas de DJ' : '🎹 Lo que falta de Mixed In Key') + progs.map(x=>mikLine(x, apply)).join('')
+    + (!apply && pend ? `<br><a class="lnk" onclick="mikDj(true)">Actualizar ahora</a> <span class="art">(con los programas cerrados)</span>` : ''), progs.some(x=>x.error));
+}
+const mikRb = mikDj;
+window.onMikDj = info => toast('🎹 Pasé lo nuevo de Mixed In Key:' + Object.values(info).map(x=>`<br><b>${esc(x.label)}</b>: ${x.count} canciones${x.cues?` (${x.cues} con hot cues)`:''}`).join(''));
+window.onMikRb = info => toast(`🎹 Pasé lo nuevo de Mixed In Key a <b>${info.count}</b> canciones en Rekordbox.`);
 
 // ---------- duplicados físicos ----------
 let DUP = {scan:null, keep:{}, rm:{}, filter:'all', q:''};
@@ -1475,9 +1497,9 @@ async function organize(){
   msg += djSummary(r.dj);
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
   const skipped = ((r.dj||{}).rekordbox||{}).stats ? r.dj.rekordbox.stats.skipped||[] : [];
-  const rbs = ((r.dj||{}).rekordbox||{}).stats || {};
-  if(rbs.mik) msg += `<br>🎹 Key y energía de Mixed In Key en ${rbs.mik} canciones de Rekordbox.`;
-  if(rbs.mik_error) msg += `<br><span style="color:var(--org)">Mixed In Key → Rekordbox: ${esc(rbs.mik_error)}</span>`;
+  Object.values(r.dj||{}).forEach(x=>{ const s_ = x.stats||{};
+    if(s_.mik) msg += `<br>🎹 ${esc(x.label)}: datos de Mixed In Key en ${s_.mik} canciones${s_.mik_cues?` (${s_.mik_cues} con hot cues)`:''}.`;
+    if(s_.mik_error) msg += `<br><span style="color:var(--org)">Mixed In Key → ${esc(x.label)}: ${esc(s_.mik_error)}</span>`; });
   if(skipped.length) msg += `<br><span style="color:var(--org)">En Rekordbox no toqué ${skipped.map(esc).join(', ')}: tienen cambios tuyos.</span> <a class="lnk" onclick="show('rbchg')">Revisar</a>`;
   msg += undoLink(r); loadHist(); rbLoad();
   toast(msg, Object.values(r.dj||{}).some(x=>x.error));
