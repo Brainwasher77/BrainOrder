@@ -24,7 +24,7 @@ _CACHE = {}
 _FILE = [None]
 _DIRTY = [False]
 _LOCK = threading.Lock()
-VERSION = 3  # subir si cambia la lógica, para releer
+VERSION = 4  # subir si cambia la lógica, para releer
 
 # ---------------------------------------------------------------- notación
 _NOTES = {"C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4, "E#": 5, "F": 5, "F#": 6, "GB": 6,
@@ -139,15 +139,57 @@ def _mik(j, field):
     return j.get(field)
 
 
+def _cues(j):
+    """CuePoints de MIK -> [[nombre, ms], …] (máx. 8, en orden de tiempo)."""
+    if not isinstance(j, dict) or j.get("source") not in (None, "mixedinkey"):
+        return []
+    out = []
+    for c in j.get("cues") or []:
+        try:
+            t = float(c.get("time"))
+        except Exception:
+            continue
+        if t >= 0:
+            out.append([str(c.get("name") or "")[:40], round(t, 3)])
+    out.sort(key=lambda x: x[1])
+    return out[:8]
+
+
+def _serato_has_cues(raw, depth=0):
+    """¿Los marcadores de Serato (Markers2) del archivo traen hot cues?"""
+    if raw is None or depth > 3:
+        return False
+    if isinstance(raw, (list, tuple)):
+        raw = raw[0] if raw else None
+    if hasattr(raw, "text"):
+        raw = raw.text[0] if raw.text else None
+    if isinstance(raw, str):
+        raw = raw.encode("latin-1", "ignore")
+    raw = bytes(raw or b"")
+    if b"CUE\x00" in raw:
+        return True
+    i = raw.find(b"Serato Markers2\x00")
+    if i >= 0:
+        raw = raw[i + 16:]
+    if raw[:2] == b"\x01\x01":
+        raw = raw[2:]
+    b64 = b"".join(raw.split(b"\x00")[0].split())
+    try:
+        dec = base64.b64decode(b64 + b"=" * (-len(b64) % 4))
+    except Exception:
+        return False
+    return bool(dec) and dec != raw and _serato_has_cues(dec, depth + 1)
+
+
 def read_tags(path):
-    """-> {'key','energy','bpm','mik'} sin caché.
+    """-> {'key','energy','bpm','mik','key_mik','cues','serato_cues'} sin caché.
 
     Prioridad SIEMPRE para Mixed In Key:
       1. JSON propio de MIK (Key, Energy, BeatGrid→tempo).
       2. Formatos de texto que escribe MIK: comentario «8A - Energy 6», EnergyLevel, grouping «Energy 6».
       3. Recién ahí, lo de otros programas: Initial Key / TKEY, BPM estándar, comentario con solo la key.
     """
-    out = {"key": None, "energy": None, "bpm": None, "mik": False, "key_mik": False}
+    out = {"key": None, "energy": None, "bpm": None, "mik": False, "key_mik": False, "cues": [], "serato_cues": False}
     if not mutagen:
         return out
     try:
@@ -161,6 +203,7 @@ def read_tags(path):
     mik_key = mik_energy = mik_bpm = None
     std_key = mik_energy_txt = std_bpm = None
     comments, groupings = [], []
+    cues, serato = [], False
     try:
         if hasattr(t, "getall"):  # ID3: MP3, AIFF, WAV
             for frame in t.getall("GEOB"):
@@ -171,6 +214,10 @@ def read_tags(path):
                     mik_energy = _mik(_json_b64(frame.data), "energyLevel")
                 elif d == "BeatGrid":
                     mik_bpm = _mik(_json_b64(frame.data), "tempo")
+                elif d == "CuePoints":
+                    cues = _cues(_json_b64(frame.data))
+                elif d == "Serato Markers2":
+                    serato = serato or _serato_has_cues(frame.data)
             k = t.getall("TKEY")
             std_key = _first(k[0]) if k else None
             for fr in t.getall("TXXX"):
@@ -186,6 +233,8 @@ def read_tags(path):
             mik_key = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:key")), "key")
             mik_energy = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:energy")), "energyLevel")
             mik_bpm = _mik(_json_b64(t.get("----:com.mixedinkey.mixedinkey:beatgrid")), "tempo")
+            cues = _cues(_json_b64(t.get("----:com.mixedinkey.mixedinkey:cuepoints")))
+            serato = _serato_has_cues(t.get("----:com.serato.dj:markersv2"))
             std_key = _first(t.get("----:com.apple.iTunes:initialkey"))
             mik_energy_txt = _first(t.get("----:com.apple.iTunes:energylevel"))
             tm = t.get("tmpo")
@@ -197,6 +246,8 @@ def read_tags(path):
             mik_key = _mik(_json_b64(low.get("key")), "key")
             mik_energy = _mik(_json_b64(low.get("energy")), "energyLevel")
             mik_bpm = _mik(_json_b64(low.get("beatgrid")), "tempo")
+            cues = _cues(_json_b64(low.get("cuepoints")))
+            serato = _serato_has_cues(low.get("serato_markers_v2"))
             std_key = _first(low.get("initialkey")) or (_first(low.get("key")) if not mik_key else None)
             mik_energy_txt = _first(low.get("energylevel"))
             std_bpm = _first(low.get("bpm"))
@@ -230,7 +281,7 @@ def read_tags(path):
     bpm = _bpm(mik_bpm) or _bpm(std_bpm)
     # «analizada con MIK» = cualquier dato salió de MIK (la energía solo la escribe MIK)
     out.update(key=key, energy=energy, bpm=bpm, mik=bool(key_mik or energy or _bpm(mik_bpm)),
-               key_mik=bool(key_mik))
+               key_mik=bool(key_mik), cues=cues, serato_cues=bool(serato))
     return out
 
 
@@ -263,7 +314,7 @@ def info(path):
     try:
         st = os.stat(path)
     except OSError:
-        return {"key": None, "energy": None, "bpm": None, "mik": False}
+        return {"key": None, "energy": None, "bpm": None, "mik": False, "cues": []}
     stamp = f"{st.st_size}:{int(st.st_mtime)}"
     c = _CACHE.get(path)
     if c and c.get("s") == stamp:

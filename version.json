@@ -1,5 +1,5 @@
 {
-  "version": "2.3.0",
-  "build": 19,
-  "notes": "La key y energía de Mixed In Key pasan solas a Rekordbox (al Organizar y cada 5 minutos con Rekordbox cerrado)."
+  "version": "2.4.0",
+  "build": 20,
+  "notes": "Mixed In Key ahora llega a todos tus programas de DJ (Rekordbox, Traktor, Serato y Engine DJ): key, energía y sus hot cues, solo en canciones que aún no tienen hot cues."
 }
