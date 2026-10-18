@@ -1,5 +1,5 @@
 {
-  "version": "2.6.0",
-  "build": 23,
-  "notes": "Ordena tus playlists (más/menos faltantes, completas, nombre…), clic derecho en una canción para moverla o fijarla, y Reorganizar ya no deja de proponer canciones salvo que tú lo elijas."
+  "version": "2.7.0",
+  "build": 24,
+  "notes": "Si creas una carpeta nueva con música en tu carpeta de playlists, BrainOrder te pregunta si la importa como playlist: en Spotify, en otra plataforma (con archivo para TuneMyMusic/Soundiiz) o solo en BrainOrder y tus programas de DJ."
 }

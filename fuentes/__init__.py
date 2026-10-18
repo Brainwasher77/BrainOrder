@@ -7,9 +7,9 @@ Cada fuente expone:
     tracks(cfg, meta, progress) -> [{id, name, artists, album, duration_ms, url, isrc}]
 Los ids de playlist llevan prefijo de la fuente ("dz:", "file:") para no chocar con los de Spotify.
 """
-from . import archivos, deezer_src
+from . import archivos, carpetas, deezer_src
 
-SOURCES = {m.KEY: m for m in (deezer_src, archivos)}
+SOURCES = {m.KEY: m for m in (deezer_src, archivos, carpetas)}
 
 
 def source_of(pid: str) -> str:
