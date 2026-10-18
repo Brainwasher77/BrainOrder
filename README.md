@@ -60,6 +60,11 @@ Carpetas por defecto (se cambian en Ajustes con el selector de carpetas):
 - Música por playlist: `Música/Spotify playlists/<playlist>`
 - Descargas por organizar: `Música/descargas para organizar`
 
+## Ordenar playlists, clic derecho y Reorganizar
+- Debajo de «Tus playlists» eliges el orden: de Spotify, más o menos faltantes primero, completas o menos completas primero, con descargas por organizar, por nombre o por cantidad de canciones. Se recuerda.
+- **Clic derecho en una canción**: moverla a su carpeta, a la de esta playlist, a la de otra playlist que también la tenga o a cualquier carpeta de tu biblioteca; fijarla donde está; mostrarla en Finder; abrirla en Spotify/Deezer o copiar su nombre. Cada movimiento corrige Rekordbox y demás programas y se puede deshacer en Historial.
+- **Reorganizar** te propone las canciones siempre. Solo si marcas «No volver a proponer las que dejo» se dejan de mostrar las que dejas donde están (esa elección se recuerda, y las fijadas se pueden soltar cuando quieras).
+
 ## Conexiones: fuentes y programas de DJ
 En la barra lateral, **Conexiones**:
 - **Fuentes de playlists** (se pueden usar varias a la vez; la misma canción en dos fuentes se une por ISRC):

@@ -209,6 +209,15 @@ button.xl:hover{background:rgba(52,211,153,.1);border-color:#34d399}
 .toast{position:fixed;bottom:18px;right:18px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;max-width:420px;display:none;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .toast.show{display:block}
 .toast.err{border-color:var(--miss)}
+.plsort{width:100%;background:var(--bg);color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px}
+.cmenu{position:fixed;z-index:40;min-width:250px;max-width:380px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.5);display:none}
+.cmenu.show{display:block}
+.cmenu .ci{display:flex;gap:8px;align-items:center;padding:7px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.cmenu .ci:hover{background:var(--panel)}
+.cmenu .ci.dis{opacity:.45;pointer-events:none}
+.cmenu .ch{padding:6px 10px 4px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmenu .cs{height:1px;background:var(--line);margin:4px 6px}
+#tbl tr[data-src]{cursor:context-menu}
 code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 </style>
 </head>
@@ -242,6 +251,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
       </div>
       <h4 style="display:flex;align-items:center;justify-content:space-between">Tus playlists
         <button class="ghost" style="padding:2px 8px;font-size:13px" onclick="loadPlaylists()" title="Recargar la lista de playlists de Spotify (rápido, sin canciones)">⟳</button></h4>
+      <div style="padding:0 10px 6px"><select class="plsort" id="plSort" title="Ordenar tus playlists" onchange="setPlSort(this.value)"></select></div>
       <div class="nav" id="plNav"></div>
     </aside>
     <main id="main"></main>
@@ -250,6 +260,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 
 <div class="modal-bg" id="mbg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div class="cmenu" id="cmenu"></div>
 
 <script>
 let S = {analysis:null, foreign:{}, settings:{}, connected:false, view:'missing', q:''};
@@ -362,6 +373,122 @@ function energyBar(e){
 }
 const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2 + (m[2]==='B'?1:0) : 999; };
 
+// ---------- menú del clic derecho sobre una canción ----------
+let CM = null;  // {items: [[texto, fn] | '-' | ['#', título]]}
+function cmenuOpen(x, y, items){
+  const m = $('cmenu'); CM = {fns: []};
+  m.innerHTML = items.map(it => {
+    if(it === '-') return '<div class="cs"></div>';
+    if(it[0] === '#') return `<div class="ch" title="${esc(it[1])}">${esc(it[1])}</div>`;
+    const [txt, fn, dis, tip] = it; CM.fns.push(fn);
+    return `<div class="ci${dis?' dis':''}" title="${esc(tip||txt)}" onclick="cmenuRun(${CM.fns.length-1})">${esc(txt)}</div>`;
+  }).join('');
+  m.classList.add('show');
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(x, innerWidth - w - 6)) + 'px';
+  m.style.top = Math.max(6, Math.min(y, innerHeight - h - 6)) + 'px';
+}
+function cmenuClose(){ $('cmenu').classList.remove('show'); }
+function cmenuRun(i){ const fn = CM && CM.fns[i]; cmenuClose(); if(fn) fn(); }
+document.addEventListener('click', e => { if(!e.target.closest('#cmenu')) cmenuClose(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape') cmenuClose(); });
+window.addEventListener('blur', cmenuClose);
+document.addEventListener('scroll', cmenuClose, true);
+document.addEventListener('contextmenu', e => {
+  const tr = e.target.closest('#tbl tr[data-pos], #tbl tr[data-mid]');
+  if(!tr) return;
+  e.preventDefault();
+  if(tr.dataset.mid !== undefined){
+    const r = missingUnique().find(x => x.id === tr.dataset.mid); if(r) cmenuOpen(e.clientX, e.clientY, songMenu(r, null));
+    return;
+  }
+  const m = /^pl:(\d+)$/.exec(S.view||''); if(!m) return;
+  const pl = S.analysis[+m[1]], r = pl && pl.tracks.find(t => t.pos === +tr.dataset.pos);
+  if(r) cmenuOpen(e.clientX, e.clientY, songMenu(r, pl));
+});
+function songMenu(r, pl){
+  const label = (r.artists && r.artists.length ? r.artists.join(', ') + ' - ' : '') + r.name;
+  const it = [['#', label]];
+  const finder = S.win ? 'Mostrar en el Explorador' : 'Mostrar en Finder';
+  if(pl && r.source && (r.status==='ok' || r.status==='elsewhere')){
+    const cur = dirOf(r.source), seen = new Set([cur]);
+    const mv = (dest, txt, tip) => { if(!dest || seen.has(dest)) return; seen.add(dest); it.push([txt, () => ctxMove(pl, r, dest), false, tip]); };
+    mv(r.dest_dir, `📁 Mover a su carpeta «${r.home_name || base(r.dest_dir)}»`, 'La carpeta de la primera playlist donde aparece (según tu prioridad en Reglas)');
+    mv(pl.folder, `📂 Mover a esta playlist «${pl.name}»`);
+    // otras playlists que también tienen esta canción
+    const otras = []; for(const p of S.analysis||[]) if(p !== pl && !p.pending && p.tracks.some(t => t.id === r.id)) otras.push(p);
+    otras.slice(0, 8).forEach(p => mv(p.folder, `♫ Mover a «${p.name}»`, 'También está en esa playlist'));
+    it.push(['📁 Mover a otra carpeta…', () => ctxMovePick(pl, r)]);
+    it.push('-');
+    it.push(S.pinned.has(r.source)
+      ? ['📌 Soltar: que Reorganizar la vuelva a proponer', () => ctxPin(r.source, false)]
+      : ['📌 Dejarla fija aquí (Reorganizar no la propone)', () => ctxPin(r.source, true)]);
+    it.push(['🔍 ' + finder, () => reveal(r.source)]);
+  } else if(r.status === 'inbox' && r.source){
+    if(pl) it.push([`⬇ Organizar las descargas de «${pl.name}»`, () => askOrganize(pl.id)]);
+    it.push(['🔍 ' + finder, () => reveal(r.source)]);
+  } else {
+    if(r.url) it.push(['🎧 Abrir en ' + hostLabel(r.url), () => openUrl(r.url)]);
+    if(r.deezer && r.deezer.url) it.push([r.deezer.found ? '🎵 Abrir en Deezer' : '🎵 Buscar en Deezer', () => openUrl(r.deezer.url)]);
+    if(r.dest_dir) it.push([`📁 Abrir la carpeta donde irá «${r.home_name || base(r.dest_dir)}»`, () => reveal(r.dest_dir)]);
+  }
+  it.push(['📋 Copiar «' + label + '»', async () => { const x = await api().copy_text(label); toast(x.ok ? 'Copiado.' : esc(x.error), !x.ok); }]);
+  return it;
+}
+async function ctxMove(pl, r, dest){
+  toast(`Moviendo «${esc(r.name)}» a <code>${esc(base(dest))}</code>…`);
+  const res = await api().relocate(pl.id, [{src: r.source, dest}], [], false);
+  if(!res.ok){ taskErr(res); return; }
+  await applyAnalysis(res); S.pinned = new Set(res.pinned || []); render();
+  const x = res.result;
+  let msg = x.moved ? `✅ «${esc(r.name)}» ahora está en <code>${esc(short(dest))}</code>.` : `No se movió «${esc(r.name)}».`;
+  if(x.skipped.length) msg += `<br><span style="color:var(--org)">${x.skipped.map(s=>esc(s.why)).join('; ')}</span>`;
+  if(x.rekordbox) msg += `<br>Rekordbox: ruta corregida (respaldo ${esc(x.backup)}).`;
+  for(const w of (x.dj_warnings||[])) msg += `<br><span style="color:var(--org)">${esc(w)}</span>`;
+  msg += undoLink(x); loadHist();
+  toast(msg, !x.moved);
+}
+async function ctxMovePick(pl, r){
+  const p = await api().pick_folder(r.dest_dir || S.settings.dest_root);
+  if(p) ctxMove(pl, r, p);
+}
+async function ctxPin(src, on){
+  const res = on ? await api().pin([src]) : await api().unpin([src]);
+  S.pinned = new Set(res.pinned || []); render();
+  toast(on ? 'Fijada: Reorganizar no la va a proponer. Clic derecho otra vez para soltarla.' : 'Listo: Reorganizar la vuelve a proponer.');
+}
+
+// ---------- preferencias de la ventana (se guardan en los ajustes) ----------
+let PREF = {pl_sort:'spotify', rg_remember:false};
+async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
+// ---------- orden de la lista de playlists ----------
+const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
+  ['complete','Completas primero'],['incomplete','Menos completas primero'],['organize','Con descargas por organizar'],
+  ['name','Nombre (A–Z)'],['size','Más canciones primero']];
+function paintPlSort(){ const el=$('plSort'); if(!el) return;
+  if(!el.options.length) el.innerHTML = PL_SORTS.map(([v,t])=>`<option value="${v}">${t}</option>`).join('');
+  el.value = PREF.pl_sort || 'spotify'; }
+function setPlSort(v){ savePref('pl_sort', v); renderCore(); }
+function plOrder(a){
+  const k = PREF.pl_sort || 'spotify', items = a.map((pl,i)=>[pl,i]);
+  if(k==='spotify') return items;
+  // las sin analizar e ignoradas siempre al final (no tienen números que comparar)
+  const done = items.filter(([p])=>!p.pending && !p.ignored), rest = items.filter(([p])=>p.pending || p.ignored);
+  const st = p => plStats(p), name = p => (p.name||'').toLowerCase();
+  const f = {
+    missing_desc: (x,y) => st(y).missing - st(x).missing || st(y).inbox - st(x).inbox,
+    missing_asc:  (x,y) => st(x).missing - st(y).missing || st(y).pct - st(x).pct,
+    complete:     (x,y) => st(y).pct - st(x).pct || st(y).total - st(x).total,
+    incomplete:   (x,y) => st(x).pct - st(y).pct || st(y).missing - st(x).missing,
+    organize:     (x,y) => orgCount(y.id) - orgCount(x.id) || st(y).missing - st(x).missing,
+    name:         (x,y) => name(x).localeCompare(name(y), 'es'),
+    size:         (x,y) => st(y).total - st(x).total,
+  }[k];
+  done.sort(([x,i],[y,j]) => f(x,y) || i-j);
+  if(k==='name') rest.sort(([x],[y]) => name(x).localeCompare(name(y), 'es'));
+  return done.concat(rest);
+}
+
 // ---------- render ----------
 function render(){ renderCore(); paintTasks(); }
 function renderCore(){
@@ -390,7 +517,8 @@ function renderCore(){
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
-  $('plNav').innerHTML = (a||[]).map((pl,i) => {
+  paintPlSort();
+  $('plNav').innerHTML = plOrder(a||[]).map(([pl,i]) => {
     if(pl.ignored) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Ignorada en Reglas"><div class="row">
       <span class="name" style="color:var(--mute);text-decoration:line-through">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">ignorada</span></div></a>`;
     if(pl.pending) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Sin analizar"><div class="row">
@@ -489,7 +617,7 @@ function renderTable(){
   if(S.view==='missing'){
     const rows = missingUnique().filter(match);
     if(!rows.length){ t.innerHTML = `<div class="empty"><h3>No te falta nada 🎉</h3></div>`; return; }
-    html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + limRows(rows).map((r,i)=>`<tr>
+    html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + limRows(rows).map((r,i)=>`<tr data-mid="${esc(r.id)}">
       <td class="mono" style="color:var(--mute)">${i+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
       <td><span class="chip" onclick="reveal(${jsq(r.dest_dir)})" title="${esc(short(r.dest_dir))}">📁 ${esc(r.home_name)}</span>${r.pls.filter(p=>p.name!==r.home_name).map(p=>`<span class="chip" style="opacity:.7">♫ ${esc(p.name)}</span>`).join('')}</td>
@@ -530,7 +658,7 @@ function renderTable(){
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
     const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
     html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}</div>
-      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr>
+      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
       <td>${keyChip(r)}</td>
@@ -539,6 +667,7 @@ function renderTable(){
       <td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>
       <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('') + moreRows(rows.length, 7)
       : `<tr><td colspan="7" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`
+      + `<div class="art" style="margin-top:8px">Clic derecho en una canción: moverla a otra carpeta, fijarla, mostrarla en ${S.win?'el Explorador':'Finder'}…</div>`
       + `<div class="art" style="margin-top:8px">Key y energía salen de las etiquetas que deja Mixed In Key (Camelot). <sup>*</sup> = key de otro programa. Escribe <b>8A</b> en el buscador para ver solo esa key.</div>`;
   }
   t.innerHTML = html;
@@ -793,12 +922,13 @@ function progressCard(name, key){
 // canciones de la playlist que ya tienes pero cuyo archivo NO está en la carpeta de esta playlist
 function reorgRows(pl, withPinned){
   if(!pl || pl.pending) return [];
+  if(withPinned === undefined) withPinned = !PREF.rg_remember;  // lo fijado solo se oculta si elegiste recordarlo
   const seen = new Set();
   return pl.tracks.filter(r => (r.status==='ok'||r.status==='elsewhere') && r.source && dirOf(r.source)!==pl.folder
     && (withPinned || !S.pinned.has(r.source)) && !seen.has(r.source) && seen.add(r.source));
 }
-let RG = {i:null, choice:{}, remember:true, showPinned:false};
-function openReorg(i){ RG = {i, choice:{}, remember:true, showPinned:false}; S.view='reorg:'+i; render(); }
+let RG = {i:null, choice:{}, remember:false, showPinned:false};
+function openReorg(i){ RG = {i, choice:{}, remember:!!PREF.rg_remember, showPinned:!PREF.rg_remember}; S.view='reorg:'+i; render(); }
 function rgOptions(pl, r){
   const cur = dirOf(r.source), o = [['keep', `Dejar en «${base(cur)}»`]];
   if(r.dest_dir && r.dest_dir!==cur) o.push(['home', `Mover a su carpeta «${base(r.dest_dir)}»`]);
@@ -821,7 +951,7 @@ function rgCount(){
 }
 function reorgView(i){
   const pl = S.analysis[i]; if(!pl){ S.view='missing'; return ''; }
-  const rows = reorgRows(pl, RG.showPinned), pinnedN = reorgRows(pl, true).length - reorgRows(pl).length;
+  const rows = reorgRows(pl, RG.showPinned), pinnedN = reorgRows(pl, true).length - reorgRows(pl, false).length;
   const groups = new Map(); rows.forEach(r=>{ const d=dirOf(r.source); if(!groups.has(d)) groups.set(d,[]); groups.get(d).push(r); });
   const sorted = [...groups].sort((a,b)=>b[1].length-a[1].length);
   const sel = (r) => `<select class="rg" onchange="rgSet(${jsq(r.source)},this.value)">${rgOptions(pl,r).map(([v,t])=>`<option value="${v}" ${(RG.choice[r.source]||'keep')===v?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
@@ -833,7 +963,8 @@ function reorgView(i){
       Si un archivo está en Rekordbox, se corrige su ruta (cierra Rekordbox antes; se hace respaldo).</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
       <button onclick="rgAll('home')">Todo a su carpeta</button><button onclick="rgAll('here')">Todo a esta playlist</button><button onclick="rgAll('keep')">Dejar todo</button>
-      ${pinnedN?`<label style="display:flex;gap:6px;align-items:center;margin-left:auto;color:var(--mute);cursor:pointer"><input type="checkbox" ${RG.showPinned?'checked':''} onchange="RG.showPinned=this.checked;renderMain()"> Mostrar las ${pinnedN} que ya decidiste dejar</label>`:''}</div>
+      ${pinnedN?`<label style="display:flex;gap:6px;align-items:center;margin-left:auto;color:var(--mute);cursor:pointer"><input type="checkbox" ${RG.showPinned?'checked':''} onchange="RG.showPinned=this.checked;renderMain()"> Mostrar las ${pinnedN} fijadas</label>
+        <button class="ghost" onclick="rgUnpinAll()" title="Que vuelvan a aparecer siempre">Soltar las ${pinnedN} fijadas</button>`:''}</div>
     ${rows.length?sorted.map(([d,rs])=>{
       const opts = [['', 'Elegir para todo el grupo…'], ['keep','Dejar todas donde están'], ['home','Todas a su carpeta'], ['here','Todas a esta playlist']];
       return `<details class="rgg" ${sorted.length<=3?'open':''}><summary>
@@ -844,8 +975,12 @@ function reorgView(i){
       : `<div class="empty"><h3>Nada que reorganizar</h3><p>Todas las canciones que tienes de esta playlist están en su carpeta${pinnedN?' o ya decidiste dejarlas donde están':''}.</p></div>`}
     <div style="position:sticky;bottom:-40px;background:var(--bg);border-top:1px solid var(--line);margin-top:20px;padding:14px 0 18px;display:flex;align-items:center;gap:12px">
       <span id="rgCount" style="flex:1;color:var(--mute)"></span>
-      <label style="display:flex;gap:6px;align-items:center;color:var(--mute);cursor:pointer"><input type="checkbox" ${RG.remember?'checked':''} onchange="RG.remember=this.checked"> Recordar lo que dejo donde está</label>
+      <label style="display:flex;gap:6px;align-items:center;color:var(--mute);cursor:pointer" title="Si lo activas, las que dejes donde están no se vuelven a proponer (queda así para la próxima vez)"><input type="checkbox" ${RG.remember?'checked':''} onchange="RG.remember=this.checked;savePref('rg_remember',this.checked)"> No volver a proponer las que dejo</label>
       <button class="warn" onclick="rgApply()">Aplicar</button></div>`;
+}
+async function rgUnpinAll(){
+  const pl=S.analysis[RG.i]; const ps = reorgRows(pl, true).map(r=>r.source).filter(p=>S.pinned.has(p));
+  const r = await api().unpin(ps); S.pinned = new Set(r.pinned||[]); RG.showPinned = true; renderMain(); toast(`${ps.length} canciones vuelven a aparecer en Reorganizar.`);
 }
 async function rgApply(){
   const pl=S.analysis[RG.i], rows=reorgRows(pl, RG.showPinned);
@@ -1607,7 +1742,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  S.spPause = st.spotify_paused || null; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  PREF = {...PREF, ...(st.ui||{})}; S.spPause = st.spotify_paused || null; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500);
   try{ api().start_watch(); }catch(e){}

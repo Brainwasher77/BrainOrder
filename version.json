@@ -1,5 +1,5 @@
 {
-  "version": "2.5.1",
-  "build": 22,
-  "notes": "Spotify: si limita tu app por exceso de consultas, BrainOrder respeta la pausa y sigue con lo último leído. «Analizar todo» ya no vuelve a leer las playlists que no cambiaron (muchas menos consultas)."
+  "version": "2.6.0",
+  "build": 23,
+  "notes": "Ordena tus playlists (más/menos faltantes, completas, nombre…), clic derecho en una canción para moverla o fijarla, y Reorganizar ya no deja de proponer canciones salvo que tú lo elijas."
 }
