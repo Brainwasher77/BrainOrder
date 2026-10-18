@@ -77,6 +77,9 @@ Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Histo
 ## Key y energía (Mixed In Key)
 Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus archivos, leídos de las etiquetas que deja **Mixed In Key 10 u 11** (los datos de **Mixed In Key siempre tienen prioridad**; solo si una canción no tiene nada de MIK se usa la key de otros programas —«Am», «C#m», Open Key «1m»…—, marcada con *). Se ordena por cualquiera de esas columnas, el filtro **Sin Mixed In Key** muestra lo que falta analizar y escribir **8A** en el buscador deja solo esa key. BrainOrder solo lee: nunca cambia las etiquetas.
 
+## Mixed In Key → Rekordbox (automático)
+Las canciones analizadas en Mixed In Key reciben su **key** (columna Key de Rekordbox, en su notación: Am, F#m, Db…, así se ve bien también en Camelot) y su **energía** (en el comentario, «8A - Energy 6», solo si el comentario está vacío o ya era de MIK). MIK siempre gana sobre la key que tuviera Rekordbox. Pasa al **Organizar** y **cada 5 minutos con Rekordbox cerrado** (con respaldo); también hay un botón **Actualizar ahora** en Conexiones → Rekordbox. No toca BPM, grid ni cues.
+
 ## Cambios en Rekordbox → Spotify
 Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras una playlist, o le agregas o quitas canciones**, BrainOrder lo detecta (aunque Rekordbox siga abierto) y pregunta qué hacer con cada cambio:
 - **Hacer lo mismo en Spotify** (busca cada canción por tus playlists, por ISRC o por artista + título con la misma duración; lo que no encuentre te lo dice).

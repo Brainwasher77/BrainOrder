@@ -197,6 +197,7 @@ class Api:
             "inbox_count": self._inbox_signature()[1],
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
+            "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy")},
             "sources": self._sources_status(),
             "destinations": destinos.status(self._cfg),
             "formats": reglas.FORMATS,
@@ -277,7 +278,12 @@ class Api:
             src["archivos"] = {"enabled": bool(a.get("enabled")), "folder": folder}
         q = payload.get("destinations") or {}
         if "rekordbox" in q:
-            dst["rekordbox"] = {"enabled": bool((q["rekordbox"] or {}).get("enabled"))}
+            v = q["rekordbox"] or {}
+            dst["rekordbox"] = {"enabled": bool(v.get("enabled"))}
+            if "mik_auto" in v:
+                self._cfg["rb_mik_auto"] = bool(v["mik_auto"])
+            if v.get("mik_comment") in ("key_energy", "energy", "none"):
+                self._cfg["rb_mik_comment"] = v["mik_comment"]
         if "traktor" in q:
             t = q["traktor"] or {}
             nml = (t.get("nml") or "").strip()
@@ -825,6 +831,12 @@ class Api:
                         base = st.pop("baseline", None)
                         rb_cambios.merge_baseline(base)
                         synced = {v["pid"] for v in (base or {}).values()}
+                        if self._cfg.get("rb_mik_auto", True):
+                            try:
+                                import mik_rekordbox
+                                st["mik"] = len(mik_rekordbox.run(self._cfg, apply=True, progress=self._progress)["changes"])
+                            except Exception as e:
+                                st["mik_error"] = str(e)
                         if self._cfg.get("rb_revert"):
                             self._cfg["rb_revert"] = [p for p in self._cfg["rb_revert"] if p not in synced]
                             config.save(self._cfg)
@@ -1050,6 +1062,7 @@ class Api:
         self._watching = True
         threading.Thread(target=self._watch_inbox, daemon=True).start()
         threading.Thread(target=self._watch_rekordbox, daemon=True).start()
+        threading.Thread(target=self._watch_mik, daemon=True).start()
         return {"ok": True}
 
     # ---------- cambios hechos a mano en Rekordbox -> ¿también en Spotify? ----------
@@ -1279,6 +1292,40 @@ class Api:
             return {"done": done, "errors": errors, "unresolved": unresolved, "analysis": analysis2,
                     "keep": self._cfg.get("rb_keep")}
         return self._task(run, "rb_apply", "Cambios de Rekordbox")
+
+    # ---------- Mixed In Key -> Rekordbox ----------
+    def mik_rb(self, apply=False):
+        """Ver (apply=False, sin cerrar Rekordbox) o pasar ya la key/energía de MIK a Rekordbox."""
+        def run():
+            import mik_rekordbox
+            res = mik_rekordbox.run(self._cfg, apply=bool(apply), progress=self._progress)
+            ch = res["changes"]
+            self._progress(f"{len(ch)} canciones {'actualizadas' if apply else 'por actualizar'} en Rekordbox.", 1)
+            return {"count": len(ch), "sample": ch[:30], "backup": res.get("backup"), "applied": bool(apply)}
+        return self._task(run, "mik_rb", "Mixed In Key → Rekordbox", files=bool(apply))
+
+    def _watch_mik(self):
+        """Cada 5 min: si Rekordbox está cerrado y hay canciones con datos nuevos de MIK, se los pasa (con respaldo)."""
+        import time
+        import mik_rekordbox
+        time.sleep(60)
+        while True:
+            try:
+                if (self._cfg.get("rb_mik_auto", True) and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg)
+                        and not rekordbox_sync.rekordbox_running() and not self._running
+                        and self._files.acquire(blocking=False)):
+                    try:
+                        if mik_rekordbox.run(self._cfg, apply=False)["changes"] and not rekordbox_sync.rekordbox_running():
+                            res = mik_rekordbox.run(self._cfg, apply=True)
+                            n = len(res["changes"])
+                            if n and self._window:
+                                payload = json.dumps({"count": n, "backup": res.get("backup")})
+                                self._window.evaluate_js(f"window.onMikRb && onMikRb({payload})")
+                    finally:
+                        self._files.release()
+            except Exception as e:
+                config.log(f"MIK -> Rekordbox automático: {e!r}")
+            time.sleep(300)
 
     def rb_unkeep(self, pid):
         """Vuelve a sincronizar esa playlist desde su plataforma (deja de mandar Rekordbox)."""

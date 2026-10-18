@@ -24,7 +24,7 @@ _CACHE = {}
 _FILE = [None]
 _DIRTY = [False]
 _LOCK = threading.Lock()
-VERSION = 2  # subir si cambia la lógica, para releer
+VERSION = 3  # subir si cambia la lógica, para releer
 
 # ---------------------------------------------------------------- notación
 _NOTES = {"C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4, "E#": 5, "F": 5, "F#": 6, "GB": 6,
@@ -147,7 +147,7 @@ def read_tags(path):
       2. Formatos de texto que escribe MIK: comentario «8A - Energy 6», EnergyLevel, grouping «Energy 6».
       3. Recién ahí, lo de otros programas: Initial Key / TKEY, BPM estándar, comentario con solo la key.
     """
-    out = {"key": None, "energy": None, "bpm": None, "mik": False}
+    out = {"key": None, "energy": None, "bpm": None, "mik": False, "key_mik": False}
     if not mutagen:
         return out
     try:
@@ -229,7 +229,8 @@ def read_tags(path):
     # BPM: el de MIK (BeatGrid) manda sobre el estándar
     bpm = _bpm(mik_bpm) or _bpm(std_bpm)
     # «analizada con MIK» = cualquier dato salió de MIK (la energía solo la escribe MIK)
-    out.update(key=key, energy=energy, bpm=bpm, mik=bool(key_mik or energy or _bpm(mik_bpm)))
+    out.update(key=key, energy=energy, bpm=bpm, mik=bool(key_mik or energy or _bpm(mik_bpm)),
+               key_mik=bool(key_mik))
     return out
 
 
