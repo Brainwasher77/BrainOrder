@@ -37,5 +37,30 @@ if ! ok_py "$PY"; then
   log "entorno recreado con $NEWPY"
 fi
 
+# Python «desde dentro» de BrainOrder.app: así macOS muestra BrainOrder (no «Python») junto a la manzana,
+# en el Dock y en ⌘-Tab. Se copia el intérprete de Python.app al bundle y se arranca como lo hace el propio
+# Python (variable __PYVENV_LAUNCHER__ = Python del entorno). Si algo no funciona, se usa el Python normal.
+bundle_python() {
+  [ -d "$BRAINORDER_BUNDLE/Contents/MacOS" ] || return 1
+  local real dst stamp sig
+  real=$("$PY" -c 'import os,sys;b=os.path.realpath(getattr(sys,"_base_executable",sys.executable));d=os.path.dirname;p=os.path.join(d(d(b)),"Resources","Python.app","Contents","MacOS","Python");print(p if os.path.isfile(p) else "")' 2>/dev/null)
+  [ -n "$real" ] || return 1
+  dst="$BRAINORDER_BUNDLE/Contents/MacOS/BrainOrder-python"
+  stamp="$SUP/.bundle-python"
+  sig="$real|$(stat -f '%m %z' "$real" 2>/dev/null)|$PY"
+  if [ -x "$dst" ] && [ "$(cat "$stamp" 2>/dev/null)" = "ok|$sig" ]; then echo "$dst"; return 0; fi
+  [ "$(cat "$stamp" 2>/dev/null)" = "no|$sig" ] && return 1
+  cp -p "$real" "$dst.tmp" 2>/dev/null && mv -f "$dst.tmp" "$dst" || { rm -f "$dst.tmp"; return 1; }
+  if __PYVENV_LAUNCHER__="$PY" "$dst" -c 'import os,sys;sys.exit(0 if os.path.realpath(sys.prefix)==os.path.realpath(sys.argv[1]) else 3)' "$SUP/venv" >/dev/null 2>&1; then
+    echo "ok|$sig" > "$stamp"; log "Python dentro de BrainOrder.app listo"; echo "$dst"; return 0
+  fi
+  rm -f "$dst"; echo "no|$sig" > "$stamp"; log "Python dentro de BrainOrder.app no funcionó; uso el normal"
+  return 1
+}
+
 # arranque.py instala actualizaciones pendientes y componentes que falten, y abre la ventana
+if BPY=$(bundle_python); then
+  export __PYVENV_LAUNCHER__="$PY"
+  exec "$BPY" "$SUP/arranque.py" >> "$LOG" 2>&1
+fi
 exec "$PY" "$SUP/arranque.py" >> "$LOG" 2>&1

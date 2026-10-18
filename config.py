@@ -1,7 +1,9 @@
 """Configuración y rutas de BrainOrder."""
+import copy
 import json
 import threading
 import os
+from datetime import datetime
 from pathlib import Path
 
 import plataforma
@@ -42,12 +44,38 @@ DEFAULTS = {
 }
 
 
+def _read_saved():
+    """Ajustes guardados. Si el archivo se dañó (corte de luz, disco lleno…) se intenta la copia
+    anterior y el dañado se aparta con fecha: nunca se reemplazan tus ajustes por los de fábrica sin avisar."""
+    bak = CONFIG_FILE.with_name(CONFIG_FILE.name + ".bak")
+    if not CONFIG_FILE.exists() and not bak.exists():
+        return None
+    for f in (CONFIG_FILE, bak):
+        try:
+            data = json.loads(f.read_text("utf-8"))
+            if isinstance(data, dict):
+                if f != CONFIG_FILE:
+                    log(f"config.json estaba dañado: se recuperó la copia anterior ({f.name})")
+                return data
+        except Exception:
+            continue
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        bad = CONFIG_FILE.with_name(f"config.dañado-{datetime.now():%Y%m%d-%H%M%S}.json")
+        os.replace(CONFIG_FILE, bad)
+        log(f"config.json dañado y sin copia: se apartó como {bad.name}")
+    except OSError:
+        pass
+    return None
+
+
 def load():
     SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
-    cfg = dict(DEFAULTS)
-    if CONFIG_FILE.exists():
+    cfg = copy.deepcopy(DEFAULTS)  # copia profunda: los ajustes nunca modifican los valores de fábrica
+    saved = _read_saved()
+    if saved is not None:
         try:
-            saved = json.loads(CONFIG_FILE.read_text("utf-8"))
             if "setup_done" not in saved:  # quien ya venía usando la app no necesita el asistente
                 saved["setup_done"] = bool(saved.get("client_id") or saved.get("sources"))
             if "library_roots" not in saved:  # instalaciones viejas: conservar lo que venía antes
@@ -64,13 +92,42 @@ _SAVE_LOCK = threading.Lock()
 
 
 def save(cfg):
-    """Guardado atómico y de a uno (varias tareas pueden guardar ajustes a la vez)."""
+    """Guardado atómico y de a uno (varias tareas pueden guardar ajustes a la vez).
+    Se escribe a un temporal, se fuerza al disco y se reemplaza; la versión anterior queda como .bak."""
     with _SAVE_LOCK:
         SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
-        data = json.dumps(cfg, indent=2, ensure_ascii=False)
-        tmp = CONFIG_FILE.with_name(f".{CONFIG_FILE.name}.tmp")
-        tmp.write_text(data, "utf-8")
-        os.replace(tmp, CONFIG_FILE)
+        for attempt in range(5):  # otra tarea pudo cambiar un ajuste justo mientras se serializaba
+            try:
+                data = json.dumps(cfg, indent=2, ensure_ascii=False)
+                break
+            except RuntimeError:
+                if attempt == 4:
+                    raise
+                import time
+                time.sleep(0.02)
+        write_atomic(CONFIG_FILE, data, keep_backup=True)
+
+
+def write_atomic(path, text, keep_backup=False):
+    """Escribe un archivo de texto sin que nunca quede a medias (temporal + fsync + reemplazo)."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    if keep_backup and path.exists():
+        try:
+            bak = path.with_name(path.name + ".bak")
+            if bak.exists():
+                bak.unlink()
+            os.link(path, bak)  # copia instantánea (mismo archivo); se libera al reemplazar
+        except OSError:
+            pass
+    os.replace(tmp, path)
 
 
 def safe_name(name: str) -> str:
@@ -78,11 +135,20 @@ def safe_name(name: str) -> str:
     return plataforma.safe_name(name)
 
 
+_LOG_LOCK = threading.Lock()
+LOG_MAX = 5 * 1024 * 1024  # al pasar de 5 MB se rota (se guarda la anterior como .1)
+
+
 def log(msg: str):
     try:
-        SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            from datetime import datetime
-            f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
+        with _LOG_LOCK:
+            SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                if LOG_FILE.stat().st_size > LOG_MAX:
+                    os.replace(LOG_FILE, LOG_FILE.with_name(LOG_FILE.name + ".1"))
+            except OSError:
+                pass
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
     except Exception:
         pass

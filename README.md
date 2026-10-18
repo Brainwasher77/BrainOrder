@@ -31,6 +31,8 @@ El instalador copia la app a tu carpeta de datos y crea un entorno de Python pro
 ## Actualizaciones automáticas
 - Cada vez que abres BrainOrder revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
 - Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app. La primera vez después de eso tarda un par de minutos.
+- Si una versión nueva no llegara a arrancar, BrainOrder vuelve sola a la anterior y no reintenta esa versión.
+- Si una versión nueva necesita componentes nuevos, se instalan solos al abrirla.
 - Solo hace falta volver a correr el instalador si cambias de computador.
 
 Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en `version.json`.
@@ -102,15 +104,18 @@ En la barra lateral, **Reglas**:
 
 ## Seguridad de tus archivos
 - Nunca se borra música: lo repetido se aparta en carpetas `_duplicados` para que lo revises tú.
-- Antes de escribir en Rekordbox se respalda `master.db` (se guardan los últimos 5 respaldos `master.backup.spotisync-…db`).
-- Si Unificar falla a mitad de camino, se deshacen los movimientos.
+- Mover entre discos es a prueba de cortes: se copia a un temporal oculto, se verifica y recién entonces se borra el original. Si se llena el disco o se desconecta, el original queda intacto y no queda ninguna copia a medias.
+- Antes de escribir en Rekordbox se respalda `master.db` en un solo archivo consistente (incluye lo que Rekordbox aún tenía en su diario `-wal`); se guardan los últimos 5 `master.backup.brainorder-…db`. Si no hay espacio para el respaldo, no se escribe nada. El paso automático de Mixed In Key hace como mucho un respaldo por hora.
+- Para revisar cambios en Rekordbox se lee la librería en modo solo lectura, sin copiarla (antes se copiaban ~200 MB en cada revisión).
+- Si Unificar, Reorganizar o Deshacer fallan a mitad de camino, se deshacen los movimientos.
+- Los ajustes se guardan de forma atómica con copia anterior (`config.json.bak`): si el archivo se daña, se recupera solo.
 
 Para restaurar Rekordbox: ciérralo y reemplaza `master.db` por uno de los respaldos.
 - macOS: `~/Library/Pioneer/rekordbox/`
 - Windows: `%APPDATA%\Pioneer\rekordbox\`
 
 ## Dónde guarda sus datos
-Ajustes, sesión de Spotify, cachés y el log (`spotisync.log`):
+Ajustes, sesión de Spotify, cachés y el log (`brainorder.log`, se rota al pasar de 5 MB):
 - macOS: `~/Library/Application Support/BrainOrder/`
 - Windows: `%APPDATA%\BrainOrder\`
 

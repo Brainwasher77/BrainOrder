@@ -6,10 +6,10 @@
 - Nunca se borra nada.
 """
 import os
-import shutil
 from pathlib import Path
 
 from config import log
+from plataforma import safe_move
 
 
 def _unique(dst: Path) -> Path:
@@ -48,7 +48,7 @@ def organize(analysis, cfg, progress=None):
         rel = src_p.relative_to(inbox) if inbox in src_p.parents else Path(src_p.name)
         target = _unique(dup_dir / rel)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src_p), str(target))
+        safe_move(str(src_p), str(target))
         journal.append((str(src_p), str(target)))
 
     for src, dest_dir in moves.items():
@@ -67,7 +67,7 @@ def organize(analysis, cfg, progress=None):
                 to_duplicates(src_p)
                 to_dups += 1
             else:
-                shutil.move(str(src_p), str(dst))
+                safe_move(str(src_p), str(dst))
                 journal.append((str(src_p), str(dst)))
                 moved += 1
         except Exception as e:
@@ -121,7 +121,7 @@ def relocate(ops, cfg, progress=None):
                 skipped.append({"file": s.name, "why": f"ya hay un archivo con ese nombre en {Path(dest_dir).name}"})
                 continue
             d.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(s), str(d))
+            safe_move(str(s), str(d))
             moved.append((str(s), str(d)))
             changes[str(s)] = str(d)
         rb_stats = None
@@ -134,7 +134,7 @@ def relocate(ops, cfg, progress=None):
         for src, dst in reversed(moved):
             try:
                 Path(src).parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(dst, src)
+                safe_move(dst, src)
             except Exception as e2:
                 log(f"No pude deshacer {dst} -> {src}: {e2}")
         raise rekordbox_sync.RekordboxError(f"No se pudo reorganizar; se deshicieron los cambios. Detalle: {e}")
@@ -174,11 +174,11 @@ def move_unmatched(groups, files, cfg, progress=None):
                 rel = src.relative_to(inbox) if inbox in src.parents else Path(src.name)
                 t = _unique(dup_dir / rel)
                 t.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(src), str(t))
+                safe_move(str(src), str(t))
                 journal.append((str(src), str(t)))
                 to_dups += 1
             else:
-                shutil.move(str(src), str(target))
+                safe_move(str(src), str(target))
                 journal.append((str(src), str(target)))
                 moved += 1
         except Exception as e:

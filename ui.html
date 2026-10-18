@@ -300,7 +300,7 @@ function busy(on, msg){ if(msg && !Object.keys(T).length) $('progTxt').textConte
 async function applyAnalysis(r){
   if(!r || !r.analysis) return;
   if(r.rev !== undefined && r.rev !== null && S.rev !== undefined && r.rev < S.rev){
-    try{ const st = await api().get_state(); if(st.analysis && st.rev >= S.rev){ setAnalysis(st.analysis, st.rev); } }catch(e){}
+    try{ const st = await api().get_state(S.rev ?? null); if(st.analysis && st.rev >= S.rev){ setAnalysis(st.analysis, st.rev); } }catch(e){}
     return;
   }
   setAnalysis(r.analysis, r.rev);
@@ -317,21 +317,29 @@ function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'
 function closeModal(){ $('mbg').classList.remove('show'); }
 
 // ---------- datos derivados ----------
-function allRows(){ return (S.analysis||[]).flatMap(pl => pl.tracks.map(t => ({...t, pl}))); }
+// Se calculan UNA vez por análisis (con miles de canciones, recalcularlos en cada pintada congelaba la ventana).
+let DC = {a: undefined};
+function memo(key, fn){ if(DC.a !== S.analysis) DC = {a: S.analysis}; return key in DC ? DC[key] : (DC[key] = fn()); }
+function allRows(){ return memo('rows', () => (S.analysis||[]).flatMap(pl => pl.tracks.map(t => ({...t, pl})))); }
 function missingUnique(){
-  const m = new Map();
-  for (const r of allRows()) if (r.status==='missing'){
-    if(!m.has(r.id)) m.set(r.id, {...r, pls:[]});
-    m.get(r.id).pls.push(r.pl);
-  }
-  return [...m.values()];
+  return memo('missing', () => {
+    const m = new Map();
+    for (const r of allRows()) if (r.status==='missing'){
+      if(!m.has(r.id)) m.set(r.id, {...r, pls:[]});
+      m.get(r.id).pls.push(r.pl);
+    }
+    return [...m.values()];
+  });
 }
 // movimientos únicos (un archivo por canción) + descargas repetidas
 // pid opcional: solo esa playlist
-function rowsOf(pid){ return pid ? allRows().filter(r=>r.pl.id===pid) : allRows(); }
-function toOrganize(pid){ const seen=new Set(); return rowsOf(pid).filter(r => r.status==='inbox' && !seen.has(r.source) && seen.add(r.source)); }
-function dupList(pid){ const moves=new Set(toOrganize(pid).map(r=>r.source)); const m=new Map();
-  for(const r of rowsOf(pid)) for(const d of (r.inbox_dups||[])) if(!moves.has(d) && !m.has(d)) m.set(d, r); return [...m].map(([path,r])=>({path,r})); }
+function rowsOf(pid){
+  if(!pid) return allRows();
+  return memo('rows:'+pid, () => { const pl=(S.analysis||[]).find(p=>p.id===pid); return pl ? pl.tracks.map(t=>({...t, pl})) : []; });
+}
+function toOrganize(pid){ return memo('org:'+(pid||''), () => { const seen=new Set(); return rowsOf(pid).filter(r => r.status==='inbox' && !seen.has(r.source) && seen.add(r.source)); }); }
+function dupList(pid){ return memo('dup:'+(pid||''), () => { const moves=new Set(toOrganize(pid).map(r=>r.source)); const m=new Map();
+  for(const r of rowsOf(pid)) for(const d of (r.inbox_dups||[])) if(!moves.has(d) && !m.has(d)) m.set(d, r); return [...m].map(([path,r])=>({path,r})); }); }
 function orgAvail(){ return (S.inboxCount||0) > 0 || orgCount() > 0; }
 function orgCount(pid){ return S.analysis ? toOrganize(pid).length + dupList(pid).length : 0; }
 const changed = pl => !pl.pending && pl.snapshot && pl.analyzed_snapshot && pl.snapshot !== pl.analyzed_snapshot;
@@ -457,17 +465,30 @@ function renderMain(){
   renderTable();
 }
 
+// Tablas largas: se pintan de a LIM filas (pintar 6.000 de golpe congelaba la ventana)
+const LIM_STEP = 400;
+let LIM = {view:null, n:LIM_STEP};
+function limRows(rows){
+  if(LIM.view !== S.view + '|' + (S.q||'') + '|' + SO.filter){ LIM = {view: S.view + '|' + (S.q||'') + '|' + SO.filter, n: LIM_STEP}; }
+  return rows.length > LIM.n ? rows.slice(0, LIM.n) : rows;
+}
+function moreRows(total, cols){
+  if(total <= LIM.n) return '';
+  return `<tr><td colspan="${cols}" style="text-align:center;padding:14px"><span class="art">Mostrando ${LIM.n} de ${total}.</span>
+    <button onclick="LIM.n+=${LIM_STEP};renderTable()">Mostrar ${Math.min(LIM_STEP, total-LIM.n)} más</button>
+    <button class="ghost" onclick="LIM.n=${total};renderTable()">Mostrar todas</button></td></tr>`;
+}
 function renderTable(){
   const t = $('tbl'); if(!t) return;
   let html='';
   if(S.view==='missing'){
     const rows = missingUnique().filter(match);
     if(!rows.length){ t.innerHTML = `<div class="empty"><h3>No te falta nada 🎉</h3></div>`; return; }
-    html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + rows.map((r,i)=>`<tr>
+    html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + limRows(rows).map((r,i)=>`<tr>
       <td class="mono" style="color:var(--mute)">${i+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
       <td><span class="chip" onclick="reveal(${jsq(r.dest_dir)})" title="${esc(short(r.dest_dir))}">📁 ${esc(r.home_name)}</span>${r.pls.filter(p=>p.name!==r.home_name).map(p=>`<span class="chip" style="opacity:.7">♫ ${esc(p.name)}</span>`).join('')}</td>
-      <td style="white-space:nowrap">${links(r)}</td></tr>`).join('') + `</table>`;
+      <td style="white-space:nowrap">${links(r)}</td></tr>`).join('') + moreRows(rows.length, 4) + `</table>`;
   } else if(S.view==='organize'){
     const rows = toOrganize().filter(match), dups = dupList().filter(d=>match(d.r));
     if(!rows.length && !dups.length){ t.innerHTML = `<div class="empty"><h3>Nada por organizar</h3><p>Descarga canciones a tu carpeta de descargas y vuelve a Analizar.</p></div>`; return; }
@@ -504,14 +525,14 @@ function renderTable(){
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
     const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
     html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}</div>
-      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? rows.map(r=>`<tr>
+      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
       <td>${keyChip(r)}</td>
       <td style="white-space:nowrap">${energyBar(r.energy)}</td>
       <td class="mono" style="color:var(--mute)">${r.bpm?Math.round(r.bpm):''}</td>
       <td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>
-      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('')
+      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('') + moreRows(rows.length, 7)
       : `<tr><td colspan="7" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`
       + `<div class="art" style="margin-top:8px">Key y energía salen de las etiquetas que deja Mixed In Key (Camelot). <sup>*</sup> = key de otro programa. Escribe <b>8A</b> en el buscador para ver solo esa key.</div>`;
   }
@@ -552,7 +573,8 @@ function askForeign(ids){
 
 // ---------- estadísticas ----------
 const dirOf = p => (p||'').replace(/[\\/][^\\/]*$/, '');
-function plStats(pl){
+function plStats(pl){ return memo('ps:'+pl.id, () => plStats0(pl)); }
+function plStats0(pl){
   const c={total:pl.tracks.length, here:0, other:0, inbox:0, missing:0};
   for(const r of pl.tracks){
     if((r.status==='ok'||r.status==='elsewhere') && r.source){ dirOf(r.source)===pl.folder ? c.here++ : c.other++; }
@@ -560,16 +582,17 @@ function plStats(pl){
   }
   c.pct = c.total ? Math.round((c.here+c.other)/c.total*100) : 100; return c;
 }
-function globalStats(){
+function globalStats(){ return memo('gs', globalStats0); }
+function globalStats0(){
   const songs=new Map(), files=new Set(); let refs=0;
   for(const r of allRows()){ songs.set(r.id, r.status); if((r.status==='ok'||r.status==='elsewhere') && r.source){ refs++; files.add(r.source); } }
   const vals=[...songs.values()], owned=vals.filter(v=>v==='ok'||v==='elsewhere').length;
   return {songs:songs.size, owned, inbox:vals.filter(v=>v==='inbox').length, missing:vals.filter(v=>v==='missing').length,
           files:files.size, saved:refs-files.size, pct: songs.size?Math.round(owned/songs.size*100):100};
 }
-function mikStats(){ const seen=new Set(); let owned=0, mik=0;
+function mikStats(){ return memo('mik', () => { const seen=new Set(); let owned=0, mik=0;
   for(const r of allRows()) if(r.source && !seen.has(r.source)){ seen.add(r.source); owned++; if(r.mik) mik++; }
-  return {owned, mik, pct: owned? Math.round(mik/owned*100) : 0}; }
+  return {owned, mik, pct: owned? Math.round(mik/owned*100) : 0}; }); }
 function statsView(){
   const g = globalStats();
   const rows = S.analysis.map((pl,i)=>({pl,i,c:plStats(pl)})).filter(x=>!x.pl.pending).sort((a,b)=>a.c.pct-b.c.pct);
@@ -1253,7 +1276,7 @@ async function undoOp(id){
   await loadHist();
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r);
-  try{ const st = await api().get_state(); S.inboxCount = st.inbox_count || 0; }catch(e){}
+  try{ const st = await api().get_state(S.rev ?? null); S.inboxCount = st.inbox_count || 0; }catch(e){}
   render();
   let msg = `↩ <b>${r.restored}</b> archivo${r.restored!==1?'s':''} devuelto${r.restored!==1?'s':''} a su lugar.`;
   if(r.skipped.length) msg += `<br><span style="color:var(--org)">${r.skipped.length} se saltaron: ${r.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${r.skipped.length>2?'…':''}</span>`;
@@ -1417,7 +1440,7 @@ async function analyzePlaylist(pid){
 // el vigilante avisa cuando cambia la carpeta de descargas
 window.onInboxChange = async (info) => {
   try{
-    const st = await api().get_state();
+    const st = await api().get_state(S.rev ?? null);
     if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
     S.inboxCount = (info && info.count !== undefined) ? info.count : (st.inbox_count || 0);
     render();
@@ -1433,7 +1456,7 @@ window.onInboxChange = async (info) => {
 async function askOrganize(pid){
   orgPid = pid || null;
   if(!orgPid) return askOrganizeAll();
-  const st = await api().get_state();
+  const st = await api().get_state(S.rev ?? null);
   const rows = toOrganize(orgPid), dups = dupList(orgPid);
   const plName = orgPid ? (S.analysis.find(p=>p.id===orgPid)||{}).name : null;
   const dests = new Set(rows.map(r=>r.dest_dir)).size;
@@ -1448,7 +1471,7 @@ async function askOrganize(pid){
 // ---------- organizar general: lo que coincide + lo que no coincide con ninguna playlist ----------
 let OX = {st:null, groups:new Set(), loose:new Set(), dest:null};
 async function askOrganizeAll(){
-  const [st, ib] = await Promise.all([api().get_state(), api().inbox_status()]);
+  const [st, ib] = await Promise.all([api().get_state(S.rev ?? null), api().inbox_status()]);
   OX = {st, ib, groups:new Set(), loose:new Set(), dest:null};
   S.inboxCount = ib.count; render();
   const rows = toOrganize(), dups = dupList(), dests = new Set(rows.map(r=>r.dest_dir)).size;
@@ -1489,7 +1512,7 @@ async function organize(){
   const r = await api().organize(rb, pid, extra);
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r);
-  try{ const st = await api().get_state(); S.inboxCount = st.inbox_count || 0; }catch(e){}
+  try{ const st = await api().get_state(S.rev ?? null); S.inboxCount = st.inbox_count || 0; }catch(e){}
   render();
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
@@ -1569,7 +1592,7 @@ async function saveSettings(){
     library_roots:draftRoots, rekordbox_folder:$('sRb').value, include_liked:$('sLiked').checked, liked_name:$('sLikedName').value};
   const r = await api().save_settings(s);
   if(r && r.ok===false){ toast(esc(r.error), true); return; }
-  const st = await api().get_state(); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
+  const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
   if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();
   toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).`);

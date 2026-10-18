@@ -32,6 +32,41 @@ class SpotifyError(Exception):
     pass
 
 
+_TOKEN_LOCK = threading.Lock()  # varias tareas a la vez: un solo refresco del token
+_NET_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, OSError)
+
+
+def _urlopen(req, timeout=30, tries=3):
+    """urlopen con reintentos ante cortes de red y errores 5xx de Spotify."""
+    delay = 1.0
+    for attempt in range(tries):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code in (500, 502, 503, 504) and attempt < tries - 1:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+        except _NET_ERRORS as e:
+            if attempt < tries - 1:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise SpotifyError(f"No pude conectar con Spotify. Revisa tu conexión a internet. ({e})")
+
+
+def _retry_after(e):
+    try:
+        secs = int(e.headers.get("Retry-After", "2"))
+    except (TypeError, ValueError):
+        secs = 2
+    if secs > 30:
+        mins = max(1, round(secs / 60))
+        raise SpotifyError(f"Spotify pidió esperar unos {mins} minuto(s) por exceso de consultas. Intenta más tarde.")
+    time.sleep(secs + 1)
+
+
 class Spotify:
     def __init__(self, client_id: str, redirect_uri: str):
         self.client_id = client_id.strip()
@@ -50,10 +85,16 @@ class Spotify:
         tok["expires_at"] = time.time() + int(tok.get("expires_in", 3600)) - 60
         if self.token and "refresh_token" not in tok:
             tok["refresh_token"] = self.token.get("refresh_token")
+        if self.token and "scope" not in tok and self.token.get("scope"):
+            tok["scope"] = self.token["scope"]
         self.token = tok
         TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_FILE.write_text(json.dumps(tok), "utf-8")
-        os.chmod(TOKEN_FILE, 0o600)
+        # atómico y privado: otra tarea que lo lea a la vez nunca ve un archivo a medias
+        tmp = TOKEN_FILE.with_name(f".{TOKEN_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(tok))
+        os.replace(tmp, TOKEN_FILE)
 
     def logout(self):
         self.token = None
@@ -71,18 +112,33 @@ class Spotify:
         req = urllib.request.Request(TOKEN_URL, data=body, headers={
             "Content-Type": "application/x-www-form-urlencoded"})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with _urlopen(req, timeout=30) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            raise SpotifyError(f"Spotify rechazó el token ({e.code}): {e.read().decode(errors='ignore')}")
+            detail = e.read().decode(errors="ignore")
+            if "invalid_grant" in detail:
+                raise SpotifyError("La sesión de Spotify venció o se revocó. Toca «Conectar Spotify» para volver a entrar.")
+            raise SpotifyError(f"Spotify rechazó el token ({e.code}): {detail[:200]}")
 
-    def _refresh(self):
-        tok = self._post_token({
-            "grant_type": "refresh_token",
-            "refresh_token": self.token["refresh_token"],
-            "client_id": self.client_id,
-        })
-        self._save_token(tok)
+    def _refresh(self, stale=None):
+        """Renueva el token. Si otra tarea ya lo renovó mientras tanto, se usa ese (Spotify invalida
+        el refresh_token viejo al renovar: dos renovaciones a la vez dejaban la sesión rota)."""
+        with _TOKEN_LOCK:
+            disk = self._load_token()
+            if disk and disk.get("access_token") and disk.get("access_token") != (stale or (self.token or {}).get("access_token")) \
+                    and time.time() < disk.get("expires_at", 0):
+                self.token = disk
+                return
+            if disk and disk.get("refresh_token"):
+                self.token = disk
+            if not self.connected:
+                raise SpotifyError("No has conectado tu cuenta de Spotify.")
+            tok = self._post_token({
+                "grant_type": "refresh_token",
+                "refresh_token": self.token["refresh_token"],
+                "client_id": self.client_id,
+            })
+            self._save_token(tok)
 
     def _access(self):
         if not self.connected:
@@ -157,16 +213,17 @@ class Spotify:
         url = path_or_url if path_or_url.startswith("http") else API + path_or_url
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._access()}"})
+        access = self._access()
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access}"})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with _urlopen(req, timeout=30) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             if e.code == 429 and _retry:
-                time.sleep(int(e.headers.get("Retry-After", "2")) + 1)
+                _retry_after(e)
                 return self.get(path_or_url, params, _retry - 1)
             if e.code == 401 and _retry:
-                self._refresh()
+                self._refresh(stale=access)
                 return self.get(path_or_url, params, _retry - 1)
             raise SpotifyError(f"Error {e.code} en {url.split('?')[0]}: {e.read().decode(errors='ignore')[:200]}")
 
@@ -198,18 +255,20 @@ class Spotify:
     def send(self, method, path, body=None, _retry=3):
         url = path if path.startswith("http") else API + path
         data = json.dumps(body).encode() if body is not None else None
+        access = self._access()
         req = urllib.request.Request(url, data=data, method=method, headers={
-            "Authorization": f"Bearer {self._access()}", "Content-Type": "application/json"})
+            "Authorization": f"Bearer {access}", "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            # escribir no se reintenta por cortes de red (podría duplicar canciones); sí por 429/401
+            with _urlopen(req, timeout=30, tries=1) as r:
                 raw = r.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
             if e.code == 429 and _retry:
-                time.sleep(int(e.headers.get("Retry-After", "2")) + 1)
+                _retry_after(e)
                 return self.send(method, path, body, _retry - 1)
             if e.code == 401 and _retry:
-                self._refresh()
+                self._refresh(stale=access)
                 return self.send(method, path, body, _retry - 1)
             detail = e.read().decode(errors="ignore")[:200]
             if e.code == 403:
@@ -310,7 +369,9 @@ class Spotify:
                     p["id"], (lambda m, f, i=i, name=p["name"]: progress(f"Playlist {i}/{len(own)} «{name}»: {m.split(': ',1)[-1]}", f)) if progress else None,
                     p.get("total"), (i - 1) / len(own), 1 / len(own))
             except SpotifyError as e:
+                # no se pierde: se conserva lo que ya había guardado de esa playlist
                 log(f"No se pudo leer {p['name']}: {e}")
+                result.append({**p, "tracks": None, "error": str(e)})
                 continue
             result.append({**p, "tracks": tracks})
         return result

@@ -185,10 +185,9 @@ def plan_and_apply(db, cfg, apply=False, progress=None, info=None):
     return changes
 
 
-def run(cfg, apply=False, progress=None):
+def run(cfg, apply=False, progress=None, backup=True):
     """Abre la librería real (para aplicar: Rekordbox cerrado y con respaldo) o una copia (para ver)."""
     import rekordbox_sync
-    import rb_cambios  # noqa: F401  (misma forma de abrir)
     try:
         from pyrekordbox import MasterDatabase as DB
     except ImportError:  # pragma: no cover
@@ -197,6 +196,21 @@ def run(cfg, apply=False, progress=None):
     if not path.exists():
         raise rekordbox_sync.RekordboxError("No encontré la librería de Rekordbox.")
     if not apply:
+        # solo mirar: se lee la librería tal cual (sin copiar ~200 MB); escribir nunca pasa por aquí
+        try:
+            db = DB(path=path)
+        except Exception as e:
+            log(f"MIK: lectura directa de Rekordbox falló ({e!r}); uso una copia")
+            db = None
+        if db is not None:
+            try:
+                return {"changes": plan_and_apply(db, cfg, False, progress)}
+            finally:
+                try:
+                    db.rollback()
+                    db.close()
+                except Exception:
+                    pass
         import shutil
         import tempfile
         from pathlib import Path
@@ -220,7 +234,7 @@ def run(cfg, apply=False, progress=None):
         changes = plan_and_apply(db, cfg, False, progress)
         if not changes:
             return {"changes": [], "backup": None}
-        bk = rekordbox_sync.backup().name
+        bk = rekordbox_sync.backup().name if backup else None  # sin respaldo: ya se hizo uno en esta operación
         plan_and_apply(db, cfg, True, progress)
         db.commit()
         armonia.save()

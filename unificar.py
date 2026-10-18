@@ -13,7 +13,6 @@ copia repetida pasan a usar la copia que se conserva (sin perder cues). Si algo 
 deshacen los movimientos y Rekordbox queda como estaba.
 """
 import os
-import shutil
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +20,7 @@ from pathlib import Path
 import biblioteca as b
 import reglas
 from config import AUDIO_EXT, log
-from plataforma import native, rb_path
+from plataforma import native, rb_path, safe_move
 
 DUP_DIR = "_duplicados"
 JUNK = {".DS_Store", "Thumbs.db", "desktop.ini"}
@@ -260,7 +259,7 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
 
     def move(src: Path, dst: Path):
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+        safe_move(str(src), str(dst))
         moves.append((str(src), str(dst)))
 
     def retire(src: Path, keeper: str):
@@ -326,7 +325,7 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
         for src, dst in reversed(moves):
             try:
                 Path(src).parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(dst, src)
+                safe_move(dst, src)
             except Exception as e2:
                 log(f"No pude deshacer {dst} -> {src}: {e2}")
         # quitar carpetas vacías que se alcanzaron a crear en _duplicados

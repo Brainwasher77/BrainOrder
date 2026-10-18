@@ -8,13 +8,13 @@ Lo que no cumpla eso se salta y se informa: nunca se pisa ni se borra nada.
 """
 import json
 import os
-import shutil
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 from config import SUPPORT_DIR, log
+from plataforma import safe_move
 
 DIR = SUPPORT_DIR / "historial"
 KEEP = 50
@@ -96,13 +96,13 @@ def apply_undo(op, todo, protect=(), progress=None):
             if progress:
                 progress(f"Devolviendo {n}/{len(todo)}: {Path(orig).name}", n / max(1, len(todo)))
             Path(orig).parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(cur, orig)
+            safe_move(cur, orig)
             done.append((cur, orig))
     except Exception as e:
         log(f"Deshacer falló, revirtiendo: {e!r}")
         for cur, orig in reversed(done):
             try:
-                shutil.move(orig, cur)
+                safe_move(orig, cur)
             except Exception as e2:
                 log(f"No pude revertir {orig} -> {cur}: {e2}")
         raise
