@@ -95,6 +95,11 @@ def sync(analysis, cfg, progress=None):
             return artist_cache[name]
 
         analysis = [p for p in analysis if not p.get("pending")]  # sin analizar: no se tocan
+        # playlists que manda Rekordbox (elegiste mantener tus cambios) o con cambios tuyos sin decidir
+        skip = set(cfg.get("rb_keep") or []) | set(cfg.get("_rb_pending") or [])
+        stats["skipped"] = [p["name"] for p in analysis if p["id"] in skip]
+        analysis = [p for p in analysis if p["id"] not in skip]
+        baseline = {}
         for i, pl in enumerate(analysis, 1):
             if progress:
                 progress(f"Rekordbox {i}/{len(analysis)}: {pl['name']}")
@@ -109,6 +114,7 @@ def sync(analysis, cfg, progress=None):
                 stats["playlists_created"] += 1
             current = [rb_path(s.Content.FolderPath) if s.Content else None
                        for s in sorted(playlist.Songs, key=lambda s: s.TrackNo or 0)]
+            baseline[str(playlist.ID)] = {"pid": pl["id"], "name": pl["name"], "paths": [r["source"] for r in desired]}
             if current == [rb_path(r["source"]) for r in desired]:
                 continue
             for song in list(playlist.Songs):
@@ -127,6 +133,7 @@ def sync(analysis, cfg, progress=None):
                 db.add_to_playlist(playlist, content)
             stats["playlists_updated"] += 1
         db.commit()
+        stats["baseline"] = baseline
     except RekordboxError:
         db.rollback()
         raise

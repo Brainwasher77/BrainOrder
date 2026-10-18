@@ -1,5 +1,5 @@
 {
-  "version": "2.1.1",
-  "build": 17,
-  "notes": "Mixed In Key siempre tiene prioridad: su key, energía y BPM ganan sobre lo que haya escrito cualquier otro programa."
+  "version": "2.2.0",
+  "build": 18,
+  "notes": "Cambios hechos en Rekordbox pasan a Spotify (preguntando), y nueva sección Duplicados para toda tu música. Reconecta Spotify una vez para permitir editar playlists."
 }

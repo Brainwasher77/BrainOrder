@@ -77,6 +77,16 @@ Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Histo
 ## Key y energía (Mixed In Key)
 Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus archivos, leídos de las etiquetas que deja **Mixed In Key 10 u 11** (los datos de **Mixed In Key siempre tienen prioridad**; solo si una canción no tiene nada de MIK se usa la key de otros programas —«Am», «C#m», Open Key «1m»…—, marcada con *). Se ordena por cualquiera de esas columnas, el filtro **Sin Mixed In Key** muestra lo que falta analizar y escribir **8A** en el buscador deja solo esa key. BrainOrder solo lee: nunca cambia las etiquetas.
 
+## Cambios en Rekordbox → Spotify
+Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras una playlist, o le agregas o quitas canciones**, BrainOrder lo detecta (aunque Rekordbox siga abierto) y pregunta qué hacer con cada cambio:
+- **Hacer lo mismo en Spotify** (busca cada canción por tus playlists, por ISRC o por artista + título con la misma duración; lo que no encuentre te lo dice).
+- **Solo en Rekordbox**: esa playlist pasa a mandar en Rekordbox y BrainOrder no la vuelve a sobrescribir (se puede volver atrás).
+- **Deshacer en Rekordbox**: la deja como está en su plataforma.
+Mientras no decidas, Organizar no toca esas playlists. Para escribir en Spotify hay que **reconectar Spotify** una vez (permiso de editar playlists). Deezer y los archivos exportados solo se pueden leer.
+
+## Duplicados
+Busca archivos repetidos en **toda** tu música: copias idénticas (aunque tengan otro nombre) y la misma canción en otro formato o calidad. Sugiere cuál conservar (cues o playlists en Rekordbox, Mixed In Key, uso en tus playlists, calidad) y tú eliges. Lo apartado va a `_duplicados`, se corrigen las rutas en tus programas de DJ y se puede deshacer en Historial.
+
 ## Reglas (a tu gusto)
 En la barra lateral, **Reglas**:
 - **Exclusiones**: carpetas y patrones (`Samples`, `*stem*`, `*.wav`, `*/Sets grabados/*`) que BrainOrder nunca lee, mueve ni cuenta. También puedes ignorar audios muy cortos (one-shots). El botón **Probar** muestra qué quedaría fuera antes de guardar.
