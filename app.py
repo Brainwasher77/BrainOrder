@@ -31,7 +31,8 @@ import reportes  # noqa: E402
 import deezer  # noqa: E402
 import unificar  # noqa: E402
 import actualizador  # noqa: E402
-from spotify_api import Spotify, SpotifyError  # noqa: E402
+from spotify_api import Spotify, SpotifyError, SpotifyPaused  # noqa: E402
+import spotify_api  # noqa: E402
 
 CACHE_SPOTIFY = config.SUPPORT_DIR / "spotify_cache.json"
 CACHE_ANALYSIS = config.SUPPORT_DIR / "analysis_cache.json"
@@ -169,7 +170,9 @@ class Api:
             out = fn() or {}
             if "analysis" in out and self._tl.rev is not None:
                 out["rev"] = self._tl.rev
-            return {"ok": True, **out}
+            return {"ok": True, "spotify_paused": spotify_api.paused_until(), **out}
+        except SpotifyPaused as e:
+            return {"ok": False, "error": str(e), "spotify_paused": spotify_api.paused_until()}
         except (SpotifyError, rekordbox_sync.RekordboxError, unificar.UnifyError, TraktorError, DeezerError,
                 SeratoError, EngineError) as e:
             return {"ok": False, "error": str(e)}
@@ -249,6 +252,7 @@ class Api:
             "inbox_count": self._inbox_count(),
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
+            "spotify_paused": spotify_api.paused_until(),
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -526,12 +530,17 @@ class Api:
         return {"playlists": pls, "foreign_ok": data.get("foreign_ok") or []}
 
     def _liked_meta(self, sp):
+        """Me gusta no tiene «snapshot» en Spotify: se arma con el total y la fecha del último agregado."""
         try:
-            total = sp.get("/me/tracks", {"limit": 1}).get("total", 0)
+            d = sp.get("/me/tracks", {"limit": 1})
+            total = d.get("total", 0)
+            last = ((d.get("items") or [{}])[0] or {}).get("added_at") or ""
+        except SpotifyPaused:
+            raise
         except SpotifyError:
-            total = None
+            total, last = None, ""
         return {"id": "liked", "name": self._cfg.get("liked_name", "Me gusta"), "liked": True,
-                "snapshot": f"n{total}" if total is not None else None, "total": total}
+                "snapshot": f"n{total}-{last}" if total is not None else None, "total": total}
 
     def _register_foreign(self, sp):
         known = self._cfg.setdefault("foreign", {})
@@ -636,13 +645,16 @@ class Api:
         """Metadatos de las playlists de todas las fuentes activas. -> (metas, avisos, ajenas, spotify_ok)"""
         metas, warnings, known, spotify_ok = [], [], self._cfg.get("foreign", {}), False
         if self._spotify_on():
-            sp = self._sp()
-            own = sp.list_mine()
-            metas += [{**m, "source": "spotify"} for m in own]
-            if self._cfg.get("include_liked"):
-                metas.append({**self._liked_meta(sp), "source": "spotify"})
-            known = self._register_foreign(sp)
-            spotify_ok = True
+            try:
+                sp = self._sp()
+                own = sp.list_mine()
+                metas += [{**m, "source": "spotify"} for m in own]
+                if self._cfg.get("include_liked"):
+                    metas.append({**self._liked_meta(sp), "source": "spotify"})
+                known = self._register_foreign(sp)
+                spotify_ok = True
+            except SpotifyPaused as e:
+                warnings.append(str(e))  # se conserva la lista de Spotify que ya había
         for k, m in fuentes.SOURCES.items():
             if not m.enabled(self._cfg):
                 continue
@@ -651,7 +663,8 @@ class Api:
             except Exception as e:
                 warnings.append(f"{m.LABEL}: {e}")
                 config.log(f"Fuente {k} falló: {e!r}")
-        if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()):
+        if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()) \
+                and not spotify_api.paused_until():
             raise SpotifyError("No hay ninguna fuente activa. Conecta Spotify o activa Deezer / archivos en Conexiones.")
         return metas, warnings, known, spotify_ok
 
@@ -709,16 +722,23 @@ class Api:
             known = self._cfg.get("foreign", {})
             spotify_ok = self._spotify_on()
             if spotify_ok:
+              try:
                 sp = self._sp()
                 self._sub_stage(0, 0.7)
-                playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress)]
+                cached = {p["id"]: {"snapshot": p.get("analyzed_snapshot"), "tracks": p.get("tracks")}
+                          for p in self._load_sp()["playlists"]}
+                playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress, cached)]
                 for p in playlists:
                     p["analyzed_snapshot"] = p.get("snapshot")
                     if p.get("error"):
                         warnings.append(f"Spotify «{p['name']}»: {p.pop('error')} (se mantiene lo último que leí)")
                 if self._cfg.get("include_liked"):
                     lm = {**self._liked_meta(sp), "source": "spotify"}
-                    lm["tracks"] = sp.liked(self._progress)
+                    old = cached.get("liked") or {}
+                    if lm["snapshot"] and old.get("tracks") is not None and old.get("snapshot") == lm["snapshot"]:
+                        lm["tracks"] = old["tracks"]  # Me gusta no cambió: no se vuelve a leer entera
+                    else:
+                        lm["tracks"] = sp.liked(self._progress)
                     lm["analyzed_snapshot"] = lm["snapshot"]
                     playlists.append(lm)
                 known = self._register_foreign(sp)
@@ -734,6 +754,10 @@ class Api:
                     else:
                         f["status"] = "pendiente"  # Spotify no deja leerla: hay que copiarla a una propia
                 config.save(self._cfg)
+              except SpotifyPaused as e:
+                # Spotify en pausa: se sigue con lo último leído (y con Deezer, archivos y tu música)
+                warnings.append(str(e))
+                spotify_ok, playlists, foreign_ok = False, [], None
             # otras fuentes (Deezer, archivos)
             self._sub_stage(0.7, 1.0)
             others = []
@@ -756,7 +780,8 @@ class Api:
                     except Exception as e:
                         warnings.append(f"{m.LABEL} «{meta['name']}»: {e}")
                         others.append({**meta, "tracks": None})
-            if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()):
+            if not spotify_ok and not any(m.enabled(self._cfg) for m in fuentes.SOURCES.values()) \
+                    and not spotify_api.paused_until():
                 raise SpotifyError("No hay ninguna fuente activa. Conecta Spotify o activa Deezer / archivos en Conexiones.")
 
             def put(data):
