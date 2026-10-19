@@ -1320,8 +1320,8 @@ class Api:
                 raise unificar.UnifyError("Esa carpeta ya no está dentro de tus carpetas de música.")
             files = FC.audio_files(p)
             entry = {"name": p.name, "path": str(p)}
-            out = self._import_playlist(p.name, files, opts, entry, FC.pid_for(p))
-            CN.mark(p, known=True)
+            out = self._import_playlist(p.name, files, opts, entry, FC.pid_for(p), src_folder=p)
+            CN.mark(p, known=True, imported=True)  # ya no aparece en «Playlists nuevas»
             return out
         return self._task(run, f"folder:{path}", f"Importar «{Path(path).name}»")
 
@@ -1344,11 +1344,67 @@ class Api:
             return out
         return self._task(run, f"djimport:{program}:{ref}", "Importar playlist")
 
-    def _import_playlist(self, name, files, opts, entry, local_pid):
-        """Común a carpetas y programas de DJ. opts: spotify (crearla allí), csv (archivo para otras plataformas)."""
+    def _move_to_root(self, name, files, src_folder=None):
+        """Pasa los archivos de la playlist importada a su carpeta dentro de tu carpeta de playlists
+        (<carpeta de playlists>/<nombre>). Corrige rutas en Rekordbox y tus otros programas, queda en
+        Historial y, si era una carpeta, se quita la carpeta vieja si quedó vacía. -> (archivos, resumen)"""
+        import carpetas_nuevas as CN
+        dest = biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)
+        ops = [(f, str(dest)) for f in files if os.path.exists(f) and CN._key(Path(f).parent) != CN._key(dest)]
+        info = {"dest": str(dest), "moved": 0, "skipped": [], "already": len(files) - len(ops)}
+        if not ops:
+            dest.mkdir(parents=True, exist_ok=True)
+            if src_folder is not None and CN._key(src_folder) != CN._key(dest):
+                self._remove_if_empty(Path(src_folder))
+            return files, info
+        self._dj_precheck()
+        dest.mkdir(parents=True, exist_ok=True)
+        if not self._files.acquire(timeout=600):
+            raise unificar.UnifyError("Hay otra tarea moviendo archivos. Vuelve a intentar en un momento.")
+        try:
+            res = organizador.relocate(ops, self._cfg, self._progress)
+            changes = res.get("changes") or {}
+            if changes:
+                self._dj_fix(changes)
+                info["op_id"] = historial.record("relocate", f"Importar «{name}»", list(changes.items()))
+        finally:
+            self._files.release()
+        info["moved"], info["skipped"] = res["moved"], res["skipped"]
+        info["rekordbox"] = res.get("rekordbox")
+        if src_folder is not None and CN._key(src_folder) != CN._key(dest):
+            self._remove_if_empty(Path(src_folder))
+        new_files = [changes.get(f, f) for f in files]
+        return new_files, info
+
+    @staticmethod
+    def _remove_if_empty(folder):
+        """Borra la carpeta (y subcarpetas) solo si quedó sin nada más que basura del sistema."""
+        junk = {".DS_Store", "Thumbs.db", "desktop.ini"}
+        for d in sorted((x for x in folder.rglob("*") if x.is_dir()), key=lambda x: -len(x.parts)) + [folder]:
+            try:
+                names = os.listdir(d)
+                if all(n in junk for n in names):
+                    for n in names:
+                        (d / n).unlink()
+                    d.rmdir()
+            except OSError:
+                pass
+
+    def _import_playlist(self, name, files, opts, entry, local_pid, src_folder=None):
+        """Común a carpetas y programas de DJ. opts: spotify (crearla allí), csv (archivo para otras plataformas),
+        move (pasar sus archivos a tu carpeta de playlists)."""
         from fuentes import carpetas as FC
         res = {"name": name, "files": len(files)}
-        self._set_stage(0, 80)
+        if opts.get("move"):
+            self._set_stage(0, 30)
+            self._progress(f"Pasando «{name}» a tu carpeta de playlists…", 0)
+            files, res["move"] = self._move_to_root(name, files, src_folder)
+            if entry.get("path") and src_folder is not None:
+                entry = {**entry, "path": res["move"]["dest"]}  # la playlist ahora vive en tu carpeta de playlists
+                local_pid = FC.pid_for(res["move"]["dest"])
+            self._set_stage(30, 80)
+        else:
+            self._set_stage(0, 80)
         if opts.get("spotify"):
             sp = self._sp()
             if not sp.connected:

@@ -77,7 +77,7 @@ Al importar eliges la plataforma:
 - **Deezer, Apple Music, Tidal, SoundCloud u otra**: esas plataformas no dejan que una app personal cree playlists; BrainOrder deja un `… (para importar).csv` en `_Informes` para subirlo en TuneMyMusic o Soundiiz.
 - **Ninguna**: solo en BrainOrder. Una carpeta importada así se llena sola con lo que pongas en ella; una playlist de un programa de DJ se relee de ese programa.
 
-Opcionalmente la pasa enseguida a tus otros programas de DJ. Una playlist que nació en un programa no se vuelve a copiar a ese mismo programa. «Ahora no» vuelve a preguntar la próxima vez que abras BrainOrder; «No preguntar por esta» no. Lo que ya existía cuando instalaste esta función no genera preguntas, pero aparece en **Playlists nuevas** para importarlo cuando quieras.
+También te pregunta si **pasa sus archivos a tu carpeta de playlists** (`<carpeta de playlists>/<nombre>`): se mueven con rutas corregidas en Rekordbox y tus otros programas, queda en Historial para deshacer y, si era una carpeta, la vieja se elimina si queda vacía. Lo importado sale de «Playlists nuevas». Opcionalmente la pasa enseguida a tus otros programas de DJ. Una playlist que nació en un programa no se vuelve a copiar a ese mismo programa. «Ahora no» vuelve a preguntar la próxima vez que abras BrainOrder; «No preguntar por esta» no. Lo que ya existía cuando instalaste esta función no genera preguntas, pero aparece en **Playlists nuevas** para importarlo cuando quieras.
 
 ## Conexiones: fuentes y programas de DJ
 En la barra lateral, **Conexiones**:
