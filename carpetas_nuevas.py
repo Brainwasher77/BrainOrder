@@ -27,7 +27,7 @@ def _key(p):
     return os.path.normcase(os.path.normpath(str(p)))
 
 
-FIELDS = ("known", "dismissed", "dj_known", "dj_dismissed", "dj_programs", "roots")
+FIELDS = ("known", "dismissed", "dj_known", "dj_dismissed", "dj_programs", "roots", "imported")
 
 
 def load():
@@ -74,6 +74,7 @@ def unmatched(cfg, analysis):
     ex = reglas.Excluder(reglas.get(cfg))
     used = {_key(p.get("folder")) for p in analysis or [] if p.get("folder")}
     used |= {_key(e.get("path")) for e in cfg.get("folder_playlists") or [] if e.get("path")}
+    used |= load()["imported"]  # ya importadas (por ejemplo a Spotify, aunque la carpeta siga existiendo)
     roots = watched_roots(cfg)
     rootkeys = {_key(r) for r in roots} | {_key(cfg.get("inbox") or "")}
     out = []
@@ -123,8 +124,10 @@ def pending(cfg, analysis, with_counts=True):
     return out
 
 
-def mark(path, known=False, dismissed=False):
+def mark(path, known=False, dismissed=False, imported=False):
     st = load()
+    if imported:
+        st["imported"].add(_key(path))
     if known:
         st["known"].add(_key(path))
     if dismissed:
@@ -169,4 +172,5 @@ def dj_mark(program, ref, dismissed=False):
 def undismiss(path):
     st = load()
     st["dismissed"].discard(_key(path))
+    st["imported"].discard(_key(path))
     save(st)

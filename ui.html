@@ -410,10 +410,21 @@ async function fdAsk(f, rest){
     ${opts.map(([v,t,d,dis])=>`<label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:${dis?'not-allowed':'pointer'};opacity:${dis?.5:1}">
       <input type="radio" name="fdp" value="${v}" ${v===def?'checked':''} ${dis?'disabled':''} style="margin-top:3px">
       <span><b>${t}</b><br><span class="art">${esc(d)}${v==='spotify'&&!n&&!dj?' Se crea vacía: lo que agregues después a la carpeta no pasa solo a Spotify.':''}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}
+    ${fdCanMove(f) ? `<div style="font-weight:650;margin:12px 0 6px">¿Paso sus archivos a tu carpeta de playlists?</div>
+    <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/${esc(f.name)}</code></b><br>
+      <span class="art">Quedan junto a tus otras playlists. ${dj?'Si alguna canción también está en otra playlist, se mueve igual (Reorganizar la puede devolver). ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
+    <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="fdm" value="0" style="margin-top:3px"><span><b>No, dejarlos donde están</b></span></label>` : ''}
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="fdDj" ${n?'checked':''}> Pasarla ya a ${dj?'mis otros programas de DJ':'mis programas de DJ (Rekordbox, Traktor…)'}</label>
     ${rest && rest.length ? `<div class="art" style="margin-top:8px">Hay ${rest.length} más por decidir: las ves en «Playlists nuevas».</div>` : ''}
     <div class="actions"><button class="ghost" onclick="fdNever()">No preguntar por esta</button>
       <button onclick="closeModal()">Ahora no</button><button class="primary" onclick="fdImport()">Importar</button></div>`);
+}
+function fdCanMove(f){
+  if(f.kind === 'dj') return !!(f.count ?? 0);
+  const r = (S.settings.dest_root||'').replace(/[\\/]+$/,'');
+  return dirOf(f.path) !== r;                    // ya está en tu carpeta de playlists
 }
 async function fdNever(){
   const f = FD.cur; closeModal();
@@ -427,11 +438,15 @@ async function fdImport(){
   const dj = $('fdDj') && $('fdDj').checked;
   closeModal();
   toast(plat==='spotify' ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
-  const o = {spotify: plat==='spotify', csv: plat==='otra'};
+  const mv = document.querySelector('input[name=fdm]:checked');
+  const o = {spotify: plat==='spotify', csv: plat==='otra', move: !!(mv && mv.value==='1')};
   const r = f.kind === 'dj' ? await api().dj_import(f.program, f.ref, o) : await api().folder_import(f.path, o);
   if(!r.ok){ taskErr(r); fdLoad(); return; }
   await applyAnalysis(r); fdLoad();
   const x = r.result; let msg = `✅ «${esc(x.name)}» ahora es una playlist (${x.files} ${x.files===1?'canción':'canciones'}).`;
+  if(x.move){ msg += `<br>📁 ${x.move.moved} archivo${x.move.moved!==1?'s':''} pasado${x.move.moved!==1?'s':''} a <code>${esc(short(x.move.dest))}</code>` + (x.move.already?` (${x.move.already} ya estaban ahí)`:'') + '.';
+    if(x.move.skipped && x.move.skipped.length) msg += `<br><span style="color:var(--org)">${x.move.skipped.length} no se movieron: ${x.move.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
+    if(x.move.op_id) msg += undoLink({op_id: x.move.op_id}); loadHist(); }
   if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones agregadas.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
   if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
   if(r.index !== null && r.index !== undefined){ S.view = 'pl:' + r.index; }
