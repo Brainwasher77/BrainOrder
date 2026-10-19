@@ -572,6 +572,7 @@ class Api:
         loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
                   for p in loaded] + list(sp_data.get("foreign_ok", []))
         result = biblioteca.analyze(loaded, self._cfg, progress)
+        self._prune_folder_members(result)
         deezer.add_links(result, offline=True)  # links ya conocidos
         by_id = {a["id"]: a for a in result}
         analysis = []
@@ -595,6 +596,63 @@ class Api:
             analysis.append(a)
         analysis += [a for a in result if a["id"] not in meta]  # playlists ajenas integradas
         return analysis
+
+    def _prune_folder_members(self, result):
+        """Playlists de carpeta: una canción cuyo archivo borraste sigue en la playlist mientras exista otra
+        copia en tu música. Si ya no hay ninguna copia, sale de la playlist (la borraste de verdad)."""
+        from fuentes import carpetas as FC
+        roots = [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or [])
+        if not all(r and os.path.isdir(r) for r in roots):
+            return  # un disco desconectado: no se decide nada
+        by_pid = {FC.entry_pid(e): e for e in FC.entries(self._cfg) if e.get("path")}
+        for a in result:
+            e = by_pid.get(a["id"])
+            if not e or not os.path.isdir(e["path"]):
+                continue
+            gone, here = {}, set()
+            for m in FC.members(a["id"]):
+                if os.path.exists(m):
+                    here.add(FC.track_id(m))
+                else:
+                    gone.setdefault(FC.track_id(m), []).append(m)
+            for r in a.get("tracks") or []:
+                if r.get("id") in gone and r["id"] not in here:
+                    r["kept"] = True  # ya no está en la carpeta: se usa la otra copia (como en Rekordbox)
+            drop = {r["id"] for r in a.get("tracks") or [] if r.get("status") == "missing" and r.get("kept")}
+            if drop:
+                a["tracks"] = [r for r in a["tracks"] if r.get("id") not in drop]
+                for pos, r in enumerate(a["tracks"]):
+                    r["pos"] = pos
+                FC.forget(a["id"], [m for t in drop for m in gone[t]])
+
+                def put(data, pid=a["id"], drop=drop):
+                    cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                    if cur is not None and cur.get("tracks") is not None:
+                        cur["tracks"] = [t for t in cur["tracks"] if t.get("id") not in drop]
+                        cur["total"] = len(cur["tracks"])
+                self._update_sp(put)
+
+    def folder_forget(self, pid, track_id):
+        """Quitar de una playlist de carpeta una canción cuyo archivo ya no está en esa carpeta."""
+        def run():
+            from fuentes import carpetas as FC
+            paths = [m for m in FC.members(pid) if not os.path.exists(m) and FC.track_id(m) == track_id]
+            if not paths:
+                raise unificar.UnifyError("Esa canción está en la carpeta de la playlist: para quitarla, muévela a otra carpeta.")
+            FC.forget(pid, paths)
+            e = next((x for x in FC.entries(self._cfg) if FC.entry_pid(x) == pid), None)
+            if e:
+                meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == pid), None)
+                if meta:
+                    tracks = FC.tracks(self._cfg, meta)
+
+                    def put(data):
+                        cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                        if cur is not None:
+                            cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
+                    self._update_sp(put)
+            return {"analysis": self._build_analysis(light=True)}
+        return self._task(run, f"forget:{pid}", "Quitar de la playlist")
 
     def _attach_reports(self, analysis):
         for pl in analysis:
@@ -1398,7 +1456,8 @@ class Api:
         for n, f in enumerate(files, 1):
             if progress:
                 progress(f"Buscando en Spotify {n}/{len(files)}: {Path(f).name}", n / max(1, len(files)))
-            r = self._spotify_uri_for(f, analysis, sp, cache) if os.path.exists(f) else None
+            # también las que borraste de la carpeta por estar repetidas: la playlist las sigue teniendo
+            r = self._spotify_uri_for(f, analysis, sp, cache)
             if r and r["uri"] not in uris:
                 uris.append(r["uri"])
             elif not r:
@@ -1441,7 +1500,7 @@ class Api:
                     if job["kind"] == "import":
                         entry = job["entry"]
                         keyf = (lambda e: (e.get("path"), e.get("program"), str(e.get("ref"))))
-                        files = FC._paths(self._cfg, entry, {})
+                        files = FC.member_paths(self._cfg, entry)
                         if files is None or not any(keyf(e) == keyf(entry) for e in self._cfg.get("folder_playlists") or []):
                             Q.remove(job["id"])  # la quitaste de BrainOrder o ya no existe: nada que hacer
                             continue

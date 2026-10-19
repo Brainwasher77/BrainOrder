@@ -5,14 +5,79 @@ BrainOrder las trata como cualquier otra playlist (estadísticas, faltantes, org
 - Carpeta: sus canciones son los audios de la carpeta, en orden alfabético.
 - Programa de DJ: sus canciones son las de esa playlist en el programa, en su orden (se relee en cada análisis).
 Ajuste: cfg["folder_playlists"] = [{"name", "path"} | {"name", "program", "ref"}].
+
+Carpetas: la playlist RECUERDA sus canciones (SUPPORT/miembros.json). Si borras o mueves un archivo de la
+carpeta (por ejemplo porque ya lo tienes en otra playlist), la canción sigue en la playlist usando la otra
+copia, igual que en Rekordbox. Solo sale si ya no existe en ninguna parte de tu música o si la quitas tú
+(clic derecho → Quitar de esta playlist).
 """
 import hashlib
+import json
 import os
+import threading
 from pathlib import Path
 
 KEY = "carpetas"
 LABEL = "Importadas"
 PREFIX = "dir:"
+
+
+_MLOCK = threading.Lock()
+
+
+def _mfile():
+    from config import SUPPORT_DIR
+    return SUPPORT_DIR / "miembros.json"
+
+
+def _mload():
+    try:
+        d = json.loads(_mfile().read_text("utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _msave(d):
+    from config import write_atomic
+    _mfile().parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(_mfile(), json.dumps(d, ensure_ascii=False))
+
+
+def members(pid):
+    return list(_mload().get(pid) or [])
+
+
+def remember(pid, files):
+    """Suma a la memoria de la playlist los archivos que tiene ahora."""
+    with _MLOCK:
+        d = _mload()
+        cur = set(d.get(pid) or [])
+        new = cur | set(files)
+        if new != cur:
+            d[pid] = sorted(new)
+            _msave(d)
+
+
+def forget(pid, paths):
+    with _MLOCK:
+        d = _mload()
+        gone = set(paths)
+        d[pid] = [m for m in d.get(pid) or [] if m not in gone]
+        _msave(d)
+
+
+def member_paths(cfg, e, memo=None):
+    """Canciones de la playlist importada: lo que hay en la carpeta + lo que tenía y borraste o moviste
+    (esas se siguen usando desde la otra copia). Para programas de DJ, lo que diga el programa."""
+    files = _paths(cfg, e, memo if memo is not None else {})
+    if files is None or not e.get("path"):
+        return files
+    pid = entry_pid(e)
+    remember(pid, files)
+    have = set(files)
+    gone = [m for m in members(pid) if m not in have and not os.path.exists(m)]
+    return sorted(files + gone, key=lambda p: p.lower())
 
 
 def entries(cfg):
@@ -87,6 +152,14 @@ def list_playlists(cfg, progress=None):
     return out
 
 
+def track_id(path):
+    """Id de la canción del archivo (por artista + título del nombre), sin leer el audio."""
+    import biblioteca
+    artist, title = biblioteca.parse_file(Path(path))
+    key = (biblioteca.norm(artist) + "|" + biblioteca.norm(title)).encode("utf-8")
+    return PREFIX + hashlib.sha1(key).hexdigest()[:16]
+
+
 def track_for(path):
     """Archivo -> canción con el formato de las demás fuentes."""
     import biblioteca
@@ -103,7 +176,7 @@ def tracks(cfg, meta, progress=None):
     e = next((x for x in entries(cfg) if entry_pid(x) == meta["id"]), None)
     if not e:
         return []
-    files = _paths(cfg, e, {}) or []
+    files = member_paths(cfg, e) or []
     out, seen = [], set()
     for n, f in enumerate(files, 1):
         if progress and n % 50 == 0:

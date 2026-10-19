@@ -605,8 +605,16 @@ function songMenu(r, pl){
     if(r.deezer && r.deezer.url) it.push([r.deezer.found ? '🎵 Abrir en Deezer' : '🎵 Buscar en Deezer', () => openUrl(r.deezer.url)]);
     if(r.dest_dir) it.push([`📁 Abrir la carpeta donde irá «${r.home_name || base(r.dest_dir)}»`, () => reveal(r.dest_dir)]);
   }
+  // playlist de carpeta: la canción ya no está en su carpeta (la borraste por repetida) pero la playlist la recuerda
+  if(pl && r.kept)
+    it.push(['➖ Quitar de esta playlist', () => ctxForget(pl, r), false, 'La playlist la recuerda aunque borraste el archivo de su carpeta (usa la otra copia). Esto la quita de la playlist; no toca ningún archivo.']);
   it.push(['📋 Copiar «' + label + '»', async () => { const x = await api().copy_text(label); toast(x.ok ? 'Copiado.' : esc(x.error), !x.ok); }]);
   return it;
+}
+async function ctxForget(pl, r){
+  const res = await api().folder_forget(pl.id, r.id);
+  if(!res.ok){ taskErr(res); return; }
+  await applyAnalysis(res); render(); toast(`Listo: «${esc(r.name)}» ya no está en «${esc(pl.name)}» (no se tocó ningún archivo).`);
 }
 async function ctxMove(pl, r, dest){
   toast(`Moviendo «${esc(r.name)}» a <code>${esc(base(dest))}</code>…`);
