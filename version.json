@@ -1,5 +1,5 @@
 {
-  "version": "2.10.0",
-  "build": 28,
-  "notes": "Importar a Spotify aunque Spotify esté en pausa: la playlist queda lista en BrainOrder y tus programas de DJ, y BrainOrder la crea en Spotify sola en cuanto Spotify lo permita (también las canciones nuevas de carpetas vinculadas). Los pendientes se ven en «Playlists nuevas»."
+  "version": "2.10.1",
+  "build": 29,
+  "notes": "Si borras un archivo repetido de una carpeta-playlist, la canción sigue en la playlist usando la otra copia (como en Rekordbox) y Spotify no se toca. Solo sale si borras la única copia o con clic derecho → Quitar de esta playlist."
 }
