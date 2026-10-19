@@ -376,7 +376,7 @@ const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2
 
 // ---------- carpetas nuevas en tu carpeta de playlists -> ¿importarlas como playlist? ----------
 let FD = {data:null};
-async function fdLoad(){ try{ const r = await api().folders(); if(r.ok){ FD.data = r; if(S.view==='folders') render(); else renderCore(); } }catch(e){} }
+async function fdLoad(){ try{ const r = await api().folders(); if(r.ok){ FD.data = r; S.spQueue = (r.queue||[]).length; if(S.view==='folders') render(); else renderCore(); } }catch(e){} }
 window.onNewFolders = list => {
   fdLoad();
   if($('mbg').classList.contains('show')){  // ya hay una ventana abierta: solo avisar
@@ -386,9 +386,13 @@ window.onNewFolders = list => {
   fdAsk(list[0], list.slice(1));
 };
 function fdPlatformOptions(sp){
-  const why = !sp.connected ? 'conecta Spotify primero' : sp.paused ? 'Spotify está en pausa por exceso de consultas' : !sp.can_write ? 'reconecta Spotify para dar permiso de crear playlists' : '';
+  const why = !sp.connected ? 'conecta Spotify primero' : !sp.can_write ? 'reconecta Spotify para dar permiso de crear playlists' : '';
+  const pausa = sp.paused && sp.paused*1000 > Date.now();
+  const hora = pausa ? new Date(sp.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}) : '';
   return [
-    ['spotify', '🟢 Spotify', 'Se crea en tu cuenta y busco cada canción (por ISRC o artista + título). Te digo cuáles no encontré.', why],
+    ['spotify', '🟢 Spotify', pausa
+      ? `⏳ Spotify está en pausa por exceso de consultas (hasta las ${hora}). La importo ya en BrainOrder y la paso a Spotify sola en cuanto se pueda: no tienes que hacer nada más.`
+      : 'Se crea en tu cuenta y busco cada canción (por ISRC o artista + título). Te digo cuáles no encontré.', why],
     ['otra', '🎵 Deezer, Apple Music, Tidal, SoundCloud u otra', 'Esas plataformas no dejan que una app personal cree playlists: te dejo un archivo listo para importarla con TuneMyMusic o Soundiiz (2 clics). En BrainOrder queda como playlist.', ''],
     ['ninguna', '💻 Ninguna', 'Solo en BrainOrder y tus programas de DJ.', ''],
   ];
@@ -444,6 +448,7 @@ async function lkDo(path, add){
   const r = await api().link_add(path, add);
   if(!r.ok){ taskErr(r); return; }
   if(r.analysis) { await applyAnalysis(r); render(); }
+  if(r.queued){ S.spQueue = (S.spQueue||0) + 1; renderCore(); toast(`⏳ Spotify está en pausa: las ${r.queued.count} canción(es) nuevas de «${esc(r.name)}» se agregan solas a la playlist en cuanto Spotify lo permita.`); return; }
   if(add) toast(`✅ ${r.added} canción(es) agregadas a «${esc(r.name)}» en Spotify.` + (r.unresolved.length?`<br><span style="color:var(--org)">No encontré ${r.unresolved.length}: ${r.unresolved.slice(0,4).map(esc).join(', ')}</span>`:''));
 }
 async function fdNever(){
@@ -457,7 +462,7 @@ async function fdImport(){
   const plat = (document.querySelector('input[name=fdp]:checked')||{}).value || 'ninguna';
   const dj = $('fdDj') && $('fdDj').checked;
   closeModal();
-  toast(plat==='spotify' ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
+  toast(plat==='spotify' && !(S.spPause && S.spPause*1000 > Date.now()) ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
   const mv = document.querySelector('input[name=fdm]:checked');
   const o = {spotify: plat==='spotify', csv: plat==='otra', move: !!(mv && mv.value==='1')};
   const r = f.kind === 'dj' ? await api().dj_import(f.program, f.ref, o) : await api().folder_import(f.path, o);
@@ -467,6 +472,7 @@ async function fdImport(){
   if(x.move){ msg += `<br>📁 ${x.move.moved} archivo${x.move.moved!==1?'s':''} pasado${x.move.moved!==1?'s':''} a <code>${esc(short(x.move.dest))}</code>` + (x.move.already?` (${x.move.already} ya estaban ahí)`:'') + '.';
     if(x.move.skipped && x.move.skipped.length) msg += `<br><span style="color:var(--org)">${x.move.skipped.length} no se movieron: ${x.move.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
     if(x.move.op_id) msg += undoLink({op_id: x.move.op_id}); loadHist(); }
+  if(x.queued) msg += `<br>⏳ Spotify está en pausa: la paso a Spotify sola en cuanto lo permita${x.queued.until?` (desde las ${new Date(x.queued.until*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})})`:''}. Mientras tanto ya funciona aquí y en tus programas de DJ.`;
   if(x.spotify_reused) msg += `<br>Ya tenías «${esc(x.name)}» en Spotify: usé esa misma playlist (no creé otra).`;
   if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones${x.spotify_reused?' (solo se agregaron las que faltaban)':' agregadas'}.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
   if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
@@ -489,6 +495,28 @@ async function fdHide(kind, i){
   if(kind==='dj') await api().dj_dismiss(f.program, f.ref, true); else await api().folder_dismiss(f.path, true);
   fdLoad();
 }
+// ---------- cola de Spotify: lo que se hace solo cuando termina la pausa ----------
+async function spqRun(){
+  const r = await api().spotify_queue_run();
+  if(!r.ok){ taskErr(r); fdLoad(); return; }
+  if(r.idle) toast('Spotify todavía no lo permite: se hace solo en cuanto se pueda.');
+  fdLoad();
+}
+async function spqCancel(id){
+  await api().spotify_queue_cancel(id); fdLoad(); S.spQueue = Math.max(0,(S.spQueue||1)-1); renderCore();
+  toast('Listo: esa ya no pasa a Spotify (en BrainOrder sigue igual).');
+}
+window.onSpotifyQueue = async (x) => {
+  S.spQueue = x.left;
+  try{ const st = await api().get_state(S.rev ?? null); S.spPause = st.spotify_paused || null;
+    if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev); }catch(e){}
+  fdLoad(); render();
+  const ok = (x.done||[]).map(d => d.kind==='import'
+      ? `✅ «${esc(d.name)}» ya está en Spotify (${d.found} canciones${d.reused?', en tu playlist que ya existía':''})${d.unresolved?` · no encontré ${d.unresolved}`:''}.`
+      : `✅ ${d.found} canción(es) agregadas a «${esc(d.name)}» en Spotify.`);
+  const bad = (x.failed||[]).map(f => `<span style="color:var(--org)">No pude pasar «${esc(f.name)}» a Spotify: ${esc(f.error)}</span>`);
+  if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
+};
 function foldersView(){
   const d = FD.data;
   if(!d) return `<div class="empty"><h3>Revisando…</h3></div>`;
@@ -503,10 +531,16 @@ function foldersView(){
       <td class="mono" style="color:var(--mute)">${f.count ? cnt(f.count) : 'vacía'}</td>
       <td style="text-align:right;white-space:nowrap"><button class="primary" onclick="fdOpen('folder',${i})">Importar…</button>
       <button class="ghost" onclick="fdHide('folder',${i})" title="Que no aparezca más aquí">Ocultar</button></td></tr>`).join('');
-  const imp = d.imported || [];
+  const imp = d.imported || [], q = d.queue || [];
+  const qp = d.spotify && d.spotify.paused && d.spotify.paused*1000 > Date.now();
+  const qBox = q.length ? `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="flex:1">⏳ Pendientes para Spotify (${q.length})</b>
+        ${qp ? `<span class="art">Spotify en pausa hasta las ${new Date(d.spotify.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}: se hacen solas después.</span>` : `<button onclick="spqRun()">Pasarlas ya</button>`}</div>
+      <table style="margin-top:8px">${q.map(j=>`<tr><td><b>${esc(j.name)}</b><div class="art">${j.kind==='import'?'Crear la playlist en Spotify':`Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+        <td style="text-align:right"><button class="ghost" onclick="spqCancel(${jsq(j.id)})" title="No pasarla a Spotify (en BrainOrder se queda como está)">Cancelar</button></td></tr>`).join('')}</table></div>` : '';
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>
-    ${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
+    ${qBox}${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
     ${imp.length ? `<h3 style="margin-top:26px">Importadas sin plataforma</h3>
       <table>${imp.map((e,i)=>`<tr><td><b>${esc(e.name)}</b><div class="art ${e.path?'path':''}" ${e.path?`onclick="reveal(${jsq(e.path)})"`:''}>${e.path?'📁 '+esc(short(e.path)):'🎛️ '+esc(e.label)}</div></td>
         <td style="text-align:right"><button class="ghost" onclick="fdUnimport(${i})">Dejar de usarla como playlist</button></td></tr>`).join('')}</table>` : ''}`;
@@ -633,8 +667,10 @@ function render(){ renderCore(); paintTasks(); }
 function renderCore(){
   $('dot').classList.toggle('on', S.connected);
   const pausa = S.spPause && S.spPause*1000 > Date.now();
-  $('connTxt').textContent = pausa ? `Spotify en pausa hasta las ${new Date(S.spPause*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}` : (S.connected ? 'Spotify conectado' : 'Sin conectar');
-  $('connTxt').title = pausa ? 'Spotify limitó a tu app por exceso de consultas. Mientras tanto se usa lo último que se leyó; Deezer, archivos y tu música siguen funcionando.' : '';
+  $('connTxt').textContent = (pausa ? `Spotify en pausa hasta las ${new Date(S.spPause*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}` : (S.connected ? 'Spotify conectado' : 'Sin conectar'))
+    + (S.spQueue ? ` · ${S.spQueue} pendiente${S.spQueue===1?'':'s'}` : '');
+  $('connTxt').title = (pausa ? 'Spotify limitó a tu app por exceso de consultas. Mientras tanto se usa lo último que se leyó; Deezer, archivos y tu música siguen funcionando.' : '')
+    + (S.spQueue ? (pausa?' ':'') + `Hay ${S.spQueue} cosa(s) esperando para pasar a Spotify (las ves en «Playlists nuevas»); se hacen solas en cuanto Spotify lo permita.` : '');
   $('dot').style.background = pausa ? 'var(--org)' : '';
   $('btnConn').textContent = S.connected ? 'Desconectar' : 'Conectar Spotify';
   const a = S.analysis;
@@ -1722,7 +1758,7 @@ async function analyzePlaylist(pid){
 // el vigilante avisa cuando cambia la carpeta de descargas
 window.onInboxChange = async (info) => {
   try{
-    const st = await api().get_state(S.rev ?? null); S.spPause = st.spotify_paused || null;
+    const st = await api().get_state(S.rev ?? null); S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0;
     if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
     S.inboxCount = (info && info.count !== undefined) ? info.count : (st.inbox_count || 0);
     render();
@@ -1884,7 +1920,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  PREF = {...PREF, ...(st.ui||{})}; S.spPause = st.spotify_paused || null; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  PREF = {...PREF, ...(st.ui||{})}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
   try{ api().start_watch(); }catch(e){}

@@ -1,5 +1,5 @@
 {
-  "version": "2.9.1",
-  "build": 27,
-  "notes": "La carpeta que crea BrainOrder al importar ya no aparece como «nueva». En Spotify nunca se duplica una playlist: si ya existe con ese nombre se usa esa, y si agregas canciones a la carpeta te pregunta si van a esa misma playlist."
+  "version": "2.10.0",
+  "build": 28,
+  "notes": "Importar a Spotify aunque Spotify esté en pausa: la playlist queda lista en BrainOrder y tus programas de DJ, y BrainOrder la crea en Spotify sola en cuanto Spotify lo permita (también las canciones nuevas de carpetas vinculadas). Los pendientes se ven en «Playlists nuevas»."
 }

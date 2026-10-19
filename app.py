@@ -259,6 +259,7 @@ class Api:
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
             "spotify_paused": spotify_api.paused_until(),
+            "spotify_queue": len(__import__("cola_spotify").load()),
             "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
@@ -1183,6 +1184,12 @@ class Api:
                     self._check_linked_folders()
                 except Exception as e:
                     config.log(f"vigilante de carpetas nuevas: {e!r}")
+            if tick % 15 == 3:  # cada ~60 s: ¿terminó la pausa de Spotify? hacer lo que quedó pendiente
+                try:
+                    if not self._running:
+                        self.spotify_queue_run(auto=True)
+                except Exception as e:
+                    config.log(f"cola de Spotify: {e!r}")
             if tick % 6 == 1:  # cada ~24 s: ¿creaste una playlist en tu programa de DJ?
                 try:
                     self._check_new_dj()
@@ -1293,7 +1300,9 @@ class Api:
                            "count": len(v["paths"]), "new": True})
         sp = self._sp()
         imported = [{**e, "label": DJ.LABELS.get(e.get("program"), "")} for e in self._cfg.get("folder_playlists") or []]
+        import cola_spotify
         return {"ok": True, "folders": [{**x, "kind": "folder"} for x in pend], "dj": dj, "imported": imported,
+                "queue": cola_spotify.summary(),
                 "spotify": {"connected": sp.connected, "can_write": sp.can_write,
                             "paused": spotify_api.paused_until()}}
 
@@ -1382,6 +1391,124 @@ class Api:
         new_files = [changes.get(f, f) for f in files]
         return new_files, info
 
+    def _spotify_fill(self, sp, name, files, progress=None):
+        """Busca las canciones en Spotify y crea la playlist, o usa la que ya tengas con ese nombre
+        (solo agrega las que falten). -> (pid, url, uris, no_encontradas, reutilizada)"""
+        analysis, cache, uris, unresolved = self._analysis() or [], {}, [], []
+        for n, f in enumerate(files, 1):
+            if progress:
+                progress(f"Buscando en Spotify {n}/{len(files)}: {Path(f).name}", n / max(1, len(files)))
+            r = self._spotify_uri_for(f, analysis, sp, cache) if os.path.exists(f) else None
+            if r and r["uri"] not in uris:
+                uris.append(r["uri"])
+            elif not r:
+                unresolved.append(Path(f).name)
+        if files and not uris:
+            raise SpotifyError(f"No encontré en Spotify ninguna canción de «{name}». Impórtala solo en BrainOrder.")
+        existing = self._spotify_playlist_named(sp, name)
+        if existing:  # ya hay una playlist tuya con ese nombre: se usa esa (nunca se crea otra igual)
+            pid = existing["id"]
+            have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": pid, "name": name, "source": "spotify"})}
+            add = [u for u in uris if u not in have]
+            if progress:
+                progress(f"Agregando {len(add)} canciones a tu playlist «{name}» de Spotify…", 1)
+            if add:
+                sp.add_items(pid, add)
+            return pid, existing.get("url"), uris, unresolved, True
+        if progress:
+            progress("Creando la playlist en Spotify…", 1)
+        created = sp.create_playlist(name, description="Importada con BrainOrder")
+        if uris:
+            sp.add_items(created["id"], uris)
+        return created["id"], (created.get("external_urls") or {}).get("spotify"), uris, unresolved, False
+
+    # ---------- cola de Spotify (lo que quedó pendiente por la pausa) ----------
+    def _process_spotify_queue(self, force=False):
+        """Hace lo pendiente en Spotify si ya se puede. Se llama sola cada minuto."""
+        import cola_spotify as Q
+        from fuentes import carpetas as FC
+        jobs = Q.load()
+        if not jobs or spotify_api.paused_until() or getattr(self, "_q_busy", False):
+            return None
+        sp = self._sp()
+        if not (sp.connected and sp.can_write):
+            return None
+        self._q_busy = True
+        done, failed = [], []
+        try:
+            for job in jobs:
+                try:
+                    if job["kind"] == "import":
+                        entry = job["entry"]
+                        keyf = (lambda e: (e.get("path"), e.get("program"), str(e.get("ref"))))
+                        files = FC._paths(self._cfg, entry, {})
+                        if files is None or not any(keyf(e) == keyf(entry) for e in self._cfg.get("folder_playlists") or []):
+                            Q.remove(job["id"])  # la quitaste de BrainOrder o ya no existe: nada que hacer
+                            continue
+                        pid, url, uris, unresolved, reused = self._spotify_fill(sp, job["name"], files)
+                        tracks = self._read_tracks({"id": pid, "name": job["name"], "source": "spotify"})
+                        pl_entry = {"id": pid, "name": job["name"], "source": "spotify", "snapshot": None,
+                                    "analyzed_snapshot": None, "total": len(tracks), "tracks": tracks, "url": url}
+                        # deja de ser «importada sin plataforma»: ahora es la playlist de Spotify
+                        self._cfg["folder_playlists"] = [e for e in self._cfg.get("folder_playlists") or []
+                                                         if keyf(e) != keyf(entry)]
+                        if job.get("origin"):
+                            pl_entry["origin"] = job["origin"]
+                            self._cfg.setdefault("playlist_origin", {})[pid] = job["origin"]
+                        config.save(self._cfg)
+                        if entry.get("path") and os.path.isdir(entry["path"]):
+                            self._link_folder(entry["path"], pid, job["name"], FC.audio_files(entry["path"]))
+
+                        def put(data, pid=pid, pl_entry=pl_entry, local=job.get("local_pid")):
+                            data["playlists"] = [x for x in data["playlists"] if x["id"] not in (pid, local)] + [pl_entry]
+                        self._update_sp(put)
+                        done.append({"name": job["name"], "kind": "import", "found": len(uris),
+                                     "unresolved": len(unresolved), "reused": reused})
+                    elif job["kind"] == "add":
+                        out = self._link_add_now(job["path"], job.get("files"))
+                        done.append({"name": job["name"], "kind": "add", "found": out["added"],
+                                     "unresolved": len(out["unresolved"]), "reused": True})
+                    Q.remove(job["id"])
+                except SpotifyPaused:
+                    break  # otra vez en pausa: lo que falta sigue en la cola
+                except SpotifyError as e:
+                    tries = int(job.get("tries") or 0) + 1
+                    if tries >= 3:
+                        Q.remove(job["id"])
+                        failed.append({"name": job["name"], "error": str(e)})
+                    else:
+                        Q.update(job["id"], tries=tries, error=str(e))
+        finally:
+            self._q_busy = False
+        if done:
+            try:
+                self._build_analysis(light=True, quiet=True)
+            except Exception as e:
+                config.log(f"cola de Spotify: {e!r}")
+        if (done or failed) and self._window:
+            payload = json.dumps({"done": done, "failed": failed, "left": len(Q.load())})
+            self._window.evaluate_js(f"window.onSpotifyQueue && onSpotifyQueue({payload})")
+        return {"done": done, "failed": failed}
+
+    def spotify_queue(self):
+        import cola_spotify as Q
+        return {"ok": True, "jobs": Q.summary(), "paused": spotify_api.paused_until()}
+
+    def spotify_queue_run(self, auto=False):
+        """Pasar ya a Spotify lo pendiente (si Spotify lo permite). auto: lo llama el vigilante."""
+        import cola_spotify as Q
+        if auto and (not Q.load() or spotify_api.paused_until()):
+            return {"ok": True, "idle": True}
+        out = self._task(lambda: self._process_spotify_queue() or {"idle": True}, "spotify_queue", "Pasar pendientes a Spotify")
+        out["jobs"] = Q.summary()
+        return out
+
+    def spotify_queue_cancel(self, job_id):
+        """Quita un pendiente de la cola (lo ya importado en BrainOrder se queda como está)."""
+        import cola_spotify as Q
+        Q.remove(job_id)
+        return {"ok": True, "jobs": Q.summary()}
+
     def _spotify_playlist_named(self, sp, name):
         """Tu playlist de Spotify con ese nombre (sin distinguir mayúsculas), si existe."""
         want = name.strip().lower()
@@ -1442,36 +1569,56 @@ class Api:
             mine = {CN._key(r["source"]) for r in (pl or {}).get("tracks") or [] if r.get("source")}
             new = [f for f in files if CN._key(f) not in set(ln.get("files") or []) | mine]
             out = {"name": ln["name"], "added": 0, "unresolved": []}
-            if add and new:
+            do_add = bool(add and new)
+            if do_add:
                 sp = self._sp()
                 if not sp.can_write:
                     raise SpotifyError("Reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
-                have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})}
-                analysis, cache, uris = self._analysis() or [], {}, []
-                for n, f in enumerate(new, 1):
-                    self._progress(f"Buscando en Spotify {n}/{len(new)}: {Path(f).name}", n / len(new))
-                    r = self._spotify_uri_for(f, analysis, sp, cache)
-                    if not r:
-                        out["unresolved"].append(Path(f).name)
-                    elif r["uri"] not in have and r["uri"] not in uris:
-                        uris.append(r["uri"])
-                if uris:
-                    sp.add_items(ln["pid"], uris)  # a la MISMA playlist: nunca se crea otra
-                out["added"] = len(uris)
-                tracks = self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})
-
-                def put(data):
-                    cur = next((x for x in data["playlists"] if x["id"] == ln["pid"]), None)
-                    if cur is not None:
-                        cur["tracks"], cur["total"] = tracks, len(tracks)
-                self._update_sp(put)
+                try:
+                    if spotify_api.paused_until():
+                        raise SpotifyPaused("pausa")
+                    r = self._link_add_now(ln["path"], new, self._progress)  # a la MISMA playlist: nunca otra
+                    out["added"], out["unresolved"] = r["added"], r["unresolved"]
+                except SpotifyPaused:
+                    import cola_spotify  # Spotify en pausa: se agregan solas en cuanto se pueda
+                    cola_spotify.add({"kind": "add", "name": ln["name"], "path": ln["path"], "pid": ln["pid"], "files": new})
+                    out["queued"] = {"until": spotify_api.paused_until(), "count": len(new)}
+                    do_add = False
             ln["files"] = sorted(CN._key(f) for f in files)
             links[CN._key(path)] = ln
             self._cfg["spotify_links"] = links
             config.save(self._cfg)
-            out["analysis"] = self._build_analysis(light=True) if add and new else None
+            out["analysis"] = self._build_analysis(light=True) if do_add else None
             return out
         return self._task(run, f"link:{path}", "Agregar a Spotify")
+
+    def _link_add_now(self, path, files, progress=None):
+        """Agrega esas canciones a la playlist vinculada a la carpeta (para la cola de Spotify)."""
+        import carpetas_nuevas as CN
+        ln = (self._cfg.get("spotify_links") or {}).get(CN._key(path))
+        if not ln:
+            return {"added": 0, "unresolved": []}
+        sp = self._sp()
+        have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})}
+        analysis, cache, uris, unresolved = self._analysis() or [], {}, [], []
+        for n, f in enumerate(files or [], 1):
+            if progress:
+                progress(f"Buscando en Spotify {n}/{len(files)}: {Path(f).name}", n / len(files))
+            r = self._spotify_uri_for(f, analysis, sp, cache) if os.path.exists(f) else None
+            if not r:
+                unresolved.append(Path(f).name)
+            elif r["uri"] not in have and r["uri"] not in uris:
+                uris.append(r["uri"])
+        if uris:
+            sp.add_items(ln["pid"], uris)
+        tracks = self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})
+
+        def put(data):
+            cur = next((x for x in data["playlists"] if x["id"] == ln["pid"]), None)
+            if cur is not None:
+                cur["tracks"], cur["total"] = tracks, len(tracks)
+        self._update_sp(put)
+        return {"added": len(uris), "unresolved": unresolved}
 
     @staticmethod
     def _remove_if_empty(folder):
@@ -1502,39 +1649,24 @@ class Api:
             self._set_stage(30, 80)
         else:
             self._set_stage(0, 80)
+        done_sp, queued = False, False
         if opts.get("spotify"):
             sp = self._sp()
             if not sp.connected:
                 raise SpotifyError("Spotify no está conectado. Conéctalo o impórtala solo en BrainOrder.")
             if not sp.can_write:
                 raise SpotifyError("Para crear playlists en Spotify reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
-            analysis, cache, uris, unresolved = self._analysis() or [], {}, [], []
-            for n, f in enumerate(files, 1):
-                self._progress(f"Buscando en Spotify {n}/{len(files)}: {Path(f).name}", n / len(files))
-                r = self._spotify_uri_for(f, analysis, sp, cache) if os.path.exists(f) else None
-                if r and r["uri"] not in uris:
-                    uris.append(r["uri"])
-                elif not r:
-                    unresolved.append(Path(f).name)
-            if files and not uris:
-                raise SpotifyError(f"No encontré en Spotify ninguna canción de «{name}». Impórtala solo en BrainOrder.")
-            existing = self._spotify_playlist_named(sp, name)
-            if existing:
-                # ya hay una playlist tuya con ese nombre: se usa esa (nunca se crea otra igual)
-                pid = existing["id"]
-                have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": pid, "name": name, "source": "spotify"})}
-                add = [u for u in uris if u not in have]
-                self._progress(f"Agregando {len(add)} canciones a tu playlist «{name}» de Spotify…", 1)
-                if add:
-                    sp.add_items(pid, add)
-                url = existing.get("url")
-                res["spotify_reused"] = True
+            if spotify_api.paused_until():
+                queued = True  # Spotify en pausa: se importa ya aquí y se pasa a Spotify cuando se pueda
             else:
-                self._progress("Creando la playlist en Spotify…", 1)
-                created = sp.create_playlist(name, description="Importada con BrainOrder")
-                if uris:
-                    sp.add_items(created["id"], uris)
-                pid, url = created["id"], (created.get("external_urls") or {}).get("spotify")
+                try:
+                    pid, url, uris, unresolved, reused = self._spotify_fill(sp, name, files, self._progress)
+                    done_sp = True
+                    if reused:
+                        res["spotify_reused"] = True
+                except SpotifyPaused:
+                    queued = True  # se cortó a mitad: queda en la cola
+        if done_sp:
             tracks = self._read_tracks({"id": pid, "name": name, "source": "spotify"})
             pl_entry = {"id": pid, "name": name, "source": "spotify", "snapshot": None, "analyzed_snapshot": None,
                         "total": len(tracks), "tracks": tracks, "url": url}
@@ -1558,6 +1690,11 @@ class Api:
             tracks = FC.tracks(self._cfg, meta, self._progress)
             pl_entry = {**meta, "analyzed_snapshot": meta["snapshot"], "tracks": tracks}
             res["local"] = {"tracks": len(tracks)}
+            if queued:
+                import cola_spotify
+                cola_spotify.add({"kind": "import", "name": name, "entry": entry, "local_pid": pid,
+                                  "origin": opts.get("origin")})
+                res["queued"] = {"until": spotify_api.paused_until()}
 
         def put(data):
             data["playlists"] = [x for x in data["playlists"] if x["id"] != pid] + [pl_entry]
@@ -1603,6 +1740,10 @@ class Api:
                 CN.dj_mark(program, ref)
             self._cfg["folder_playlists"] = keep
             config.save(self._cfg)
+            import cola_spotify  # si estaba esperando para pasar a Spotify, ya no
+            for j in cola_spotify.load():
+                if j.get("local_pid") == pid:
+                    cola_spotify.remove(j["id"])
             self._update_sp(lambda d: d.__setitem__("playlists", [x for x in d["playlists"] if x["id"] != pid]))
             return {"analysis": self._build_analysis(light=True)}
         return self._task(run, f"folder_un:{path or ref}", "Quitar playlist importada")
