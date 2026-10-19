@@ -426,6 +426,26 @@ function fdCanMove(f){
   const r = (S.settings.dest_root||'').replace(/[\\/]+$/,'');
   return dirOf(f.path) !== r;                    // ya está en tu carpeta de playlists
 }
+// canciones nuevas en una carpeta que importaste a Spotify -> ¿a la misma playlist?
+window.onLinkedAdded = list => {
+  const x = list[0]; if(!x) return;
+  if($('mbg').classList.contains('show')){ toast(`🎵 Agregaste ${x.count} canción(es) a «${esc(x.name)}». <a class="lnk" onclick="lkAsk(${esc(JSON.stringify(x))})">¿Las paso a Spotify?</a>`); return; }
+  lkAsk(x);
+};
+function lkAsk(x){
+  modal(`<h3>🎵 Canciones nuevas en «${esc(x.name)}»</h3>
+    <p>Agregaste <b>${x.count}</b> ${x.count===1?'canción':'canciones'} a la carpeta. ¿Las agrego también a tu playlist <b>«${esc(x.name)}»</b> de Spotify?</p>
+    <div class="box">${x.files.map(esc).join('<br>')}${x.count>x.files.length?'<br>…':''}</div>
+    <div class="art">Se agregan a la misma playlist (nunca se crea otra) y solo las que no estén ya.</div>
+    <div class="actions"><button onclick="lkDo(${jsq(x.path)}, false)">No, solo en la carpeta</button><button class="primary" onclick="lkDo(${jsq(x.path)}, true)">Agregar a Spotify</button></div>`);
+}
+async function lkDo(path, add){
+  closeModal();
+  const r = await api().link_add(path, add);
+  if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) { await applyAnalysis(r); render(); }
+  if(add) toast(`✅ ${r.added} canción(es) agregadas a «${esc(r.name)}» en Spotify.` + (r.unresolved.length?`<br><span style="color:var(--org)">No encontré ${r.unresolved.length}: ${r.unresolved.slice(0,4).map(esc).join(', ')}</span>`:''));
+}
 async function fdNever(){
   const f = FD.cur; closeModal();
   if(f.kind === 'dj') await api().dj_dismiss(f.program, f.ref, true); else await api().folder_dismiss(f.path, true);
@@ -447,7 +467,8 @@ async function fdImport(){
   if(x.move){ msg += `<br>📁 ${x.move.moved} archivo${x.move.moved!==1?'s':''} pasado${x.move.moved!==1?'s':''} a <code>${esc(short(x.move.dest))}</code>` + (x.move.already?` (${x.move.already} ya estaban ahí)`:'') + '.';
     if(x.move.skipped && x.move.skipped.length) msg += `<br><span style="color:var(--org)">${x.move.skipped.length} no se movieron: ${x.move.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
     if(x.move.op_id) msg += undoLink({op_id: x.move.op_id}); loadHist(); }
-  if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones agregadas.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
+  if(x.spotify_reused) msg += `<br>Ya tenías «${esc(x.name)}» en Spotify: usé esa misma playlist (no creé otra).`;
+  if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones${x.spotify_reused?' (solo se agregaron las que faltaban)':' agregadas'}.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
   if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
   if(r.index !== null && r.index !== undefined){ S.view = 'pl:' + r.index; }
   render(); toast(msg);

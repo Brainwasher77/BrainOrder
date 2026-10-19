@@ -906,6 +906,9 @@ class Api:
                         if inbox in src.parents and src.is_file() and dest.is_dir():
                             sel.append((str(src), str(dest)))
                     if groups or sel:
+                        import carpetas_nuevas
+                        for _src, d in groups:  # carpetas que crea BrainOrder al organizar: no preguntar por ellas
+                            carpetas_nuevas.mark(d, known=True)
                         extra_res = organizador.move_unmatched(groups, sel, self._cfg, self._progress)
                 journal = files.pop("journal", []) + ((extra_res or {}).pop("journal", []) if extra_res else [])
                 op_id = historial.record("organize", label, journal)
@@ -1177,6 +1180,7 @@ class Api:
             if tick % 2 == 0:  # cada ~8 s: ¿creaste una carpeta nueva en tus carpetas de música?
                 try:
                     self._check_new_folders()
+                    self._check_linked_folders()
                 except Exception as e:
                     config.log(f"vigilante de carpetas nuevas: {e!r}")
             if tick % 6 == 1:  # cada ~24 s: ¿creaste una playlist en tu programa de DJ?
@@ -1350,6 +1354,8 @@ class Api:
         Historial y, si era una carpeta, se quita la carpeta vieja si quedó vacía. -> (archivos, resumen)"""
         import carpetas_nuevas as CN
         dest = biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)
+        # la crea BrainOrder para esta playlist: no es una «carpeta nueva» por la que haya que preguntar
+        CN.mark(dest, known=True, imported=True)
         ops = [(f, str(dest)) for f in files if os.path.exists(f) and CN._key(Path(f).parent) != CN._key(dest)]
         info = {"dest": str(dest), "moved": 0, "skipped": [], "already": len(files) - len(ops)}
         if not ops:
@@ -1375,6 +1381,97 @@ class Api:
             self._remove_if_empty(Path(src_folder))
         new_files = [changes.get(f, f) for f in files]
         return new_files, info
+
+    def _spotify_playlist_named(self, sp, name):
+        """Tu playlist de Spotify con ese nombre (sin distinguir mayúsculas), si existe."""
+        want = name.strip().lower()
+        try:
+            for p in sp.list_mine():
+                if (p.get("name") or "").strip().lower() == want:
+                    return {**p, "url": f"https://open.spotify.com/playlist/{p['id']}"}
+        except SpotifyError:
+            raise
+        return None
+
+    # ---------- carpetas vinculadas a una playlist de Spotify ----------
+    def _link_folder(self, folder, pid, name, files):
+        import carpetas_nuevas as CN
+        links = dict(self._cfg.get("spotify_links") or {})
+        links[CN._key(folder)] = {"path": str(folder), "pid": pid, "name": name, "files": sorted(CN._key(f) for f in files)}
+        self._cfg["spotify_links"] = links
+        config.save(self._cfg)
+
+    def _check_linked_folders(self):
+        """¿Agregaste canciones a una carpeta que importaste a Spotify? Pregunta si van a esa misma playlist."""
+        import carpetas_nuevas as CN
+        from fuentes import carpetas as FC
+        seen = getattr(self, "_link_seen", None)
+        if seen is None:
+            seen = self._link_seen = {}
+        ready = []
+        for k, ln in (self._cfg.get("spotify_links") or {}).items():
+            if not os.path.isdir(ln["path"]):
+                continue
+            files = FC.audio_files(ln["path"])
+            # las que ya son de esa playlist (por ejemplo las que Organizar acaba de traer) no cuentan
+            pl = next((p for p in self._analysis() or [] if p["id"] == ln["pid"]), None)
+            mine = {CN._key(r["source"]) for r in (pl or {}).get("tracks") or [] if r.get("source")}
+            known = set(ln.get("files") or []) | mine
+            new = sorted(f for f in files if CN._key(f) not in known)
+            sig = tuple(new)
+            if new and seen.get(k) == sig and f"l:{k}:{len(new)}" not in self._told():
+                ready.append({"kind": "link", "path": ln["path"], "name": ln["name"], "pid": ln["pid"],
+                              "count": len(new), "files": [Path(f).name for f in new[:8]]})
+                self._told().add(f"l:{k}:{len(new)}")
+            seen[k] = sig
+        if ready and self._window:
+            self._window.evaluate_js(f"window.onLinkedAdded && onLinkedAdded({json.dumps(ready)})")
+
+    def link_add(self, path, add=True):
+        """Canciones nuevas en una carpeta vinculada: agregarlas a su playlist de Spotify (o solo tomar nota)."""
+        import carpetas_nuevas as CN
+        from fuentes import carpetas as FC
+
+        def run():
+            links = dict(self._cfg.get("spotify_links") or {})
+            ln = links.get(CN._key(path))
+            if not ln:
+                raise unificar.UnifyError("Esa carpeta ya no está vinculada a una playlist de Spotify.")
+            files = FC.audio_files(ln["path"])
+            pl = next((p for p in self._analysis() or [] if p["id"] == ln["pid"]), None)
+            mine = {CN._key(r["source"]) for r in (pl or {}).get("tracks") or [] if r.get("source")}
+            new = [f for f in files if CN._key(f) not in set(ln.get("files") or []) | mine]
+            out = {"name": ln["name"], "added": 0, "unresolved": []}
+            if add and new:
+                sp = self._sp()
+                if not sp.can_write:
+                    raise SpotifyError("Reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
+                have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})}
+                analysis, cache, uris = self._analysis() or [], {}, []
+                for n, f in enumerate(new, 1):
+                    self._progress(f"Buscando en Spotify {n}/{len(new)}: {Path(f).name}", n / len(new))
+                    r = self._spotify_uri_for(f, analysis, sp, cache)
+                    if not r:
+                        out["unresolved"].append(Path(f).name)
+                    elif r["uri"] not in have and r["uri"] not in uris:
+                        uris.append(r["uri"])
+                if uris:
+                    sp.add_items(ln["pid"], uris)  # a la MISMA playlist: nunca se crea otra
+                out["added"] = len(uris)
+                tracks = self._read_tracks({"id": ln["pid"], "name": ln["name"], "source": "spotify"})
+
+                def put(data):
+                    cur = next((x for x in data["playlists"] if x["id"] == ln["pid"]), None)
+                    if cur is not None:
+                        cur["tracks"], cur["total"] = tracks, len(tracks)
+                self._update_sp(put)
+            ln["files"] = sorted(CN._key(f) for f in files)
+            links[CN._key(path)] = ln
+            self._cfg["spotify_links"] = links
+            config.save(self._cfg)
+            out["analysis"] = self._build_analysis(light=True) if add and new else None
+            return out
+        return self._task(run, f"link:{path}", "Agregar a Spotify")
 
     @staticmethod
     def _remove_if_empty(folder):
@@ -1421,14 +1518,30 @@ class Api:
                     unresolved.append(Path(f).name)
             if files and not uris:
                 raise SpotifyError(f"No encontré en Spotify ninguna canción de «{name}». Impórtala solo en BrainOrder.")
-            self._progress("Creando la playlist en Spotify…", 1)
-            created = sp.create_playlist(name, description="Importada con BrainOrder")
-            if uris:
-                sp.add_items(created["id"], uris)
-            pid = created["id"]
-            tracks = self._read_tracks({"id": pid, "name": name, "source": "spotify"}) if uris else []
+            existing = self._spotify_playlist_named(sp, name)
+            if existing:
+                # ya hay una playlist tuya con ese nombre: se usa esa (nunca se crea otra igual)
+                pid = existing["id"]
+                have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": pid, "name": name, "source": "spotify"})}
+                add = [u for u in uris if u not in have]
+                self._progress(f"Agregando {len(add)} canciones a tu playlist «{name}» de Spotify…", 1)
+                if add:
+                    sp.add_items(pid, add)
+                url = existing.get("url")
+                res["spotify_reused"] = True
+            else:
+                self._progress("Creando la playlist en Spotify…", 1)
+                created = sp.create_playlist(name, description="Importada con BrainOrder")
+                if uris:
+                    sp.add_items(created["id"], uris)
+                pid, url = created["id"], (created.get("external_urls") or {}).get("spotify")
+            tracks = self._read_tracks({"id": pid, "name": name, "source": "spotify"})
             pl_entry = {"id": pid, "name": name, "source": "spotify", "snapshot": None, "analyzed_snapshot": None,
-                        "total": len(tracks), "tracks": tracks, "url": (created.get("external_urls") or {}).get("spotify")}
+                        "total": len(tracks), "tracks": tracks, "url": url}
+            if entry.get("path"):
+                # carpeta vinculada: si después le agregas canciones, te pregunto si van a ESTA misma playlist
+                folder = res["move"]["dest"] if res.get("move") else entry["path"]
+                self._link_folder(folder, pid, name, FC.audio_files(folder) if os.path.isdir(folder) else files)
             if opts.get("origin"):
                 pl_entry["origin"] = opts["origin"]
                 self._cfg.setdefault("playlist_origin", {})[pid] = opts["origin"]  # se conserva al releer Spotify
