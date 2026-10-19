@@ -144,6 +144,7 @@ Tu Client ID y tu sesión de Spotify viven solo ahí, nunca en el repositorio.
 Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spotify pone a la app en pausa (a veces varias horas).
 - BrainOrder recuerda la pausa (aunque cierres la app) y no le pregunta nada a Spotify hasta que termine: cada consulta extra puede alargarla. Arriba se ve «Spotify en pausa hasta las HH:MM».
 - Mientras tanto usa lo último que leyó de Spotify; Deezer, archivos, organizar, Rekordbox y lo demás siguen funcionando.
+- Puedes importar a Spotify igual durante la pausa: la playlist queda lista en BrainOrder y tus programas de DJ y entra a una **cola**; BrainOrder la crea en Spotify sola en cuanto Spotify lo permite (revisa cada minuto). Lo mismo con las canciones nuevas de una carpeta vinculada. Los pendientes se ven (y se pueden cancelar o «Pasar ya») en «Playlists nuevas», y arriba dice cuántos hay.
 - Para no llegar al límite: «Analizar todo» solo vuelve a leer las playlists que cambiaron en Spotify (y Me gusta solo si cambió), y las consultas van espaciadas.
 
 ## Limitaciones
