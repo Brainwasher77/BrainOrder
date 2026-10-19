@@ -1,5 +1,5 @@
 {
-  "version": "2.9.0",
-  "build": 26,
-  "notes": "Al importar una carpeta o playlist nueva te pregunta si pasa sus archivos a tu carpeta de playlists (con rutas corregidas en tus programas de DJ y Deshacer), y lo importado sale de «Playlists nuevas»."
+  "version": "2.9.1",
+  "build": 27,
+  "notes": "La carpeta que crea BrainOrder al importar ya no aparece como «nueva». En Spotify nunca se duplica una playlist: si ya existe con ese nombre se usa esa, y si agregas canciones a la carpeta te pregunta si van a esa misma playlist."
 }
