@@ -60,4 +60,5 @@ def update(job_id, **changes):
 
 def summary():
     return [{"id": j["id"], "kind": j["kind"], "name": j.get("name"), "created": j.get("created"),
-             "error": j.get("error"), "count": len(j.get("files") or [])} for j in load()]
+             "error": j.get("error"), "count": len(j.get("files") or []) + len(j.get("uris") or []) + len(j.get("paths") or [])
+             + len(j.get("queries") or [])} for j in load()]

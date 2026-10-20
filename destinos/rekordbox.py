@@ -24,3 +24,7 @@ def sync(analysis, cfg, progress=None):
 
 def fix_paths(cfg, moved, repoint=None):
     return None  # Reorganizar y Unificar ya corrigen Rekordbox por su cuenta
+
+
+def edit(cfg, renames=None, deletes=None):
+    return rekordbox_sync.edit_playlists(cfg, renames, deletes)

@@ -232,3 +232,62 @@ def sync(analysis, cfg, progress=None):
             pass
     log(f"Rekordbox: {stats}")
     return stats
+
+
+def edit_playlists(cfg, renames=None, deletes=None):
+    """Renombra / elimina playlists dentro de la carpeta de BrainOrder en Rekordbox (con respaldo).
+    renames: {nombre_viejo: nombre_nuevo}; deletes: [nombre]. -> {"renamed", "deleted", "backup"}"""
+    renames, deletes = dict(renames or {}), list(deletes or [])
+    if not renames and not deletes:
+        return None
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a intentarlo.")
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    try:
+        root = _find_child(db, "root", cfg.get("rekordbox_folder") or "BrainOrder", 1)
+        todo = root is not None and (any(_find_child(db, root.ID, o, 0) for o in renames) or
+                                     any(_find_child(db, root.ID, n, 0) for n in deletes))
+        if not todo:
+            return {"renamed": 0, "deleted": 0, "backup": None}
+    except Exception:
+        db.close()
+        raise
+    db.close()
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"renamed": 0, "deleted": 0, "backup": bk.name}
+    try:
+        root = _find_child(db, "root", cfg.get("rekordbox_folder") or "BrainOrder", 1)
+        for old, new in renames.items():
+            p = _find_child(db, root.ID, old, 0)
+            if p is None:
+                continue
+            if _find_child(db, root.ID, new, 0) is not None:
+                db.delete_playlist(p)  # ya hay una con el nombre nuevo (fusionar): queda esa
+                out["deleted"] += 1
+            else:
+                db.rename_playlist(p, new)
+                out["renamed"] += 1
+        for name in deletes:
+            p = _find_child(db, root.ID, name, 0)
+            if p is not None:
+                db.delete_playlist(p)
+                out["deleted"] += 1
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error editando playlists en Rekordbox: {e!r}")
+        raise RekordboxError(f"No pude cambiar las playlists en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return out
