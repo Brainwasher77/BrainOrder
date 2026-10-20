@@ -20,6 +20,12 @@ def _folder(cfg):
     return cfg.get("rekordbox_folder") or "BrainOrder"
 
 
+def _ours(cfg):
+    """La carpeta de BrainOrder con su nombre actual y los que tuvo antes (esas no son playlists tuyas nuevas)."""
+    import carpeta_dj
+    return set(carpeta_dj.names(cfg))
+
+
 # ---------------------------------------------------------------- Rekordbox
 def rekordbox(cfg):
     import rekordbox_sync
@@ -28,7 +34,7 @@ def rekordbox(cfg):
         alive = "COALESCE(rb_local_deleted, 0) = 0"
         rows = con.execute(f"SELECT ID, Name, ParentID, COALESCE(Attribute, 0) FROM djmdPlaylist WHERE {alive}").fetchall()
         by_id = {str(r[0]): r for r in rows}
-        ours = {str(r[0]) for r in rows if r[2] == "root" and r[1] == _folder(cfg) and r[3] == 1}
+        ours = {str(r[0]) for r in rows if r[2] == "root" and r[1] in _ours(cfg) and r[3] == 1}
 
         def inside_ours(pid):
             seen = 0
@@ -73,7 +79,7 @@ def traktor(cfg):
         for n in (sub.findall("NODE") if sub is not None else []):
             name = n.get("NAME") or ""
             if n.get("TYPE") == "FOLDER":
-                walk(n, trail + [name], ours or (not trail and name == _folder(cfg)))
+                walk(n, trail + [name], ours or (not trail and name in _ours(cfg)))
             elif n.get("TYPE") == "PLAYLIST" and not ours and name not in skip:
                 pl = n.find("PLAYLIST")
                 if pl is None or pl.get("TYPE") not in (None, "LIST"):
@@ -109,12 +115,12 @@ def serato(cfg):
     sub = sdir / "Subcrates"
     if not sub.is_dir():
         return {}
-    prefix = S._crate_name(_folder(cfg))
+    prefixes = {S._crate_name(n) for n in _ours(cfg)}
     root = S._volume_of(str(sdir))[0]
     out = {}
     for f in sorted(sub.glob("*.crate")):
         stem = f.stem
-        if stem == prefix or stem.startswith(prefix + "%%"):
+        if stem in prefixes or stem.split("%%", 1)[0] in prefixes:
             continue
         try:
             rels = S.crate_tracks(f.read_bytes())
@@ -147,7 +153,7 @@ def engine(cfg):
     try:
         lib_dir = str(E.library_dir(cfg))
         rows = db.execute("SELECT id, title, parentListId FROM Playlist").fetchall()
-        ours = {r[0] for r in rows if r[2] == 0 and r[1] == _folder(cfg)}
+        ours = {r[0] for r in rows if r[2] == 0 and r[1] in _ours(cfg)}
         has_child = {r[2] for r in rows}
         paths_of = dict(db.execute("SELECT id, path FROM Track").fetchall())
 

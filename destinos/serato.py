@@ -287,3 +287,46 @@ def edit(cfg, renames=None, deletes=None):
             f(name).unlink()
             out["deleted"] += 1
     return out
+
+
+def root_children(cfg, name):
+    if not available(cfg):
+        return None
+    sub = home_serato(cfg) / "Subcrates"
+    p = _crate_name(name)
+    if not (sub / f"{p}.crate").exists():
+        return None
+    return [f.stem.split("%%", 1)[1] for f in sub.glob(f"{p}%%*.crate")]
+
+
+def rename_root(cfg, old, new):
+    if not available(cfg):
+        return {"renamed": False}
+    sub = home_serato(cfg) / "Subcrates"
+    po, pn = _crate_name(old), _crate_name(new)
+    olds = [f for f in sub.glob(f"{po}%%*.crate")] + ([sub / f"{po}.crate"] if (sub / f"{po}.crate").exists() else [])
+    if not olds:
+        return {"renamed": False}
+    if running():
+        raise SeratoError("Serato está abierto.")
+    b = _Backup(home_serato(cfg))
+    out = {"renamed": True, "replaced": 0}
+    for f in list(sub.glob(f"{pn}%%*.crate")) + ([sub / f"{pn}.crate"] if (sub / f"{pn}.crate").exists() else []):
+        b.save(f)
+        f.unlink()  # la creó un Organizar con el nombre nuevo: la reemplaza la de siempre
+        out["replaced"] += 1
+    for f in olds:
+        b.save(f)
+        os.replace(f, sub / (pn + f.name[len(po):]))
+    return out
+
+
+def root_folders(cfg):
+    if not available(cfg):
+        return {}
+    out = {}
+    for f in (home_serato(cfg) / "Subcrates").glob("*%%*.crate"):
+        parent, child = f.stem.split("%%", 1)
+        if "%%" not in child:
+            out.setdefault(parent, []).append(child)
+    return out

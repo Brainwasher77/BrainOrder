@@ -1,5 +1,5 @@
 {
-  "version": "2.12.0",
-  "build": 31,
-  "notes": "Clic derecho en una playlist → Comparar con…: cuántas canciones tienen en común, cuáles están solo en una, % de parecido, artistas compartidos, BPM y keys. Con pestañas, buscador, Copiar y atajo para fusionar."
+  "version": "2.13.0",
+  "build": 32,
+  "notes": "Cambiar el nombre de la carpeta de BrainOrder la renombra en todos tus programas (sin duplicar, sin «Playlists nuevas» ni playlists «borradas» en Cambios en Rekordbox); también si la renombras dentro de Rekordbox o si la cambiaste en una versión anterior. Cancelar con ✕ o clic derecho lo que está en cola y los pendientes para Spotify."
 }

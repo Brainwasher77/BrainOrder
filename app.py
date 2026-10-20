@@ -95,6 +95,7 @@ class Api:
         self._files = threading.Lock()
         self._reg = threading.Lock()
         self._running = {}          # clave de tarea -> id
+        self._queued, self._cancel = set(), set()  # tareas esperando su turno / que pediste cancelar
         self._tl = threading.local()
         self._rev = 0               # versión del análisis (la ventana ignora resultados más viejos)
         self._task_seq = 0
@@ -170,7 +171,16 @@ class Api:
             if files:
                 if not self._files.acquire(blocking=False):
                     self._send("En cola: esperando a que termine otra tarea que mueve archivos…", None, "queued")
-                    self._files.acquire()
+                    with self._reg:
+                        self._queued.add(tid)
+                    try:
+                        while not self._files.acquire(timeout=0.3):
+                            if tid in self._cancel:  # la cancelaste antes de que empezara: no se hizo nada
+                                return {"ok": False, "cancelled": True, "error": f"«{label}» cancelada (no se hizo nada)."}
+                    finally:
+                        with self._reg:
+                            self._queued.discard(tid)
+                            self._cancel.discard(tid)
                 got = True
                 self._send("Empezando…", 0)
             out = fn() or {}
@@ -195,6 +205,18 @@ class Api:
                 self._running.pop(key, None)
             self._send(None, None, "done")
             self._tl.task = None
+
+    def cancel_task(self, key):
+        """Cancela una tarea que está en cola (esperando su turno). Una que ya empezó no se corta a mitad,
+        para no dejar archivos ni programas a medio cambiar."""
+        with self._reg:
+            tid = self._running.get(key)
+            if tid is None:
+                return {"ok": False, "error": "Esa tarea ya terminó."}
+            if tid not in self._queued:
+                return {"ok": False, "error": "Esa tarea ya empezó: no se puede cortar a mitad (para no dejar cosas a medias)."}
+            self._cancel.add(tid)
+        return {"ok": True}
 
     def running(self):
         with self._reg:
@@ -375,10 +397,12 @@ class Api:
         if "m3u" in q:
             m = q["m3u"] or {}
             dst["m3u"] = {"enabled": bool(m.get("enabled")), "folder": (m.get("folder") or "").strip()}
+        old_folder = self._cfg.get("rekordbox_folder") or "BrainOrder"
         if "folder_name" in payload and (payload["folder_name"] or "").strip():
             self._cfg["rekordbox_folder"] = payload["folder_name"].strip()
         self._cfg["sources"], self._cfg["destinations"] = src, dst
         config.save(self._cfg)
+        info["folder_rename"] = self._folder_renamed(old_folder)
         self._progress("Conexiones guardadas.", 1)
         return {"sources": self._sources_status(), "destinations": destinos.status(self._cfg),
                 "warnings": warnings, "info": info, "folder_name": self._cfg.get("rekordbox_folder")}
@@ -441,6 +465,58 @@ class Api:
             return {**out, "state": st}
         return self._task(run, "setup", "Configuración inicial")
 
+    def _folder_renamed(self, old):
+        """Cambiaste el nombre de la carpeta de BrainOrder en los programas de DJ: se renombra en cada uno
+        (las playlists siguen siendo las mismas). Los que estén abiertos se hacen cuando los cierres."""
+        import carpeta_dj
+        if not old or old == carpeta_dj.current(self._cfg):
+            return None
+        carpeta_dj.changed(self._cfg, old)
+        return self._apply_folder_rename()
+
+    def _apply_folder_rename(self, only=None):
+        import carpeta_dj
+        if not self._cfg.get("dj_folder_pending"):
+            return None
+        done, warn = carpeta_dj.apply(self._cfg, only)
+        rb = done.get("rekordbox") or {}
+        if rb.get("deleted_ids"):
+            import rb_cambios
+            rb_cambios.drop_ids(rb["deleted_ids"])
+        if "rekordbox" in done:
+            self._cfg["dj_folder_confirmed"] = self._cfg.get("rekordbox_folder")
+            config.save(self._cfg)
+            self._rb_rebase()
+        if done:
+            self._rb_state = None
+            if hasattr(self, "_dj_stamp"):
+                self._dj_stamp = {}  # releer las playlists de los programas con la carpeta nueva
+        config.log(f"carpeta de BrainOrder renombrada: {done} {warn}")
+        return {"done": {k: v.get("label") for k, v in done.items()}, "warnings": warn,
+                "pending": [destinos.DESTINATIONS[k].LABEL for k in self._cfg.get("dj_folder_pending") or {}],
+                "name": self._cfg.get("rekordbox_folder")}
+
+    def _rb_rebase(self):
+        """Las playlists de BrainOrder en Rekordbox que la foto no tenga (por ejemplo si antes dijiste
+        «dejar así» cuando parecían borradas) vuelven a la foto: no son cambios tuyos."""
+        import rb_cambios
+        try:
+            state = rb_cambios.read_state(self._cfg) or {}
+        except Exception as e:
+            config.log(f"foto de Rekordbox: {e!r}")
+            return
+        by_name = {p["name"]: p["id"] for p in self._analysis() or []}
+        base = rb_cambios.load_baseline()
+        add = {rid: {"pid": by_name[v["name"]], "name": v["name"], "paths": v["paths"]}
+               for rid, v in state.items() if rid not in base and v["name"] in by_name}
+        if add:
+            rb_cambios.merge_baseline(add)
+            # si antes pareció que las habías borrado y elegiste «solo en Rekordbox», eso ya no aplica
+            back = {v["pid"] for v in add.values()}
+            if set(self._cfg.get("rb_keep") or []) & back:
+                self._cfg["rb_keep"] = [x for x in self._cfg.get("rb_keep") or [] if x not in back]
+                config.save(self._cfg)
+
     def _dj_precheck(self, keys=None):
         """Antes de mover archivos: los programas de DJ que hay que corregir deben estar cerrados."""
         for k in keys or destinos.enabled_keys(self._cfg):
@@ -481,6 +557,7 @@ class Api:
         except Exception:
             pass
         before = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
+        old_folder = self._cfg.get("rekordbox_folder") or "BrainOrder"
         for k in ("client_id", "dest_root", "inbox", "liked_name", "rekordbox_folder"):
             if k in s and isinstance(s[k], str):
                 self._cfg[k] = s[k].strip()
@@ -494,6 +571,8 @@ class Api:
         config.save(self._cfg)
         after = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
         res = {"ok": True, "inbox_count": self._inbox_signature()[1], "analysis": None}
+        if (self._cfg.get("rekordbox_folder") or "BrainOrder") != old_folder:
+            res["folder_rename"] = self._folder_renamed(old_folder)
         if after != before:
             # cambiaron las carpetas: el vigilante toma la nueva como punto de partida (sin avisar de
             # todo lo que ya había) y los estados se recalculan en segundo plano
@@ -1005,9 +1084,14 @@ class Api:
             keys = destinos.enabled_keys(self._cfg) if targets is True else \
                 [k for k in (targets or []) if k in destinos.enabled_keys(self._cfg)]
             dj, target = {}, ([p for p in analysis if p["id"] == pid] if pid else analysis)
+            ren = self._apply_folder_rename(keys)  # si cambiaste el nombre de la carpeta: renombrarla antes
             for j, k in enumerate(keys):
                 m = destinos.DESTINATIONS[k]
                 self._sub_stage(j / len(keys), (j + 1) / len(keys))
+                if k in (self._cfg.get("dj_folder_pending") or {}):  # no crear otra carpeta: primero renombrarla
+                    dj[k] = {"label": m.LABEL, "error": f"falta renombrar su carpeta «{self._cfg['dj_folder_pending'][k]}»"
+                                                      f" a «{self._cfg.get('rekordbox_folder')}» (ciérralo y vuelve a Organizar)."}
+                    continue
                 try:
                     cfg_k = self._cfg
                     if k == "rekordbox":
@@ -1020,6 +1104,7 @@ class Api:
                         import rb_cambios
                         base = st.pop("baseline", None)
                         rb_cambios.merge_baseline(base)
+                        self._cfg["dj_folder_confirmed"] = self._cfg.get("rekordbox_folder")
                         synced = {v["pid"] for v in (base or {}).values()}
                         if self._cfg.get("rb_revert"):
                             self._cfg["rb_revert"] = [p for p in self._cfg["rb_revert"] if p not in synced]
@@ -1045,7 +1130,8 @@ class Api:
             self._inbox_sig = None  # forzar que el vigilante vuelva a mirar descargas
             self._inbox_n = (0.0, 0)
             self._progress("Organización terminada.", 1)
-            return {"files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
+            return {"folder_rename": ren if ren and ren["done"] else None,
+                    "files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
                     "dj": dj, "analysis": analysis, "op_id": op_id}
         return self._task(run, f"organize:{pid or 'all'}", label, files=True)
 
@@ -1271,6 +1357,13 @@ class Api:
                     config.log(f"cola de Spotify: {e!r}")
             if tick % 6 == 1:  # cada ~24 s: ¿creaste una playlist en tu programa de DJ?
                 try:
+                    if tick == 1:  # nombre de la carpeta cambiado antes de esta versión
+                        import carpeta_dj
+                        carpeta_dj.detect(self._cfg, [p["name"] for p in self._analysis() or []])
+                    if self._cfg.get("dj_folder_pending") and not self._running:
+                        r = self._apply_folder_rename()  # el programa que estaba abierto ya se cerró
+                        if r and r["done"] and self._window:
+                            self._window.evaluate_js(f"window.onFolderRenamed && onFolderRenamed({json.dumps(r)})")
                     self._check_new_dj()
                 except Exception as e:
                     config.log(f"vigilante de playlists de DJ: {e!r}")
@@ -2345,6 +2438,37 @@ class Api:
             rb_cambios.save_baseline({rid: {"pid": by_name.get(v["name"]), "name": v["name"], "paths": v["paths"]}
                                       for rid, v in (state or {}).items()})
             return [], state
+        if rb_cambios.FOUND.get("renamed") and rb_cambios.FOUND.get("name"):
+            import carpeta_dj
+            found = rb_cambios.FOUND["name"]
+            rb_cambios.FOUND["renamed"] = False
+            confirmed = self._cfg.get("dj_folder_confirmed")
+            if confirmed != carpeta_dj.current(self._cfg) or found in set(carpeta_dj.names(self._cfg)) | set(carpeta_dj.LEGACY):
+                # le cambiaste el nombre en BrainOrder y Rekordbox todavía tiene el viejo: se renombra allá
+                pend = dict(self._cfg.get("dj_folder_pending") or {})
+                pend["rekordbox"] = found
+                self._cfg["dj_folder_pending"] = pend
+                self._cfg["dj_folder_old"] = list(dict.fromkeys(list(self._cfg.get("dj_folder_old") or []) + [found]))
+                config.save(self._cfg)
+                return rb_cambios.diff(rb_cambios.load_baseline(), state, analysis), state
+            # le cambiaste el nombre a la carpeta en Rekordbox: BrainOrder usa ese nombre y lo pasa a tus otros programas
+            old = carpeta_dj.for_program(self._cfg, "rekordbox")
+            pend = dict(self._cfg.get("dj_folder_pending") or {})
+            pend.pop("rekordbox", None)
+            self._cfg["dj_folder_pending"] = pend
+            self._cfg["rekordbox_folder"] = rb_cambios.FOUND["name"]
+            config.save(self._cfg)
+            carpeta_dj.changed(self._cfg, old)
+            pend = dict(self._cfg.get("dj_folder_pending") or {})
+            pend.pop("rekordbox", None)  # en Rekordbox ya está hecho
+            self._cfg["dj_folder_pending"] = pend
+            config.save(self._cfg)
+            rb_cambios.FOUND["renamed"] = False
+        import carpeta_dj
+        if rb_cambios.FOUND.get("name") and rb_cambios.FOUND["name"] == carpeta_dj.current(self._cfg) \
+                and self._cfg.get("dj_folder_confirmed") != rb_cambios.FOUND["name"]:
+            self._cfg["dj_folder_confirmed"] = rb_cambios.FOUND["name"]  # Rekordbox y BrainOrder están de acuerdo
+            config.save(self._cfg)
         return rb_cambios.diff(rb_cambios.load_baseline(), state, analysis), state
 
     def _rb_pending_pids(self):
