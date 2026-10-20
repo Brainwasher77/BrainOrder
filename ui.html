@@ -626,13 +626,38 @@ function cmpRun(A, B){
       bpmA: bpm(A), bpmB: bpm(B), keyA: keys(A), keyB: keys(B)};
   });
 }
-function cmpPick(i){
+const CMP_SORTS = [['list','Como en la lista'],['common','Más en común'],['name','Nombre (A–Z)'],['name_desc','Nombre (Z–A)'],
+  ['created_desc','Creadas más recientemente'],['created_asc','Creadas hace más tiempo'],['updated_desc','Con canciones agregadas hace poco'],
+  ['size_desc','Más canciones'],['size_asc','Menos canciones']];
+const fmtDay = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('es', {day:'numeric', month:'short', year:'numeric'}) : '';
+// playlists para elegir, en el orden pedido. ref: la otra playlist (para «Más en común»)
+function cmpChoices(ref, skipId){
+  const k = PREF.cmp_sort || 'list';
+  let list = plOrder(S.analysis||[]).map(([p]) => p).filter(p => !p.ignored && p.id !== skipId);
+  const name = p => (p.name||'').toLowerCase(), n = p => p.tracks.length || p.total || 0;
+  const common = p => (ref && !ref.pending && !p.pending) ? cmpRun(ref, p).both.length : -1;
+  const f = {name: (x,y) => name(x).localeCompare(name(y), 'es'), name_desc: (x,y) => name(y).localeCompare(name(x), 'es'),
+    created_desc: (x,y) => (y.created||'').localeCompare(x.created||''), created_asc: (x,y) => (x.created||'9999').localeCompare(y.created||'9999'),
+    updated_desc: (x,y) => (y.updated||y.created||'').localeCompare(x.updated||x.created||''),
+    size_desc: (x,y) => n(y) - n(x), size_asc: (x,y) => n(x) - n(y), common: (x,y) => common(y) - common(x)}[k];
+  if(f) list = [...list].sort(f);
+  // lo que ayuda a elegir según el orden: fecha, cantidad o canciones en común
+  const extra = p => k.startsWith('created') ? (p.created ? ' — ' + fmtDay(p.created) : '')
+    : k==='updated_desc' ? ((p.updated||p.created) ? ' — ' + fmtDay(p.updated||p.created) : '')
+    : k.startsWith('size') ? ` — ${n(p)}` : k==='common' ? (common(p) >= 0 ? ` — ${common(p)} en común` : ' — sin analizar') : '';
+  return list.map(p => [p, extra(p)]);
+}
+const cmpSortSel = (onch) => `<select onchange="${onch}" title="Ordenar las playlists para elegir" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit">
+  ${CMP_SORTS.map(([v,t])=>`<option value="${v}" ${v===(PREF.cmp_sort||'list')?'selected':''}>${t}</option>`).join('')}</select>`;
+function cmpPickSort(i, v){ savePref('cmp_sort', v); const cur = $('cmpWith') && $('cmpWith').value; cmpPick(i, cur); }
+function cmpPick(i, keep){
   const pl = S.analysis[i]; if(!pl) return;
-  const opts = S.analysis.map((p,j)=>[p,j]).filter(([p,j]) => j!==i && !p.ignored);
+  const opts = cmpChoices(pl, pl.id);
   if(!opts.length){ toast('No hay otra playlist para comparar.', true); return; }
   modal(`<h3>⚖️ Comparar «${esc(pl.name)}» con…</h3>
-    <select id="cmpWith" style="width:100%;margin:6px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit">
-      ${opts.map(([p,j])=>`<option value="${esc(p.id)}">${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' (sin analizar)':''}</option>`).join('')}</select>
+    <div style="display:flex;gap:8px;align-items:center;margin:6px 0"><span class="art">Ordenar por</span>${cmpSortSel(`cmpPickSort(${i}, this.value)`)}</div>
+    <select id="cmpWith" size="${Math.min(10, opts.length)}" style="width:100%;margin:2px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px;font:inherit" ondblclick="cmpOpen(${jsq(pl.id)}, this.value)">
+      ${opts.map(([p,x],j)=>`<option value="${esc(p.id)}" ${(keep ? p.id===keep : j===0)?'selected':''}>${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' (sin analizar)':''}${esc(x)}</option>`).join('')}</select>
     <div class="art">Te muestro cuántas canciones tienen en común, cuáles están solo en una y cuál se parece más. No cambia nada.</div>
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="cmpOpen(${jsq(pl.id)}, $('cmpWith').value)">Comparar</button></div>`);
 }
@@ -650,10 +675,10 @@ async function cmpCopy(){
 function cmpView(){
   const A = (S.analysis||[]).find(p=>p.id===CMP.a), B = (S.analysis||[]).find(p=>p.id===CMP.b);
   if(!A || !B) return `<div class="empty"><h3>Elige qué comparar</h3><p>Clic derecho en una playlist → <b>⚖️ Comparar con…</b></p></div>`;
-  const sel = (side, cur) => `<select onchange="cmpSet('${side}', this.value)" style="max-width:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-weight:650">
-    ${S.analysis.filter(p=>!p.ignored).map(p=>`<option value="${esc(p.id)}" ${p.id===cur?'selected':''}>${p.liked?'♥ ':''}${esc(p.name)}</option>`).join('')}</select>`;
-  const head = `<div class="vhead"><h2 style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">⚖️ ${sel('a', A.id)} <button class="ghost" title="Intercambiar" onclick="cmpSwap()">⇄</button> ${sel('b', B.id)}</h2>
-    <span class="sub">Compara las canciones (por Spotify, ISRC, el mismo archivo o artista + título). No cambia nada.</span></div>`;
+  const sel = (side, cur, ref) => `<select onchange="cmpSet('${side}', this.value)" style="max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-weight:650">
+    ${cmpChoices(ref, null).map(([p,x])=>`<option value="${esc(p.id)}" ${p.id===cur?'selected':''}>${p.liked?'♥ ':''}${esc(p.name)}${esc(x)}</option>`).join('')}</select>`;
+  const head = `<div class="vhead"><h2 style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">⚖️ ${sel('a', A.id, B)} <button class="ghost" title="Intercambiar" onclick="cmpSwap()">⇄</button> ${sel('b', B.id, A)}</h2>
+    <span class="sub" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">Ordenar las listas por ${cmpSortSel("savePref('cmp_sort', this.value).then(renderMain)")} · Compara las canciones (por Spotify, ISRC, el mismo archivo o artista + título). No cambia nada.</span></div>`;
   const pend = [A,B].filter(p=>p.pending);
   if(pend.length) return head + `<div class="empty"><h3>Falta analizar ${pend.map(p=>'«'+esc(p.name)+'»').join(' y ')}</h3>
     <div style="display:flex;gap:10px;justify-content:center">${pend.map(p=>`<button class="primary" onclick="analyzePlaylist(${jsq(p.id)})">🔄 Analizar «${esc(p.name)}»</button>`).join('')}</div></div>`;
@@ -673,6 +698,7 @@ function cmpView(){
     `El <b>${c.pA}%</b> de «${esc(A.name)}» (${c.both.length} de ${nA}) está en «${esc(B.name)}», y el <b>${c.pB}%</b> de «${esc(B.name)}» (${c.both.length} de ${nB}) está en «${esc(A.name)}».`,
     c.both.length ? `De las que tienen en común, tienes el archivo de <b>${c.bothHave}</b>${c.both.length-c.bothHave?` y faltan <b>${c.both.length-c.bothHave}</b>`:''}.` : '',
     `Artistas: ${c.artA} en «${esc(A.name)}», ${c.artB} en «${esc(B.name)}», <b>${c.shared.length}</b> en las dos${c.shared.length?`: ${c.shared.slice(0,10).map(esc).join(', ')}${c.shared.length>10?'…':''}`:''}.`,
+    (A.created||B.created) ? `Creadas: «${esc(A.name)}» ${A.created?fmtDay(A.created)+(A.dated_by==='carpeta'?' (aprox.)':''):'—'} · «${esc(B.name)}» ${B.created?fmtDay(B.created)+(B.dated_by==='carpeta'?' (aprox.)':''):'—'}${(A.updated||B.updated)?` · Última canción agregada: ${A.updated?fmtDay(A.updated):'—'} vs ${B.updated?fmtDay(B.updated):'—'}`:''}.` : '',
     (c.bpmA||c.bpmB) ? `BPM promedio: ${c.bpmA??'—'} vs ${c.bpmB??'—'}${(c.keyA.length||c.keyB.length)?` · Keys más usadas: ${c.keyA.join(', ')||'—'} vs ${c.keyB.join(', ')||'—'}`:''}.` : '',
   ].filter(Boolean).map(x=>`<div style="margin:4px 0">${x}</div>`).join('');
   const tabs = [['both','En común',c.both.length],['a','Solo en «'+A.name+'»',c.onlyA.length],['b','Solo en «'+B.name+'»',c.onlyB.length]]
@@ -897,12 +923,13 @@ async function ctxPin(src, on){
 }
 
 // ---------- preferencias de la ventana (se guardan en los ajustes) ----------
-let PREF = {pl_sort:'spotify', rg_remember:false};
+let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list'};
 async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
 // ---------- orden de la lista de playlists ----------
 const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
   ['complete','Completas primero'],['incomplete','Menos completas primero'],['organize','Con descargas por organizar'],
-  ['name','Nombre (A–Z)'],['size','Más canciones primero']];
+  ['name','Nombre (A–Z)'],['size','Más canciones primero'],['created_desc','Creadas más recientemente'],['created_asc','Creadas hace más tiempo'],
+  ['updated_desc','Con canciones agregadas hace poco']];
 function paintPlSort(){ const el=$('plSort'); if(!el) return;
   if(!el.options.length) el.innerHTML = PL_SORTS.map(([v,t])=>`<option value="${v}">${t}</option>`).join('');
   el.value = PREF.pl_sort || 'spotify'; }
@@ -920,6 +947,9 @@ function plOrder(a){
     incomplete:   (x,y) => st(x).pct - st(y).pct || st(y).missing - st(x).missing,
     organize:     (x,y) => orgCount(y.id) - orgCount(x.id) || st(y).missing - st(x).missing,
     name:         (x,y) => name(x).localeCompare(name(y), 'es'),
+    created_desc: (x,y) => (y.created||'').localeCompare(x.created||''),
+    created_asc:  (x,y) => (x.created||'9999').localeCompare(y.created||'9999'),
+    updated_desc: (x,y) => (y.updated||y.created||'').localeCompare(x.updated||x.created||''),
     size:         (x,y) => st(y).total - st(x).total,
   }[k];
   done.sort(([x,i],[y,j]) => f(x,y) || i-j);

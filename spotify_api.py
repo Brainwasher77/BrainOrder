@@ -409,6 +409,8 @@ class Spotify:
         for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"}, on_page):
             t = self._track(it.get("item") or it.get("track"))
             if t:
+                if it.get("added_at"):
+                    t["added_at"] = it["added_at"]  # para saber desde cuándo existe la playlist
                 tracks.append(t)
         return tracks
 
@@ -421,12 +423,23 @@ class Spotify:
         own = self.list_mine()
         cached = cached or {}
         reused = 0
+        budget = 25  # fechas que faltan: una consulta mínima por playlist, de a poco para no exceder el límite
         for i, p in enumerate(own, 1):
             if progress:
                 progress(f"Playlist {i}/{len(own)}: {p['name']}", (i - 1) / len(own))
             c = cached.get(p["id"]) or {}
             if p.get("snapshot") and c.get("tracks") is not None and c.get("snapshot") == p["snapshot"]:
-                result.append({**p, "tracks": c["tracks"]})
+                fa = c.get("first_added")
+                if not fa and c["tracks"] and not any(t.get("added_at") for t in c["tracks"][:5]) and budget > 0:
+                    budget -= 1
+                    try:  # cuándo se agregó su primera canción (Spotify no da la fecha de creación)
+                        d = self.get(f"/playlists/{p['id']}/items", {"limit": 1, "fields": "items(added_at)"})
+                        fa = ((d.get("items") or [{}])[0] or {}).get("added_at")
+                    except SpotifyPaused:
+                        raise
+                    except SpotifyError:
+                        fa = None
+                result.append({**p, "tracks": c["tracks"], **({"first_added": fa} if fa else {})})
                 reused += 1
                 continue
             try:
@@ -455,6 +468,8 @@ class Spotify:
         for it in self.paged("/me/tracks", {"limit": 50}, on_page):
             t = self._track(it.get("track") or it.get("item"))
             if t:
+                if it.get("added_at"):
+                    t["added_at"] = it["added_at"]
                 tracks.append(t)
         return tracks
 
