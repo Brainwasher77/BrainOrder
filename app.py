@@ -1345,10 +1345,55 @@ class Api:
                                "dest": str(dest), "dest_exists": dest.exists(),
                                "sample": [Path(x).name for x in fs[:4]]})
         fset = set(files)
+        rest = [f for f in files if f not in ready and f not in dups]
         return {"count": n, "ready": len(ready & fset), "dups": len(dups & fset),
-                "groups": out_groups, "loose": loose,
+                "groups": out_groups, "loose": loose, "similar": self._similar_downloads(rest, analysis),
                 "analyzed": sum(1 for p in analysis if not p.get("pending")),
                 "pending": sum(1 for p in analysis if p.get("pending") and not p.get("ignored"))}
+
+    def _similar_downloads(self, files, analysis):
+        """Descargas que no se reconocieron pero son la misma canción que una que te falta en una playlist,
+        en otra versión o con otra duración (por ejemplo bajaste la «Dream Version» y la playlist tiene la
+        normal). -> [{path, file, why, options: [{pid, playlist, tid, name, artists}]}]"""
+        if not files:
+            return []
+        by_core = {}
+        for pl in analysis:
+            if pl.get("pending"):
+                continue
+            for r in pl["tracks"]:
+                if r["status"] == "missing":
+                    by_core.setdefault(biblioteca.core_title(r["name"]), []).append((pl, r))
+        out = []
+        for f in files[:500]:
+            a, t = biblioteca.parse_file(Path(f))
+            an = biblioteca.norm(a)
+            opts, seen = [], set()
+            for pl, r in by_core.get(biblioteca.core_title(t), []):
+                if (r["id"], pl["id"]) in seen or not biblioteca.artist_ok(r["artists"], an):
+                    continue
+                seen.add((r["id"], pl["id"]))
+                opts.append({"pid": pl["id"], "playlist": pl["name"], "tid": r["id"], "name": r["name"],
+                             "artists": r["artists"], "duration_ms": r.get("duration_ms") or 0})
+            if opts:
+                dur = biblioteca.duration(f)
+                fx, ex = biblioteca.extras(t), biblioteca.extras(opts[0]["name"])
+                why = "otra versión" if (fx != ex) else "otra duración" if dur else "no coincide exacto"
+                out.append({"path": f, "file": Path(f).name, "why": why, "seconds": dur, "options": opts[:4]})
+        return out
+
+    def accept_version(self, tid, path):
+        """«Usar esta versión»: ese archivo cuenta como esa canción de tus playlists (aunque sea otra versión)."""
+        def run():
+            key = biblioteca.norm(Path(path).stem)
+            vl = dict(self._cfg.get("version_links") or {})
+            vl[tid] = sorted(set(vl.get(tid) or []) | {key})
+            self._cfg["version_links"] = vl
+            config.save(self._cfg)
+            analysis = self._build_analysis(light=True)
+            ok = any(r["id"] == tid and r["status"] != "missing" for p in analysis for r in p["tracks"])
+            return {"analysis": analysis, "matched": ok, "inbox": self.inbox_status()}
+        return self._task(run, f"version:{tid}", "Usar esta versión")
 
     # ---------- vigilante de la carpeta de descargas ----------
     def _inbox_signature(self):
