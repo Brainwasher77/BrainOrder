@@ -569,6 +569,110 @@ document.addEventListener('click', e => { if(!e.target.closest('#cmenu')) cmenuC
 document.addEventListener('keydown', e => { if(e.key === 'Escape') cmenuClose(); });
 window.addEventListener('blur', cmenuClose);
 document.addEventListener('scroll', cmenuClose, true);
+// ---------- comparar dos playlists ----------
+let CMP = {a:null, b:null, tab:'both', q:''};
+const cmpNorm = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
+  .replace(/\s*[\(\[]?\s*(feat\.?|ft\.?|featuring|con)\s+[^\)\]]*[\)\]]?/g,' ').replace(/[^a-z0-9]+/g,'');
+// una canción se reconoce por su id, su ISRC, el mismo archivo o el mismo artista + título (sin tildes ni «feat.»)
+function cmpKeys(r){
+  const k = ['id:'+r.id];
+  if(r.isrc) k.push('isrc:'+r.isrc.toUpperCase());
+  if(r.source) k.push('src:'+r.source);
+  const t = cmpNorm(r.name), a = cmpNorm((r.artists||[])[0]);
+  if(t) k.push('at:'+a+'|'+t);
+  return k;
+}
+function cmpRun(A, B){
+  return memo('cmp:'+A.id+':'+B.id, () => {
+    const idx = new Map(); B.tracks.forEach((r,j) => cmpKeys(r).forEach(k => { if(!idx.has(k)) idx.set(k, j); }));
+    const usedB = new Set(), both = [], onlyA = [];
+    for(const r of A.tracks){
+      let j; for(const k of cmpKeys(r)){ const x = idx.get(k); if(x!==undefined && !usedB.has(x)){ j = x; break; } }
+      if(j===undefined) onlyA.push(r); else { usedB.add(j); both.push([r, B.tracks[j]]); }
+    }
+    const onlyB = B.tracks.filter((r,j) => !usedB.has(j));
+    const have = r => (r.status==='ok'||r.status==='elsewhere'||r.status==='inbox') && r.source;
+    const arts = pl => { const m = new Map(); for(const r of pl.tracks) for(const a of (r.artists||[])){ const k = cmpNorm(a); if(k && !m.has(k)) m.set(k, a); } return m; };
+    const aa = arts(A), ab = arts(B), cA = new Map();
+    for(const r of A.tracks) for(const a of (r.artists||[])){ const k = cmpNorm(a); if(ab.has(k)) cA.set(k, (cA.get(k)||0)+1); }
+    const shared = [...cA.entries()].sort((x,y)=>y[1]-x[1]).map(([k]) => aa.get(k));
+    const bpm = pl => { const v = pl.tracks.map(r=>+r.bpm).filter(x=>x>0); return v.length ? Math.round(v.reduce((s,x)=>s+x,0)/v.length) : null; };
+    const keys = pl => { const m = {}; for(const r of pl.tracks) if(r.key) m[r.key]=(m[r.key]||0)+1; return Object.entries(m).sort((x,y)=>y[1]-x[1]).slice(0,3).map(x=>x[0]); };
+    const union = both.length + onlyA.length + onlyB.length;
+    return {both, onlyA, onlyB, union, sim: union ? Math.round(both.length/union*100) : 0,
+      pA: A.tracks.length ? Math.round(both.length/A.tracks.length*100) : 0, pB: B.tracks.length ? Math.round(both.length/B.tracks.length*100) : 0,
+      bothHave: both.filter(([x,y]) => have(x)||have(y)).length, shared, artA: aa.size, artB: ab.size,
+      bpmA: bpm(A), bpmB: bpm(B), keyA: keys(A), keyB: keys(B)};
+  });
+}
+function cmpPick(i){
+  const pl = S.analysis[i]; if(!pl) return;
+  const opts = S.analysis.map((p,j)=>[p,j]).filter(([p,j]) => j!==i && !p.ignored);
+  if(!opts.length){ toast('No hay otra playlist para comparar.', true); return; }
+  modal(`<h3>⚖️ Comparar «${esc(pl.name)}» con…</h3>
+    <select id="cmpWith" style="width:100%;margin:6px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit">
+      ${opts.map(([p,j])=>`<option value="${esc(p.id)}">${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' (sin analizar)':''}</option>`).join('')}</select>
+    <div class="art">Te muestro cuántas canciones tienen en común, cuáles están solo en una y cuál se parece más. No cambia nada.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="cmpOpen(${jsq(pl.id)}, $('cmpWith').value)">Comparar</button></div>`);
+}
+function cmpOpen(a, b){ closeModal(); CMP = {a, b, tab:'both', q:''}; show('cmp'); }
+function cmpSet(side, id){ CMP[side] = id; CMP.q = ''; renderMain(); }
+function cmpSwap(){ [CMP.a, CMP.b] = [CMP.b, CMP.a]; CMP.tab = CMP.tab==='a'?'b':CMP.tab==='b'?'a':CMP.tab; renderMain(); }
+function cmpTab(t){ CMP.tab = t; renderMain(); }
+function cmpRows(c){ return CMP.tab==='both' ? c.both : CMP.tab==='a' ? c.onlyA.map(r=>[r,null]) : c.onlyB.map(r=>[null,r]); }
+async function cmpCopy(){
+  const A = S.analysis.find(p=>p.id===CMP.a), B = S.analysis.find(p=>p.id===CMP.b); if(!A||!B) return;
+  const rows = cmpRows(cmpRun(A,B)).map(([x,y]) => x||y);
+  const txt = rows.map(r => ((r.artists||[]).length ? r.artists.join(', ')+' - ' : '') + r.name).join('\n');
+  const x = await api().copy_text(txt); toast(x.ok ? `Copiadas ${rows.length} canciones.` : esc(x.error), !x.ok);
+}
+function cmpView(){
+  const A = (S.analysis||[]).find(p=>p.id===CMP.a), B = (S.analysis||[]).find(p=>p.id===CMP.b);
+  if(!A || !B) return `<div class="empty"><h3>Elige qué comparar</h3><p>Clic derecho en una playlist → <b>⚖️ Comparar con…</b></p></div>`;
+  const sel = (side, cur) => `<select onchange="cmpSet('${side}', this.value)" style="max-width:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-weight:650">
+    ${S.analysis.filter(p=>!p.ignored).map(p=>`<option value="${esc(p.id)}" ${p.id===cur?'selected':''}>${p.liked?'♥ ':''}${esc(p.name)}</option>`).join('')}</select>`;
+  const head = `<div class="vhead"><h2 style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">⚖️ ${sel('a', A.id)} <button class="ghost" title="Intercambiar" onclick="cmpSwap()">⇄</button> ${sel('b', B.id)}</h2>
+    <span class="sub">Compara las canciones (por Spotify, ISRC, el mismo archivo o artista + título). No cambia nada.</span></div>`;
+  const pend = [A,B].filter(p=>p.pending);
+  if(pend.length) return head + `<div class="empty"><h3>Falta analizar ${pend.map(p=>'«'+esc(p.name)+'»').join(' y ')}</h3>
+    <div style="display:flex;gap:10px;justify-content:center">${pend.map(p=>`<button class="primary" onclick="analyzePlaylist(${jsq(p.id)})">🔄 Analizar «${esc(p.name)}»</button>`).join('')}</div></div>`;
+  const c = cmpRun(A, B), nA = A.tracks.length, nB = B.tracks.length;
+  const verdict = A.id===B.id ? 'Es la misma playlist.' : c.sim>=90 ? 'Son prácticamente la misma playlist.' : c.sim>=50 ? 'Se parecen bastante.' : c.sim>=20 ? 'Comparten una parte.' : c.both.length ? 'Se parecen poco.' : 'No tienen canciones en común.';
+  const w = x => c.union ? (x/c.union*100) : 0;
+  const cards = `<div class="cards">
+    <div class="card ok" onclick="cmpTab('both')"><div class="k">En común</div><div class="v">${c.both.length}</div></div>
+    <div class="card" onclick="cmpTab('a')"><div class="k">Solo en «${esc(A.name)}»</div><div class="v" style="color:var(--info)">${c.onlyA.length}</div></div>
+    <div class="card" onclick="cmpTab('b')"><div class="k">Solo en «${esc(B.name)}»</div><div class="v" style="color:var(--org)">${c.onlyB.length}</div></div>
+    <div class="card"><div class="k">Parecido</div><div class="v">${c.sim}%</div></div></div>`;
+  const bar = `<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:var(--line)" title="Solo A · En común · Solo B">
+      <i style="width:${w(c.onlyA.length)}%;background:var(--info)"></i><i style="width:${w(c.both.length)}%;background:var(--ok)"></i><i style="width:${w(c.onlyB.length)}%;background:var(--org)"></i></div>
+    <div class="art" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><span><b style="color:var(--info)">■</b> solo «${esc(A.name)}»</span><span><b style="color:var(--ok)">■</b> en común</span><span><b style="color:var(--org)">■</b> solo «${esc(B.name)}»</span></div>`;
+  const facts = [
+    `<b>${verdict}</b>`,
+    `El <b>${c.pA}%</b> de «${esc(A.name)}» (${c.both.length} de ${nA}) está en «${esc(B.name)}», y el <b>${c.pB}%</b> de «${esc(B.name)}» (${c.both.length} de ${nB}) está en «${esc(A.name)}».`,
+    c.both.length ? `De las que tienen en común, tienes el archivo de <b>${c.bothHave}</b>${c.both.length-c.bothHave?` y faltan <b>${c.both.length-c.bothHave}</b>`:''}.` : '',
+    `Artistas: ${c.artA} en «${esc(A.name)}», ${c.artB} en «${esc(B.name)}», <b>${c.shared.length}</b> en las dos${c.shared.length?`: ${c.shared.slice(0,10).map(esc).join(', ')}${c.shared.length>10?'…':''}`:''}.`,
+    (c.bpmA||c.bpmB) ? `BPM promedio: ${c.bpmA??'—'} vs ${c.bpmB??'—'}${(c.keyA.length||c.keyB.length)?` · Keys más usadas: ${c.keyA.join(', ')||'—'} vs ${c.keyB.join(', ')||'—'}`:''}.` : '',
+  ].filter(Boolean).map(x=>`<div style="margin:4px 0">${x}</div>`).join('');
+  const tabs = [['both','En común',c.both.length],['a','Solo en «'+A.name+'»',c.onlyA.length],['b','Solo en «'+B.name+'»',c.onlyB.length]]
+    .map(([k,t,n])=>`<button class="${CMP.tab===k?'primary':''}" onclick="cmpTab('${k}')">${esc(t)} <span class="badge mono">${n}</span></button>`).join(' ');
+  const ST = {ok:['ok','La tienes'], elsewhere:['elsewhere','En otra carpeta'], inbox:['inbox','En descargas'], missing:['missing','Falta']};
+  const st = r => { const s = ST[r.status]||['missing',r.status||'—']; return `<span class="st ${s[0]}">${s[1]}</span>`; };
+  const q = cmpNorm(CMP.q);
+  let rows = cmpRows(c);
+  if(q) rows = rows.filter(([x,y]) => { const r = x||y; return cmpNorm(r.name+' '+(r.artists||[]).join(' ')).includes(q); });
+  const merge = plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}); setTimeout(()=>{ const s=$('plInto'); if(s){ s.value='${S.analysis.indexOf(B)}'; } },30)">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '';
+  const tb = rows.slice(0, 600).map(([x,y]) => { const r = x||y, h = x&&x.source ? x : y&&y.source ? y : r;
+    return `<tr><td class="mono" style="color:var(--mute)">${x?x.pos+1:'—'}</td><td class="mono" style="color:var(--mute)">${y?y.pos+1:'—'}</td>
+      <td><div>${esc(r.name)}</div><div class="art">${esc((r.artists||[]).join(', '))}</div></td>
+      <td>${st(h)}</td><td class="mono" style="color:var(--mute)">${[h.key,h.bpm?Math.round(h.bpm)+' BPM':''].filter(Boolean).join(' · ')}</td></tr>`; }).join('');
+  return head + cards + bar + `<div class="box" style="margin:14px 0">${facts}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">${tabs}
+      <input placeholder="Buscar…" value="${esc(CMP.q)}" oninput="CMP.q=this.value; clearTimeout(CMP.t); CMP.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\\'Buscar…\\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
+      <button class="ghost" onclick="cmpCopy()" title="Copiar «Artista - Título» de esta lista">📋 Copiar</button> ${merge}</div>
+    ${rows.length ? `<table><tr><th title="Posición en «${esc(A.name)}»">A</th><th title="Posición en «${esc(B.name)}»">B</th><th>Canción</th><th>Estado</th><th>Key / BPM</th></tr>${tb}</table>${rows.length>600?`<div class="art">Mostrando 600 de ${rows.length}.</div>`:''}`
+      : `<div class="empty"><h3>Nada aquí</h3></div>`}`;
+}
 // ---------- clic derecho en una playlist: renombrar, fusionar, eliminar (en todas partes) ----------
 const PL_DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', engine:'Engine DJ', m3u:'Playlists M3U'};
 function plDjNames(){ return Object.entries(S.dests||{}).filter(([k,x])=>x.enabled).map(([k,x])=>x.label||PL_DJ_LABEL[k]||k); }
@@ -587,7 +691,7 @@ function plPlace(pl){
 }
 function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='spotify' && !plForeign(p)) || (p.source==='carpetas' && !p.origin)); }
 function plMenu(pl, i){
-  const it = [['#', pl.name], ['✏️ Renombrar…', () => plRename(i)]];
+  const it = [['#', pl.name], ['⚖️ Comparar con…', () => cmpPick(i), false, 'Cuántas canciones tienen en común y cuáles están solo en una'], '-', ['✏️ Renombrar…', () => plRename(i)]];
   it.push(['🔀 Fusionar con otra…', () => plMerge(i), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
   it.push('-');
   it.push(['🗑 Eliminar…', () => plDelete(i), !!pl.liked, pl.liked ? '«Me gusta» no se puede eliminar (desactívala en Ajustes)' : 'Eliminarla en BrainOrder, tus programas de DJ y su plataforma']);
@@ -866,6 +970,7 @@ function renderMain(){
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
+  if(S.view==='cmp' && S.analysis){ m.innerHTML = cmpView(); return; }
   if(!anySource() && !S.analysis){
     m.innerHTML = `<div class="empty"><h3>¿De dónde vienen tus playlists?</h3>
       <p><b>Spotify</b>: pon el Client ID de tu app de desarrollador en Ajustes y toca Conectar Spotify.<br>
