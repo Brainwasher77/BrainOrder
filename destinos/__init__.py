@@ -1,7 +1,8 @@
 """Programas de DJ a los que se replican las playlists.
 
 Cada destino expone: KEY, LABEL, available(cfg), enabled(cfg), running(),
-sync(analysis, cfg, progress) -> stats, fix_paths(cfg, moved, repoint) (rutas tras mover archivos).
+sync(analysis, cfg, progress) -> stats, fix_paths(cfg, moved, repoint) (rutas tras mover archivos),
+edit(cfg, renames, deletes) (renombrar / eliminar playlists dentro de la carpeta de BrainOrder).
 """
 from . import engine, m3u, rekordbox, serato, traktor
 

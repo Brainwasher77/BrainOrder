@@ -251,3 +251,46 @@ def fix_paths(cfg, moved, repoint=None):
     finally:
         lib.db.close()
     return {"refs": n, "backup": bk}
+
+
+def edit(cfg, renames=None, deletes=None):
+    """Renombra / elimina playlists dentro de la carpeta de BrainOrder en Engine DJ (respaldo antes)."""
+    renames, deletes = dict(renames or {}), list(deletes or [])
+    if not (renames or deletes) or not available(cfg):
+        return None
+    folder = cfg.get("rekordbox_folder") or "BrainOrder"
+    with sqlite3.connect(f"file:{db_path(cfg)}?mode=ro", uri=True) as ro:
+        f = ro.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (folder,)).fetchone()
+        names = {r[0] for r in ro.execute("SELECT title FROM Playlist WHERE parentListId = ?", (f[0],))} if f else set()
+    if not any(o in names for o in renames) and not any(n in names for n in deletes):
+        return {"renamed": 0, "deleted": 0}
+    _open(cfg)
+    bk = backup(cfg)
+    lib = Library(cfg)
+    out = {"renamed": 0, "deleted": 0, "backup": bk}
+    try:
+        with lib.db:
+            fid = lib.db.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (folder,)).fetchone()[0]
+            lid = lambda t: (lib.db.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = ?", (t, fid)).fetchone() or [None])[0]
+
+            def drop(i):
+                lib.db.execute("DELETE FROM PlaylistEntity WHERE listId = ?", (i,))
+                lib.db.execute("DELETE FROM Playlist WHERE id = ?", (i,))  # el trigger re-encadena la lista
+            for old, new in renames.items():
+                i = lid(old)
+                if i is None:
+                    continue
+                if lid(new) is not None:
+                    drop(i)
+                    out["deleted"] += 1
+                else:
+                    lib.db.execute("UPDATE Playlist SET title = ? WHERE id = ?", (new, i))
+                    out["renamed"] += 1
+            for name in deletes:
+                i = lid(name)
+                if i is not None:
+                    drop(i)
+                    out["deleted"] += 1
+    finally:
+        lib.db.close()
+    return out

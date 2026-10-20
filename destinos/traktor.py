@@ -274,3 +274,43 @@ def fix_paths(cfg, moved, repoint=None):
         n += col.rekey(old, new)
     col.save()
     return {"refs": n, "backup": bk}
+
+
+def edit(cfg, renames=None, deletes=None):
+    """Renombra / elimina playlists dentro de la carpeta de BrainOrder en Traktor (con respaldo)."""
+    renames, deletes = dict(renames or {}), list(deletes or [])
+    path = nml_path(cfg)
+    if not (renames or deletes) or not path or not Path(path).exists():
+        return None
+    col = Collection(path)
+    folder = cfg.get("rekordbox_folder") or "BrainOrder"
+    fnode = next((n for n in col._root_subnodes().findall("NODE")
+                  if n.get("TYPE") == "FOLDER" and n.get("NAME") == folder), None)
+    fsub = fnode.find("SUBNODES") if fnode is not None else None
+    if fsub is None:
+        return {"renamed": 0, "deleted": 0}
+    lists = {n.get("NAME"): n for n in fsub.findall("NODE") if n.get("TYPE") == "PLAYLIST"}
+    if not any(o in lists for o in renames) and not any(n in lists for n in deletes):
+        return {"renamed": 0, "deleted": 0}
+    _open(cfg)
+    bk = backup(path)
+    out = {"renamed": 0, "deleted": 0, "backup": bk}
+    for old, new in renames.items():
+        n = lists.get(old)
+        if n is None:
+            continue
+        if new in lists:
+            fsub.remove(n)
+            out["deleted"] += 1
+        else:
+            n.set("NAME", new)
+            lists[new] = lists.pop(old)
+            out["renamed"] += 1
+    for name in deletes:
+        n = lists.pop(name, None)
+        if n is not None:
+            fsub.remove(n)
+            out["deleted"] += 1
+    fsub.set("COUNT", str(len(fsub.findall("NODE"))))
+    col.save()
+    return out

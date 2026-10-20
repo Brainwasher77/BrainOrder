@@ -55,3 +55,27 @@ def sync(analysis, cfg, progress=None):
 
 def fix_paths(cfg, moved, repoint=None):
     return None  # se regeneran en el próximo Organizar
+
+
+def edit(cfg, renames=None, deletes=None):
+    """Las .m3u8 que genera BrainOrder: se renombran o se quitan (no son música)."""
+    if not folder(cfg):
+        return None
+    sub = Path(folder(cfg)) / safe_name(cfg.get("rekordbox_folder") or "BrainOrder")
+    f = lambda name: sub / f"{safe_name(name)}.m3u8"
+    out = {"renamed": 0, "deleted": 0}
+    for old, new in (renames or {}).items():
+        if f(old).exists():
+            if f(new).exists():
+                f(old).unlink()
+                out["deleted"] += 1
+            else:
+                text = f(old).read_text("utf-8", "replace").replace(f"#PLAYLIST:{old}", f"#PLAYLIST:{new}", 1)
+                f(new).write_text(text, "utf-8")
+                f(old).unlink()
+                out["renamed"] += 1
+    for name in deletes or []:
+        if f(name).exists():
+            f(name).unlink()
+            out["deleted"] += 1
+    return out

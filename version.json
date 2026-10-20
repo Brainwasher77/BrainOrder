@@ -1,5 +1,5 @@
 {
-  "version": "2.10.1",
-  "build": 29,
-  "notes": "Si borras un archivo repetido de una carpeta-playlist, la canción sigue en la playlist usando la otra copia (como en Rekordbox) y Spotify no se toca. Solo sale si borras la única copia o con clic derecho → Quitar de esta playlist."
+  "version": "2.11.0",
+  "build": 30,
+  "notes": "Clic derecho en una playlist: Renombrar, Fusionar con otra o Eliminar, en todas partes (BrainOrder, su carpeta, Spotify, Rekordbox, Traktor, Serato, Engine DJ y M3U). Los archivos se mueven con Deshacer y nunca se borran; si Spotify está en pausa, allá queda en la cola."
 }

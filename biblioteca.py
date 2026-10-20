@@ -403,7 +403,8 @@ def analyze(playlists, cfg, progress=None):
     # carpeta hogar de cada canción: la primera playlist según la prioridad que eligió el usuario
     # (por defecto: orden de Spotify y Me gusta al final)
     ordered = reglas.ordered_playlists(playlists, rules)
-    folders = {pl["id"]: str(resolve_folder(dest_root, pl["name"])) for pl in playlists}
+    # las playlists de una carpeta tuya (importadas) usan esa carpeta; las demás, la de tu carpeta de playlists
+    folders = {pl["id"]: pl.get("folder") or str(resolve_folder(dest_root, pl["name"])) for pl in playlists}
     # la misma canción puede venir de varias fuentes (Spotify, Deezer, archivos): se une por ISRC
     hk = lambda t: ("isrc:" + t["isrc"].upper()) if t.get("isrc") else t["id"]
     home, home_name = {}, {}

@@ -513,6 +513,8 @@ window.onSpotifyQueue = async (x) => {
   fdLoad(); render();
   const ok = (x.done||[]).map(d => d.kind==='import'
       ? `✅ «${esc(d.name)}» ya está en Spotify (${d.found} canciones${d.reused?', en tu playlist que ya existía':''})${d.unresolved?` · no encontré ${d.unresolved}`:''}.`
+      : d.kind==='rename' ? `✅ En Spotify ya se llama «${esc(d.name)}».`
+      : d.kind==='delete' ? `✅ «${esc(d.name)}» ya se eliminó en Spotify.`
       : `✅ ${d.found} canción(es) agregadas a «${esc(d.name)}» en Spotify.`);
   const bad = (x.failed||[]).map(f => `<span style="color:var(--org)">No pude pasar «${esc(f.name)}» a Spotify: ${esc(f.error)}</span>`);
   if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
@@ -536,7 +538,7 @@ function foldersView(){
   const qBox = q.length ? `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="flex:1">⏳ Pendientes para Spotify (${q.length})</b>
         ${qp ? `<span class="art">Spotify en pausa hasta las ${new Date(d.spotify.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}: se hacen solas después.</span>` : `<button onclick="spqRun()">Pasarlas ya</button>`}</div>
-      <table style="margin-top:8px">${q.map(j=>`<tr><td><b>${esc(j.name)}</b><div class="art">${j.kind==='import'?'Crear la playlist en Spotify':`Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+      <table style="margin-top:8px">${q.map(j=>`<tr><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
         <td style="text-align:right"><button class="ghost" onclick="spqCancel(${jsq(j.id)})" title="No pasarla a Spotify (en BrainOrder se queda como está)">Cancelar</button></td></tr>`).join('')}</table></div>` : '';
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>
@@ -567,7 +569,132 @@ document.addEventListener('click', e => { if(!e.target.closest('#cmenu')) cmenuC
 document.addEventListener('keydown', e => { if(e.key === 'Escape') cmenuClose(); });
 window.addEventListener('blur', cmenuClose);
 document.addEventListener('scroll', cmenuClose, true);
+// ---------- clic derecho en una playlist: renombrar, fusionar, eliminar (en todas partes) ----------
+const PL_DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', engine:'Engine DJ', m3u:'Playlists M3U'};
+function plDjNames(){ return Object.entries(S.dests||{}).filter(([k,x])=>x.enabled).map(([k,x])=>x.label||PL_DJ_LABEL[k]||k); }
+function plForeign(pl){ return !!(S.foreign && S.foreign[pl.id] && S.foreign[pl.id].choice==='integrar'); }
+// dónde vive la playlist y si esa plataforma deja cambiarla desde aquí
+function plPlace(pl){
+  if(pl.liked) return {label:'Me gusta', edit:false, note:'En Spotify «Me gusta» no tiene nombre: cambia el nombre que usa BrainOrder y tus programas.'};
+  if(pl.source==='spotify' || !pl.source) return plForeign(pl)
+    ? {label:'Spotify', edit:false, note:'Es de otra persona: en Spotify no se puede renombrar; al eliminarla se quita de tu biblioteca.'}
+    : {label:'Spotify', edit:true};
+  if(pl.source==='carpetas') return pl.origin
+    ? {label:PL_DJ_LABEL[pl.origin]||pl.origin, edit:false, origin:true, note:`Nació en ${PL_DJ_LABEL[pl.origin]||pl.origin}: la playlist original allí no se toca (solo la copia de BrainOrder).`}
+    : {label:'tu carpeta', edit:true, folder:true};
+  const L = {deezer:'Deezer', archivos:'el archivo exportado'}[pl.source] || pl.source;
+  return {label:L, edit:false, note:`${L} no deja cambiarla desde BrainOrder: el cambio queda en BrainOrder y tus programas de DJ.`};
+}
+function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='spotify' && !plForeign(p)) || (p.source==='carpetas' && !p.origin)); }
+function plMenu(pl, i){
+  const it = [['#', pl.name], ['✏️ Renombrar…', () => plRename(i)]];
+  it.push(['🔀 Fusionar con otra…', () => plMerge(i), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
+  it.push('-');
+  it.push(['🗑 Eliminar…', () => plDelete(i), !!pl.liked, pl.liked ? '«Me gusta» no se puede eliminar (desactívala en Ajustes)' : 'Eliminarla en BrainOrder, tus programas de DJ y su plataforma']);
+  return it;
+}
+function plWhere(pl, verb){
+  const P = plPlace(pl), dj = plDjNames();
+  const li = [`<li><b>BrainOrder</b></li>`];
+  if(P.folder || pl.folder) li.push(`<li><b>Su carpeta</b> <span class="art">${esc(short(pl.folder||''))}</span></li>`);
+  if(dj.length) li.push(`<li><b>${dj.map(esc).join(', ')}</b> <span class="art">(la playlist dentro de «${esc(S.settings.rekordbox_folder||'BrainOrder')}»; tienen que estar cerrados)</span></li>`);
+  if(P.edit && !pl.liked) li.push(`<li><b>${esc(P.label)}</b>${pl.source==='spotify'&&S.spPause&&S.spPause*1000>Date.now()?' <span class="art">— Spotify está en pausa: se hace sola en cuanto lo permita</span>':''}</li>`);
+  return `<div style="font-weight:650;margin:10px 0 4px">${verb} en:</div><ul style="margin:0 0 6px 18px;padding:0;line-height:1.7">${li.join('')}</ul>${P.note?`<div class="art">${esc(P.note)}</div>`:''}`;
+}
+function plRename(i){
+  const pl = S.analysis[i]; if(!pl) return;
+  modal(`<h3>✏️ Renombrar «${esc(pl.name)}»</h3>
+    <input id="plNewName" value="${esc(pl.name)}" style="width:100%;margin:6px 0 4px" onkeydown="if(event.key==='Enter')plRenameGo(${i})">
+    ${plWhere(pl, 'Cambia el nombre')}
+    <div class="art" style="margin-top:6px">Los archivos pasan a la carpeta con el nombre nuevo (con rutas corregidas en tus programas y Deshacer en Historial).</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="plRenameGo(${i})">Renombrar</button></div>`);
+  setTimeout(() => { const x = $('plNewName'); if(x){ x.focus(); x.select(); } }, 30);
+}
+async function plRenameGo(i){
+  const pl = S.analysis[i], name = ($('plNewName').value||'').trim();
+  if(!name || name === pl.name){ closeModal(); return; }
+  closeModal(); toast(`Renombrando «${esc(pl.name)}»…`);
+  const r = await api().playlist_rename(pl.id, name);
+  if(!r.ok){ taskErr(r); return; }
+  if(r.analysis){ await applyAnalysis(r); if(r.index!==null && r.index!==undefined) S.view = 'pl:' + r.index; render(); }
+  toast(`✅ «${esc(r.result.old)}» ahora se llama <b>«${esc(r.result.name)}»</b>.` + plResult(r.result));
+}
+function plMerge(i){
+  const pl = S.analysis[i]; if(!pl) return;
+  const opts = S.analysis.map((p,j)=>[p,j]).filter(([p,j]) => j!==i && plCanMergeInto(p));
+  if(!opts.length){ toast('No hay otra playlist donde fusionarla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true); return; }
+  const dj = plDjNames();
+  modal(`<h3>🔀 Fusionar «${esc(pl.name)}» con…</h3>
+    <select id="plInto" style="width:100%;margin:6px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit">${opts.map(([p,j])=>`<option value="${j}">${esc(p.name)}${p.source==='carpetas'?' (carpeta)':''}</option>`).join('')}</select>
+    <div class="box" style="line-height:1.6">
+      • Las canciones de <b>«${esc(pl.name)}»</b> se agregan al final de la que elijas (solo las que no tenga), también en Spotify.<br>
+      • Sus archivos pasan a la carpeta de esa playlist; si ya tenía la canción, la copia repetida va a <code>_duplicados</code>.<br>
+      • Después <b>«${esc(pl.name)}»</b> se elimina en BrainOrder${dj.length?', '+dj.map(esc).join(', '):''}${plPlace(pl).edit&&!pl.liked?' y '+esc(plPlace(pl).label):''}.<br>
+      • Se puede deshacer el movimiento de archivos en Historial.</div>
+    ${plPlace(pl).note?`<div class="art">${esc(plPlace(pl).note)}</div>`:''}
+    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="plMergeDj" checked> Actualizar ya la playlist en mis programas de DJ</label>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="plMergeGo(${i})">Fusionar</button></div>`);
+}
+async function plMergeGo(i){
+  const pl = S.analysis[i], into = S.analysis[+$('plInto').value], dj = $('plMergeDj') && $('plMergeDj').checked;
+  closeModal(); toast(`Fusionando «${esc(pl.name)}» con «${esc(into.name)}»…`);
+  const r = await api().playlist_merge(pl.id, into.id);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); if(r.index!==null && r.index!==undefined) S.view = 'pl:' + r.index; render(); loadHist();
+  const x = r.result;
+  let msg = `✅ «${esc(x.name)}» quedó dentro de <b>«${esc(x.into)}»</b>` + (x.count!==undefined?` (${x.count} canción(es) nuevas para ella)`:'') + '.' + plResult(x);
+  if(x.no_file) msg += `<br><span style="color:var(--org)">${x.no_file} no tenían archivo: en una playlist de carpeta solo entran las que tienes.</span>`;
+  toast(msg);
+  if(dj && r.pid){
+    const g = await api().organize(true, r.pid, null);
+    if(g.ok){ await applyAnalysis(g); render(); toast(msg + djSummary(g.dj)); } else toast(msg + `<br><span style="color:var(--org)">Programas de DJ: ${esc(g.error)}</span>`, true);
+  }
+}
+function plDelete(i){
+  const pl = S.analysis[i]; if(!pl) return;
+  const sp = (pl.source==='spotify' || !pl.source) && !pl.liked;
+  modal(`<h3>🗑 Eliminar «${esc(pl.name)}»</h3>
+    ${plWhere(pl, 'Se elimina')}
+    ${sp && !plForeign(pl) ? `<div class="art">Si te arrepientes, Spotify deja recuperarla desde tu cuenta (spotify.com → Cuenta → Recuperar playlists).</div>` : ''}
+    <div style="font-weight:650;margin:12px 0 6px">¿Y sus archivos? <span class="art" style="font-weight:400">(la música nunca se borra)</span></div>
+    <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="plDelF" value="move" checked style="margin-top:3px"><span><b>Ordenarlos</b><br>
+      <span class="art">Las canciones que también están en otras playlists pasan a la carpeta de esas; las demás a <code>_Playlists eliminadas/${esc(pl.name)}</code>. Se puede deshacer en Historial.</span></span></label>
+    <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="plDelF" value="keep" style="margin-top:3px"><span><b>Dejarlos en su carpeta</b><br>
+      <span class="art">La carpeta queda como está (no te vuelvo a preguntar si la importo).</span></span></label>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" style="background:var(--miss);border-color:var(--miss);color:#fff" onclick="plDeleteGo(${i})">Eliminar</button></div>`);
+}
+async function plDeleteGo(i){
+  const pl = S.analysis[i], f = (document.querySelector('input[name=plDelF]:checked')||{}).value || 'move';
+  closeModal(); toast(`Eliminando «${esc(pl.name)}»…`);
+  const r = await api().playlist_delete(pl.id, f);
+  if(!r.ok){ taskErr(r); return; }
+  if(S.view === 'pl:' + i) S.view = 'stats';
+  await applyAnalysis(r); render(); loadHist();
+  toast(`✅ «${esc(r.result.name)}» eliminada.` + plResult(r.result));
+}
+function plResult(x){
+  let m = '';
+  const f = x.files || x.move;
+  if(f && f.kept) m += `<br>📁 Los archivos se quedaron en <code>${esc(short(f.kept))}</code>.`;
+  else if(f && f.moved !== undefined){
+    if(x.move) m += `<br>📁 ${f.moved} archivo(s) en <code>${esc(short(f.to))}</code>.`;
+    else m += `<br>📁 ${f.moved} archivo(s) ordenados` + (f.home?` · ${f.home} a otras playlists`:'') + (f.dup?` · ${f.dup} repetidas a <code>_duplicados</code>`:'') + (f.rest && !x.into?` · ${f.rest} a <code>${esc(short(f.rest_dir))}</code>`:'') + '.';
+    if(f.skipped && f.skipped.length) m += `<br><span style="color:var(--org)">${f.skipped.length} no se movieron: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
+    m += undoLink(f);
+  }
+  const dj = Object.values(x.dj||{});
+  if(dj.length) m += `<br>🎛️ ${dj.map(d => esc(d.label)).join(', ')}: listo` + (dj.some(d=>d.backup)?' (con respaldo)':'') + '.';
+  for(const w of (x.dj_warnings||[])) m += `<br><span style="color:var(--org)">${esc(w)}</span>`;
+  if(x.spotify) m += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: el cambio se hace solo en cuanto lo permita.` : `<br>🟢 Spotify: listo${x.spotify.added!==undefined?` (${x.spotify.added} canciones agregadas)`:''}.`;
+  if(x.platform_untouched) m += `<br><span class="art">${esc(x.platform_untouched)} no deja cambiarla desde aquí: el cambio quedó en BrainOrder y tus programas.</span>`;
+  if(x.origin_untouched) m += `<br><span class="art">La playlist original en ${esc(x.origin_untouched)} no se tocó.</span>`;
+  return m;
+}
 document.addEventListener('contextmenu', e => {
+  const nv = e.target.closest('#plNav a[data-v]');
+  if(nv){ e.preventDefault(); const i = +nv.dataset.v.split(':')[1], pl = S.analysis && S.analysis[i]; if(pl) cmenuOpen(e.clientX, e.clientY, plMenu(pl, i)); return; }
   const tr = e.target.closest('#tbl tr[data-pos], #tbl tr[data-mid]');
   if(!tr) return;
   e.preventDefault();

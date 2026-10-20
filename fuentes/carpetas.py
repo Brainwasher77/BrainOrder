@@ -67,6 +67,21 @@ def forget(pid, paths):
         _msave(d)
 
 
+def remap(moved):
+    """Archivos que BrainOrder movió: la memoria de las playlists pasa a la ruta nueva."""
+    if not moved:
+        return
+    with _MLOCK:
+        d = _mload()
+        changed = False
+        for pid, paths in d.items():
+            new = sorted({moved.get(p, p) for p in paths})
+            if new != sorted(paths):
+                d[pid], changed = new, True
+        if changed:
+            _msave(d)
+
+
 def member_paths(cfg, e, memo=None):
     """Canciones de la playlist importada: lo que hay en la carpeta + lo que tenía y borraste o moviste
     (esas se siguen usando desde la otra copia). Para programas de DJ, lo que diga el programa."""
@@ -76,7 +91,7 @@ def member_paths(cfg, e, memo=None):
     pid = entry_pid(e)
     remember(pid, files)
     have = set(files)
-    gone = [m for m in members(pid) if m not in have and not os.path.exists(m)]
+    gone = [m for m in members(pid) if m not in have]  # borradas o en otra carpeta: siguen en la playlist
     return sorted(files + gone, key=lambda p: p.lower())
 
 
@@ -145,6 +160,8 @@ def list_playlists(cfg, progress=None):
             continue
         meta = {"id": entry_pid(e), "name": e.get("name") or Path(e.get("path") or "").name, "source": KEY,
                 "snapshot": _snapshot(files), "total": len(files), "url": None}
+        if e.get("path"):
+            meta["folder"] = str(e["path"])  # su carpeta es la suya, no una nueva en la carpeta de playlists
         if e.get("program"):
             meta["origin"] = e["program"]
             meta["snapshot"] = f"{len(files)}:" + hashlib.sha1("\n".join(files).encode("utf-8")).hexdigest()[:12]

@@ -255,3 +255,35 @@ def fix_paths(cfg, moved, repoint=None):
                 _write(db, data, b)
                 n += c
     return {"refs": n, "backup": "BrainOrder respaldos"}
+
+
+def edit(cfg, renames=None, deletes=None):
+    """Renombra / quita crates dentro de la carpeta de BrainOrder en Serato (copia de respaldo antes)."""
+    renames, deletes = dict(renames or {}), list(deletes or [])
+    if not (renames or deletes) or not available(cfg):
+        return None
+    sub = home_serato(cfg) / "Subcrates"
+    parent = _crate_name(cfg.get("rekordbox_folder") or "BrainOrder")
+    f = lambda name: sub / f"{parent}%%{_crate_name(name)}.crate"
+    if not any(f(o).exists() for o in renames) and not any(f(n).exists() for n in deletes):
+        return {"renamed": 0, "deleted": 0}
+    if running():
+        raise SeratoError("Serato está abierto. Ciérralo y vuelve a intentarlo.")
+    b = _Backup(home_serato(cfg))
+    out = {"renamed": 0, "deleted": 0}
+    for old, new in renames.items():
+        if not f(old).exists():
+            continue
+        b.save(f(old))
+        if f(new).exists():
+            f(old).unlink()
+            out["deleted"] += 1
+        else:
+            os.replace(f(old), f(new))
+            out["renamed"] += 1
+    for name in deletes:
+        if f(name).exists():
+            b.save(f(name))
+            f(name).unlink()
+            out["deleted"] += 1
+    return out

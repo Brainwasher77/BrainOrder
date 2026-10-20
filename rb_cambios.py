@@ -184,3 +184,25 @@ def accept(state, rb_ids, pid_for=None):
             data.pop(rid, None)
     save_baseline(data)
     log(f"Rekordbox: foto actualizada para {len(rb_ids)} playlist(s)")
+
+
+def follow(renames=None, deletes=None, moved=None):
+    """BrainOrder renombró / eliminó playlists o movió archivos: la foto lo sigue, así no aparece
+    como un cambio que hiciste tú en Rekordbox."""
+    data = load_baseline()
+    if not data:
+        return
+    renames, deletes, moved = renames or {}, set(deletes or []), moved or {}
+    out = {}
+    for rid, b in data.items():
+        name = b.get("name")
+        if name in deletes:
+            continue
+        if name in renames:
+            if renames[name] in {x.get("name") for x in data.values()}:
+                continue  # fusionada en otra que ya existe
+            b = {**b, "name": renames[name]}
+        if moved:
+            b = {**b, "paths": [moved.get(p, p) for p in b.get("paths") or []]}
+        out[rid] = b
+    save_baseline(out)
