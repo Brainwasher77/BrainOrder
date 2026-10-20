@@ -1,5 +1,5 @@
 {
-  "version": "2.13.1",
-  "build": 33,
-  "notes": "Al comparar playlists se pueden ordenar por nombre, fecha de creación, canciones agregadas hace poco, cantidad o más en común. La lista de la izquierda también se ordena por fecha de creación."
+  "version": "2.13.2",
+  "build": 34,
+  "notes": "Al fusionar o eliminar una playlist su carpeta ya no queda rezagada ni aparece como «playlist nueva» (también las que quedaron de fusiones anteriores)."
 }
