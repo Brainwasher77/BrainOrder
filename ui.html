@@ -835,6 +835,8 @@ function plResult(x){
     if(f.skipped && f.skipped.length) m += `<br><span style="color:var(--org)">${f.skipped.length} no se movieron: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
     m += undoLink(f);
   }
+  const lo = f && f.leftover;
+  if(lo) m += `<br><span style="color:var(--org)">Quedaron ${lo.count} archivo(s) en <code>${esc(short(lo.path))}</code> que no se pudieron mover${lo.files&&lo.files.length?` (${lo.files.map(esc).join(', ')})`:''}. Esa carpeta ya no aparece como «playlist nueva».</span> <a class="lnk" onclick="reveal(${jsq(lo.path)})">Abrir</a>`;
   const dj = Object.values(x.dj||{});
   if(dj.length) m += `<br>🎛️ ${dj.map(d => esc(d.label)).join(', ')}: listo` + (dj.some(d=>d.backup)?' (con respaldo)':'') + '.';
   for(const w of (x.dj_warnings||[])) m += `<br><span style="color:var(--org)">${esc(w)}</span>`;

@@ -1420,6 +1420,21 @@ class Api:
                 config.log(f"vigilante de descargas: {e!r}")
 
     # ---------- carpetas y playlists nuevas -> ¿importarlas como playlist? ----------
+    def _retire_old_folders(self):
+        """Carpetas de playlists que fusionaste o eliminaste antes de esta versión y quedaron con algo adentro:
+        no son playlists nuevas (se reconocen por los movimientos de «Fusionar» / «Eliminar» en Historial)."""
+        import carpetas_nuevas as CN
+        try:
+            for f in sorted(historial.DIR.glob("*.json")) if historial.DIR.is_dir() else []:
+                op = json.loads(f.read_text("utf-8"))
+                if op.get("undone") or not str(op.get("label") or "").startswith(("Fusionar «", "Eliminar «")):
+                    continue
+                for d in {str(Path(a).parent) for a, _ in op.get("moves") or []}:
+                    if os.path.isdir(d):
+                        CN.mark(d, known=True, dismissed=True)
+        except Exception as e:
+            config.log(f"carpetas de playlists eliminadas: {e!r}")
+
     def _check_new_folders(self):
         """Avisa (una vez por sesión) de carpetas nuevas en tus carpetas de música, aunque estén vacías.
         Espera a que la carpeta deje de cambiar (por si todavía estás copiando archivos)."""
@@ -1427,6 +1442,7 @@ class Api:
         seen = getattr(self, "_fold_seen", None)
         if seen is None:
             seen = self._fold_seen = {}
+            self._retire_old_folders()
         told = self._told()
         new = [x for x in CN.pending(self._cfg, self._analysis(), with_counts=False) if x["new"]]
         ready = []
@@ -1767,12 +1783,35 @@ class Api:
                 out.append(f)
         return out
 
+    @staticmethod
+    def _plan_dest(src, dest_dir, planned, dupdir):
+        """Carpeta destino donde el archivo no choca con otro del mismo nombre (si choca va a _duplicados,
+        nunca se pisa ni se deja atrás)."""
+        name = Path(src).name
+        d, n = Path(dest_dir), 1
+        while (d / name).exists() or str(d / name) in planned:
+            d = Path(dupdir) if n == 1 else Path(dupdir) / str(n)
+            n += 1
+        planned.add(str(d / name))
+        return str(d)
+
+    def _leftover(self, folder):
+        """Si la carpeta no se pudo vaciar del todo, no se toma por una «playlist nueva»."""
+        import carpetas_nuevas as CN
+        folder = Path(folder)
+        if not folder.is_dir():
+            return None
+        CN.mark(folder, known=True, dismissed=True)
+        left = [f for f in folder.rglob("*") if f.is_file() and not f.name.startswith(".")]
+        return {"path": str(folder), "count": len(left), "files": [f.name for f in left[:5]]}
+
     def _move_folder(self, old, new, label):
         """Todo lo de la carpeta old pasa a new (con sus subcarpetas)."""
         old, new = Path(old), Path(new)
         if not old.is_dir() or old == new:
             return None
-        ops = [(str(f), str(new / f.relative_to(old).parent)) for f in self._folder_files(old)]
+        planned, dupdir = set(), Path(self._cfg["dest_root"]) / "_duplicados" / config.safe_name(new.name)
+        ops = [(str(f), self._plan_dest(f, new / f.relative_to(old).parent, planned, dupdir)) for f in self._folder_files(old)]
         new.mkdir(parents=True, exist_ok=True)
         res = self._relocate_ops(ops, label)
         rep = old / reportes.TXT_NAME
@@ -1780,7 +1819,7 @@ class Api:
             os.replace(rep, new / reportes.TXT_NAME)  # el informe de faltantes lo genera BrainOrder
         self._remove_if_empty(old)
         return {"from": str(old), "to": str(new), "moved": res["moved"], "skipped": res["skipped"],
-                "op_id": res.get("op_id"), "changes": res.get("changes") or {}}
+                "op_id": res.get("op_id"), "changes": res.get("changes") or {}, "leftover": self._leftover(old)}
 
     def _clear_folder(self, pl, folder, analysis, name, target=None, dup_of=None):
         """Vacía la carpeta de una playlist que se elimina (sin borrar música):
@@ -1808,21 +1847,23 @@ class Api:
         if dup_of is not None:
             dup_ids = {r["id"] for r in dup_of["tracks"] if r.get("source") and
                        not str(r["source"]).startswith(str(folder) + os.sep)}
-        by_src = {r["source"]: r for r in pl["tracks"] if r.get("source")}
+        import unicodedata
+        nk = (lambda x: os.path.normcase(unicodedata.normalize("NFC", str(x))))  # macOS guarda tildes en otra forma
+        by_src = {nk(r["source"]): r for r in pl["tracks"] if r.get("source")}
         rest = Path(target) if target else root / "_Playlists eliminadas" / config.safe_name(name)
         dupdir = root / "_duplicados" / config.safe_name(name)
-        ops, n = [], {"home": 0, "dup": 0, "rest": 0}
+        ops, n, planned = [], {"home": 0, "dup": 0, "rest": 0}, set()
         for f in self._folder_files(folder):
-            r = by_src.get(str(f))
+            r = by_src.get(nk(f))
             rel = f.relative_to(folder).parent
             if r and r["id"] in dup_ids:
-                ops.append((str(f), str(dupdir / rel)))
+                ops.append((str(f), self._plan_dest(f, dupdir / rel, planned, dupdir)))
                 n["dup"] += 1
             elif r and home.get(r["id"]) and Path(home[r["id"]]) != folder:
-                ops.append((str(f), home[r["id"]]))
+                ops.append((str(f), self._plan_dest(f, home[r["id"]], planned, dupdir)))
                 n["home"] += 1
             else:
-                ops.append((str(f), str(rest / rel)))
+                ops.append((str(f), self._plan_dest(f, rest / rel, planned, dupdir)))
                 n["rest"] += 1
         res = self._relocate_ops(ops, f"Eliminar «{name}»" if target is None else f"Fusionar «{name}»")
         rep = folder / reportes.TXT_NAME
@@ -1832,7 +1873,7 @@ class Api:
             except OSError:
                 pass
         self._remove_if_empty(folder)
-        return {**n, "moved": res["moved"], "skipped": res["skipped"], "op_id": res.get("op_id"),
+        return {**n, "moved": res["moved"], "skipped": res["skipped"], "op_id": res.get("op_id"), "leftover": self._leftover(folder),
                 "rest_dir": str(rest), "dup_dir": str(dupdir), "changes": res.get("changes") or {}}
 
     def _spotify_ready(self):
@@ -2295,12 +2336,14 @@ class Api:
 
     @staticmethod
     def _remove_if_empty(folder):
-        """Borra la carpeta (y subcarpetas) solo si quedó sin nada más que basura del sistema."""
-        junk = {".DS_Store", "Thumbs.db", "desktop.ini"}
+        """Borra la carpeta (y subcarpetas) solo si quedó sin nada más que basura del sistema
+        (.DS_Store, los «._archivo» que macOS deja en discos externos, Thumbs.db…) o el informe de faltantes."""
+        junk = {".DS_Store", "Thumbs.db", "desktop.ini", ".localized", "Icon\r", reportes.TXT_NAME}
+        is_junk = (lambda n: n in junk or n.startswith("._"))
         for d in sorted((x for x in folder.rglob("*") if x.is_dir()), key=lambda x: -len(x.parts)) + [folder]:
             try:
                 names = os.listdir(d)
-                if all(n in junk for n in names):
+                if all(is_junk(n) for n in names):
                     for n in names:
                         (d / n).unlink()
                     d.rmdir()
