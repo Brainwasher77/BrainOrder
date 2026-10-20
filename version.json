@@ -1,5 +1,5 @@
 {
-  "version": "2.14.1",
-  "build": 36,
-  "notes": "Los links de Deezer buscan la misma versión que tu playlist (antes podían llevar a un remix o a la versión larga y esa descarga quedaba «sin playlist»). Las descargas que son otra versión de una canción de tus playlists aparecen al organizar con «Usar esta versión»."
+  "version": "2.14.2",
+  "build": 37,
+  "notes": "Íconos centrados en sus botones (play/pausa, ✕, flechas…), números alineados en botones y filtros, y el círculo de «cargando» ya no aparece cuando no hay nada en curso."
 }
