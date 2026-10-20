@@ -55,9 +55,12 @@ def _write_json(p, data):
 
 
 UI_DEFAULTS = {"pl_sort": "spotify",       # orden de la lista de playlists
-               "rg_remember": False}       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
+               "rg_remember": False,       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
+               "cmp_sort": "list"}         # Comparar: orden de las playlists para elegir
 UI_CHOICES = {"pl_sort": {"spotify", "missing_desc", "missing_asc", "complete", "incomplete", "organize",
-                          "name", "size"}}
+                          "name", "size", "created_desc", "created_asc", "updated_desc"},
+              "cmp_sort": {"list", "name", "name_desc", "created_desc", "created_asc", "updated_desc",
+                           "size_desc", "size_asc", "common"}}
 
 
 def _os_error_text(e):
@@ -685,6 +688,7 @@ class Api:
             a["url"] = p.get("url")
             a["analyzed_snapshot"] = p.get("analyzed_snapshot")
             a["total"] = p.get("total")
+            a["created"], a["updated"], a["dated_by"] = self._pl_dates(p, a)
             origin = p.get("origin") or (self._cfg.get("playlist_origin") or {}).get(p["id"])
             if origin:
                 a["origin"] = origin  # nació en ese programa de DJ: no se vuelve a copiar a él
@@ -754,6 +758,24 @@ class Api:
             return {"analysis": self._build_analysis(light=True)}
         return self._task(run, f"forget:{pid}", "Quitar de la playlist")
 
+    def _pl_dates(self, p, a):
+        """(creada, última canción agregada, de dónde salió la fecha). Spotify no da la fecha de creación de una
+        playlist: se usa cuándo se agregó su primera canción; si no se sabe, cuándo se creó su carpeta."""
+        dates = [t.get("added_at") for t in p.get("tracks") or [] if t.get("added_at")]
+        if dates:
+            return min(dates)[:10], max(dates)[:10], "canciones"
+        if p.get("first_added"):
+            return p["first_added"][:10], None, "canciones"
+        folder = p.get("folder") or a.get("folder")
+        try:
+            st = os.stat(folder)
+        except (OSError, TypeError):
+            return None, None, None
+        import datetime as _dt
+        born = getattr(st, "st_birthtime", None) or min(st.st_ctime, st.st_mtime)
+        day = lambda x: _dt.datetime.fromtimestamp(x).strftime("%Y-%m-%d")
+        return day(born), day(st.st_mtime), "carpeta"
+
     def _attach_reports(self, analysis):
         for pl in analysis:
             txt = Path(pl["folder"]) / reportes.TXT_NAME
@@ -799,7 +821,8 @@ class Api:
                 new = []
                 for m in metas:
                     o = old.get(m["id"]) or {}
-                    new.append({**m, "tracks": o.get("tracks"), "analyzed_snapshot": o.get("analyzed_snapshot")})
+                    new.append({**m, "tracks": o.get("tracks"), "analyzed_snapshot": o.get("analyzed_snapshot"),
+                                **({"first_added": o["first_added"]} if o.get("first_added") else {})})
                 if not spotify_ok:  # Spotify apagado o sin conexión: se conserva lo que ya había
                     new = [p for p in data["playlists"] if fuentes.source_of(p["id"]) == "spotify"] + new
                 data["playlists"] = new
@@ -894,7 +917,8 @@ class Api:
               try:
                 sp = self._sp()
                 self._sub_stage(0, 0.7)
-                cached = {p["id"]: {"snapshot": p.get("analyzed_snapshot"), "tracks": p.get("tracks")}
+                cached = {p["id"]: {"snapshot": p.get("analyzed_snapshot"), "tracks": p.get("tracks"),
+                                    "first_added": p.get("first_added")}
                           for p in self._load_sp()["playlists"]}
                 playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress, cached)]
                 for p in playlists:

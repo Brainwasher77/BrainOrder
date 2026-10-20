@@ -1,5 +1,5 @@
 {
-  "version": "2.13.0",
-  "build": 32,
-  "notes": "Cambiar el nombre de la carpeta de BrainOrder la renombra en todos tus programas (sin duplicar, sin «Playlists nuevas» ni playlists «borradas» en Cambios en Rekordbox); también si la renombras dentro de Rekordbox o si la cambiaste en una versión anterior. Cancelar con ✕ o clic derecho lo que está en cola y los pendientes para Spotify."
+  "version": "2.13.1",
+  "build": 33,
+  "notes": "Al comparar playlists se pueden ordenar por nombre, fecha de creación, canciones agregadas hace poco, cantidad o más en común. La lista de la izquierda también se ordena por fecha de creación."
 }
