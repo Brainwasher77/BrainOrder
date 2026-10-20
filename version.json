@@ -1,5 +1,5 @@
 {
-  "version": "2.13.2",
-  "build": 34,
-  "notes": "Al fusionar o eliminar una playlist su carpeta ya no queda rezagada ni aparece como «playlist nueva» (también las que quedaron de fusiones anteriores)."
+  "version": "2.14.0",
+  "build": 35,
+  "notes": "Vista previa: botón ▶ en cada canción para escucharla (tu archivo, desde el 25 %, o 30 s de Deezer si te falta). Reproductor abajo con pausa (barra espaciadora), adelantar y saltar a la mitad."
 }

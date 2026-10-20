@@ -209,6 +209,25 @@ class Api:
             self._send(None, None, "done")
             self._tl.task = None
 
+    def preview(self, path=None, artist="", title="", isrc=""):
+        """Vista previa de una canción: tu archivo (si lo tienes) o 30 s de Deezer (si te falta)."""
+        import audio_server
+        if path and os.path.isfile(path):
+            audio_server.start(lambda: [self._cfg.get("dest_root"), self._cfg.get("inbox")]
+                               + list(self._cfg.get("library_roots") or []))
+            if audio_server._allowed(path):
+                return {"ok": True, "url": audio_server.url_for(path), "kind": "file"}
+        if not title:
+            return {"ok": False, "error": "No hay archivo para escuchar."}
+        try:
+            r = deezer.preview(artist or "", title, isrc or "")
+        except Exception as e:
+            config.log(f"vista previa Deezer: {e!r}")
+            return {"ok": False, "error": "No pude conectar con Deezer para la vista previa."}
+        if not r:
+            return {"ok": False, "error": "No encontré una vista previa de esa canción."}
+        return {"ok": True, "url": r["preview"], "kind": "deezer", "link": r.get("link"), "found": r.get("title")}
+
     def cancel_task(self, key):
         """Cancela una tarea que está en cola (esperando su turno). Una que ya empezó no se corta a mitad,
         para no dejar archivos ni programas a medio cambiar."""
