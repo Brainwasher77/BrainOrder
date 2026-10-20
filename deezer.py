@@ -132,3 +132,33 @@ def _save():
             os.replace(tmp, CACHE)
     except Exception:
         pass
+
+
+_PREV = {}
+
+
+def preview(artist, title, isrc=""):
+    """Vista previa de 30 s de Deezer (para canciones que todavía no tienes). -> {"preview", "link", "title"} o None"""
+    key = (isrc or "", norm(artist), core_title(title))
+    hit = _PREV.get(key)
+    if hit and time.time() - hit[0] < 600:  # los links de Deezer vencen pronto: se renuevan cada 10 min
+        return hit[1]
+    out = None
+    if isrc:
+        d = _get(f"{API}/track/isrc:{urllib.parse.quote(isrc)}")
+        if isinstance(d, dict) and d.get("preview") and not d.get("error"):
+            out = d
+    if out is None:
+        q = f"{artist} {core_title(title)}".strip()
+        d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 8}))
+        want_a, want_t = norm(artist), core_title(title)
+        items = [i for i in ((d.get("data") or []) if isinstance(d, dict) else []) if i.get("preview")]
+        for item in items:
+            a = norm((item.get("artist") or {}).get("name", ""))
+            if (not want_a or want_a in a or a in want_a) and core_title(item.get("title", "")) == want_t:
+                out = item
+                break
+    res = {"preview": out["preview"], "link": out.get("link"),
+           "title": f"{(out.get('artist') or {}).get('name', '')} - {out.get('title', '')}"} if out else None
+    _PREV[key] = (time.time(), res)
+    return res

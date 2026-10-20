@@ -210,6 +210,17 @@ button.cp:hover:not(:disabled){background:rgba(255,255,255,.04)}
 .vhead .sp{flex-wrap:wrap;justify-content:flex-end}
 button.xl{border-color:rgba(52,211,153,.45);color:#34d399}
 button.xl:hover{background:rgba(52,211,153,.1);border-color:#34d399}
+#pvBar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:19;display:none;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:8px 12px;box-shadow:0 10px 30px rgba(0,0,0,.45);width:min(760px,calc(100vw - 32px))}
+#pvBar.on{display:flex}
+body.pv-on #main{padding-bottom:90px} body.pv-on .toast{bottom:84px}
+#pvBar .pvt{flex:1;min-width:0}
+#pvBar .pvt b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+#pvBar .pvt span{font-size:11.5px;color:var(--mute)}
+#pvBar input[type=range]{width:100%;accent-color:var(--acid);margin:2px 0 0}
+#pvBar button{padding:4px 9px;font-size:12px}
+#pvBar button.pvp{width:36px;height:36px;border-radius:50%;padding:0;font-size:15px;background:var(--acid);color:#111;border-color:var(--acid)}
+.pv{width:22px;height:22px;padding:0;border-radius:50%;font-size:10px;line-height:20px;margin-right:6px;vertical-align:1px;background:transparent;border:1px solid var(--line);color:var(--mute);flex:none}
+.pv:hover,.pv.on{border-color:var(--acid);color:var(--acid)}
 .toast{position:fixed;bottom:18px;right:18px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;max-width:420px;display:none;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .toast.show{display:block}
 .toast.err{border-color:var(--miss)}
@@ -265,6 +276,12 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 
 <div class="modal-bg" id="mbg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div id="pvBar"><button class="pvp" id="pvPlay" onclick="pvToggle()" title="Reproducir / pausar (barra espaciadora)">▶</button>
+  <div class="pvt"><b id="pvName"></b><span id="pvInfo"></span><input type="range" id="pvSeek" min="0" max="1000" value="0" oninput="pvSeekTo(this.value)"></div>
+  <span class="mono" id="pvTime" style="font-size:12px;color:var(--mute);white-space:nowrap">0:00</span>
+  <button class="ghost" onclick="pvJump(-15)" title="Atrás 15 s">−15</button><button class="ghost" onclick="pvJump(15)" title="Adelante 15 s">+15</button>
+  <button class="ghost" id="pvDrop" onclick="pvPct(.5)" title="Ir a la mitad (donde suele estar el drop)">½</button>
+  <button class="ghost" onclick="pvClose()" title="Cerrar">✕</button><audio id="pvAudio" preload="auto"></audio></div>
 <div class="cmenu" id="cmenu"></div>
 
 <script>
@@ -569,6 +586,55 @@ function foldersView(){
         <td style="text-align:right"><button class="ghost" onclick="fdUnimport(${i})">Dejar de usarla como playlist</button></td></tr>`).join('')}</table>` : ''}`;
 }
 
+// ---------- vista previa: escuchar una canción (tu archivo, o 30 s de Deezer si te falta) ----------
+const PV = {key:null, kind:null};
+const pvKey = r => (r.source || '') + '|' + r.id;
+function pvBtn(r){
+  return `<button class="pv${PV.key===pvKey(r)?' on':''}" data-pk="${esc(pvKey(r))}" data-src="${esc(r.source||'')}" data-a="${esc((r.artists||[])[0]||'')}" data-t="${esc(r.name||'')}" data-i="${esc(r.isrc||'')}"
+    title="${r.source?'Escuchar tu archivo':'Escuchar 30 s de Deezer (no tienes el archivo)'}" onclick="event.stopPropagation(); pvFrom(this)">${PV.key===pvKey(r)&&!$('pvAudio').paused?'❚❚':'▶'}</button>`;
+}
+function pvFrom(el){ pvPlay({source: el.dataset.src, artists: [el.dataset.a], name: el.dataset.t, isrc: el.dataset.i, id: el.dataset.pk.split('|').pop()}); }
+async function pvPlay(r){
+  const au = $('pvAudio'), k = pvKey(r);
+  if(PV.key === k && au.src){ pvToggle(); return; }
+  PV.key = k; pvMark();
+  if(!PV.unlocked){ PV.unlocked = true; try{ au.src = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=='; au.play().catch(()=>{}); }catch(e){} }  // macOS: el sonido se habilita con este clic
+  $('pvName').textContent = ((r.artists||[]).filter(Boolean).join(', ') ? r.artists.filter(Boolean).join(', ') + ' – ' : '') + r.name;
+  $('pvInfo').textContent = 'Cargando…'; $('pvBar').classList.add('on'); document.body.classList.add('pv-on'); $('pvPlay').textContent = '…';
+  const x = await api().preview(r.source || null, (r.artists||[])[0] || '', r.name || '', r.isrc || '');
+  if(PV.key !== k) return;  // elegiste otra mientras cargaba
+  if(!x.ok){ $('pvInfo').textContent = x.error; $('pvPlay').textContent = '▶'; PV.key = null; pvMark(); return; }
+  PV.kind = x.kind;
+  $('pvInfo').innerHTML = x.kind === 'file' ? esc(base(r.source)) : `Vista previa de 30 s de Deezer${x.found?' · '+esc(x.found):''}${x.link?` · <a class="lnk" onclick="openUrl(${jsq(x.link)})">Abrir en Deezer</a>`:''}`;
+  $('pvDrop').style.display = x.kind === 'file' ? '' : 'none';
+  au.src = x.url;
+  au.onloadedmetadata = () => { if(x.kind === 'file' && au.duration > 90) au.currentTime = au.duration * 0.25; };  // salta la intro
+  au.onerror = () => { if(PV.key === k){ $('pvInfo').textContent = 'No se pudo reproducir este archivo aquí (formato no compatible con la vista previa).'; $('pvPlay').textContent = '▶'; } };
+  try{ await au.play(); }catch(e){ $('pvPlay').textContent = '▶'; $('pvInfo').innerHTML += ' · <b>dale ▶ para escuchar</b>'; }
+}
+function pvToggle(){ const au = $('pvAudio'); if(!au.src) return; au.paused ? au.play() : au.pause(); }
+function pvJump(d){ const au = $('pvAudio'); if(au.duration) au.currentTime = Math.max(0, Math.min(au.duration - 1, au.currentTime + d)); }
+function pvPct(f){ const au = $('pvAudio'); if(au.duration) au.currentTime = au.duration * f; }
+function pvSeekTo(v){ const au = $('pvAudio'); if(au.duration) au.currentTime = au.duration * v / 1000; }
+function pvClose(){ const au = $('pvAudio'); au.pause(); au.removeAttribute('src'); au.load(); PV.key = null; $('pvBar').classList.remove('on'); document.body.classList.remove('pv-on'); pvMark(); }
+function pvMark(){
+  const au = $('pvAudio'), playing = au && !au.paused;
+  document.querySelectorAll('.pv[data-pk]').forEach(b => { const on = b.dataset.pk === PV.key; b.classList.toggle('on', on); b.textContent = on && playing ? '❚❚' : '▶'; });
+}
+const pvFmt = t => isFinite(t) ? `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}` : '0:00';
+(() => { const au = document.getElementById('pvAudio'); if(!au) return;
+  try{ const v = parseFloat(localStorage.getItem('pvVol')); if(v >= 0 && v <= 1) au.volume = v; }catch(e){}
+  au.addEventListener('volumechange', () => { try{ localStorage.setItem('pvVol', au.volume); }catch(e){} });
+  au.addEventListener('play', () => { $('pvPlay').textContent = '❚❚'; pvMark(); });
+  au.addEventListener('pause', () => { $('pvPlay').textContent = '▶'; pvMark(); });
+  au.addEventListener('ended', () => { $('pvPlay').textContent = '▶'; pvMark(); });
+  au.addEventListener('timeupdate', () => { if(au.duration){ $('pvSeek').value = Math.round(au.currentTime / au.duration * 1000); $('pvTime').textContent = `${pvFmt(au.currentTime)} / ${pvFmt(au.duration)}`; } });
+})();
+document.addEventListener('keydown', e => {  // barra espaciadora: pausa / sigue (si no estás escribiendo)
+  if(e.code !== 'Space' || !PV.key || /INPUT|TEXTAREA|SELECT/.test((e.target.tagName||'')) || e.target.isContentEditable) return;
+  e.preventDefault(); pvToggle();
+});
+
 // ---------- menú del clic derecho sobre una canción ----------
 let CM = null;  // {items: [[texto, fn] | '-' | ['#', título]]}
 function cmenuOpen(x, y, items){
@@ -711,7 +777,7 @@ function cmpView(){
   const merge = plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}); setTimeout(()=>{ const s=$('plInto'); if(s){ s.value='${S.analysis.indexOf(B)}'; } },30)">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '';
   const tb = rows.slice(0, 600).map(([x,y]) => { const r = x||y, h = x&&x.source ? x : y&&y.source ? y : r;
     return `<tr><td class="mono" style="color:var(--mute)">${x?x.pos+1:'—'}</td><td class="mono" style="color:var(--mute)">${y?y.pos+1:'—'}</td>
-      <td><div>${esc(r.name)}</div><div class="art">${esc((r.artists||[]).join(', '))}</div></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn(h)}<div><div>${esc(r.name)}</div><div class="art">${esc((r.artists||[]).join(', '))}</div></div></div></td>
       <td>${st(h)}</td><td class="mono" style="color:var(--mute)">${[h.key,h.bpm?Math.round(h.bpm)+' BPM':''].filter(Boolean).join(' · ')}</td></tr>`; }).join('');
   return head + cards + bar + `<div class="box" style="margin:14px 0">${facts}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">${tabs}
@@ -866,7 +932,7 @@ document.addEventListener('contextmenu', e => {
 });
 function songMenu(r, pl){
   const label = (r.artists && r.artists.length ? r.artists.join(', ') + ' - ' : '') + r.name;
-  const it = [['#', label]];
+  const it = [['#', label], [r.source ? '▶ Escuchar' : '▶ Escuchar 30 s (Deezer)', () => pvPlay(r)]];
   const finder = S.win ? 'Mostrar en el Explorador' : 'Mostrar en Finder';
   if(pl && r.source && (r.status==='ok' || r.status==='elsewhere')){
     const cur = dirOf(r.source), seen = new Set([cur]);
@@ -1097,7 +1163,7 @@ function renderTable(){
     if(!rows.length){ t.innerHTML = `<div class="empty"><h3>No te falta nada 🎉</h3></div>`; return; }
     html = `<table><tr><th>#</th><th>Canción</th><th>Irían en</th><th></th></tr>` + limRows(rows).map((r,i)=>`<tr data-mid="${esc(r.id)}">
       <td class="mono" style="color:var(--mute)">${i+1}</td>
-      <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
       <td><span class="chip" onclick="reveal(${jsq(r.dest_dir)})" title="${esc(short(r.dest_dir))}">📁 ${esc(r.home_name)}</span>${r.pls.filter(p=>p.name!==r.home_name).map(p=>`<span class="chip" style="opacity:.7">♫ ${esc(p.name)}</span>`).join('')}</td>
       <td style="white-space:nowrap">${links(r)}</td></tr>`).join('') + moreRows(rows.length, 4) + `</table>`;
   } else if(S.view==='organize'){
@@ -1138,7 +1204,7 @@ function renderTable(){
     html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}</div>
       <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
-      <td><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
       <td>${keyChip(r)}</td>
       <td style="white-space:nowrap">${energyBar(r.energy)}</td>
       <td class="mono" style="color:var(--mute)">${r.bpm?Math.round(r.bpm):''}</td>

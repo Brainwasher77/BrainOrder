@@ -62,6 +62,9 @@ Carpetas por defecto en instalaciones nuevas (se cambian en el asistente o en Aj
 - Música por playlist: `Música/Playlists BrainOrder/<playlist>`
 - Descargas por organizar: `Música/Descargas BrainOrder`
 
+## Vista previa
+Cada canción tiene **▶** (playlists, faltantes, Comparar y clic derecho → Escuchar). Si tienes el archivo suena tu archivo (desde el 25 %, sin la intro); si te falta, 30 s de Deezer. Reproductor abajo con pausa (barra espaciadora), adelantar, −15/+15 s y ½ (ir a la mitad). Tus archivos se sirven solo dentro del computador (127.0.0.1, con clave de sesión) y solo los de tus carpetas de música.
+
 ## Ordenar playlists, clic derecho y Reorganizar
 - Debajo de «Tus playlists» eliges el orden: de Spotify, más o menos faltantes primero, completas o menos completas primero, con descargas por organizar, por nombre o por cantidad de canciones. Se recuerda.
 - **Clic derecho en una canción**: moverla a su carpeta, a la de esta playlist, a la de otra playlist que también la tenga o a cualquier carpeta de tu biblioteca; fijarla donde está; mostrarla en Finder; abrirla en Spotify/Deezer o copiar su nombre. Cada movimiento corrige Rekordbox y demás programas y se puede deshacer en Historial.
