@@ -294,3 +294,46 @@ def edit(cfg, renames=None, deletes=None):
     finally:
         lib.db.close()
     return out
+
+
+def root_children(cfg, name):
+    if not available(cfg):
+        return None
+    with sqlite3.connect(f"file:{db_path(cfg)}?mode=ro", uri=True) as ro:
+        f = ro.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (name,)).fetchone()
+        return [r[0] for r in ro.execute("SELECT title FROM Playlist WHERE parentListId = ?", (f[0],))] if f else None
+
+
+def rename_root(cfg, old, new):
+    if root_children(cfg, old) is None:
+        return {"renamed": False}
+    _open(cfg)
+    bk = backup(cfg)
+    lib = Library(cfg)
+    out = {"renamed": True, "replaced": 0, "backup": bk}
+    try:
+        with lib.db:
+            dup = lib.db.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (new,)).fetchone()
+            if dup:
+                kids = [r[0] for r in lib.db.execute("SELECT id FROM Playlist WHERE parentListId = ?", (dup[0],))]
+                for k in kids:
+                    lib.db.execute("DELETE FROM PlaylistEntity WHERE listId = ?", (k,))
+                out["replaced"] = len(kids)
+                lib.db.execute("DELETE FROM Playlist WHERE id = ?", (dup[0],))  # el trigger borra sus hijas
+            lib.db.execute("UPDATE Playlist SET title = ? WHERE title = ? AND parentListId = 0", (new, old))
+    finally:
+        lib.db.close()
+    return out
+
+
+def root_folders(cfg):
+    if not available(cfg):
+        return {}
+    with sqlite3.connect(f"file:{db_path(cfg)}?mode=ro", uri=True) as ro:
+        rows = ro.execute("SELECT id, title, parentListId FROM Playlist").fetchall()
+    names = {r[0]: r[1] for r in rows if r[2] == 0}
+    out = {}
+    for i, t, parent in rows:
+        if parent in names:
+            out.setdefault(names[parent], []).append(t)
+    return out

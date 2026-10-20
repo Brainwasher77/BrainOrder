@@ -291,3 +291,69 @@ def edit_playlists(cfg, renames=None, deletes=None):
         except Exception:
             pass
     return out
+
+
+def root_children(cfg, name):
+    con = connect_ro()
+    try:
+        alive = "COALESCE(rb_local_deleted, 0) = 0"
+        row = con.execute(f"SELECT ID FROM djmdPlaylist WHERE ParentID = 'root' AND Name = ? AND Attribute = 1 AND {alive}",
+                          (name,)).fetchone()
+        if row is None:
+            return None
+        return [r[0] for r in con.execute(f"SELECT Name FROM djmdPlaylist WHERE ParentID = ? AND {alive}", (row[0],))]
+    finally:
+        con.close()
+
+
+def rename_root(cfg, old, new):
+    """Renombra la carpeta de BrainOrder (las playlists conservan su id). Si ya existía una carpeta con el
+    nombre nuevo (por ejemplo la creó un Organizar), se reemplaza por la vieja, que es la que tiene tu historia."""
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto.")
+    if root_children(cfg, old) is None:
+        return {"renamed": False}
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"renamed": False, "replaced": 0, "backup": bk.name, "deleted_ids": []}
+    try:
+        src = _find_child(db, "root", old, 1)
+        dup = _find_child(db, "root", new, 1)
+        if dup is not None:
+            for p in list(db.get_playlist(ParentID=dup.ID)):
+                out["deleted_ids"].append(str(p.ID))
+                db.delete_playlist(p)
+                out["replaced"] += 1
+            db.delete_playlist(dup)
+        db.rename_playlist(src, new)
+        db.commit()
+        out["renamed"] = True
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise RekordboxError(f"No pude renombrar la carpeta en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return out
+
+
+def root_folders(cfg):
+    """{nombre de carpeta en la raíz: [nombres de lo que tiene adentro]}"""
+    con = connect_ro()
+    try:
+        alive = "COALESCE(rb_local_deleted, 0) = 0"
+        out = {}
+        for fid, name in con.execute(f"SELECT ID, Name FROM djmdPlaylist WHERE ParentID = 'root' AND Attribute = 1 AND {alive}"):
+            out.setdefault(name, []).extend(r[0] for r in con.execute(f"SELECT Name FROM djmdPlaylist WHERE ParentID = ? AND {alive}", (fid,)))
+        return out
+    finally:
+        con.close()

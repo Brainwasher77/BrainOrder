@@ -79,3 +79,35 @@ def edit(cfg, renames=None, deletes=None):
             f(name).unlink()
             out["deleted"] += 1
     return out
+
+
+def root_children(cfg, name):
+    if not folder(cfg):
+        return None
+    d = Path(folder(cfg)) / safe_name(name)
+    return [f.stem for f in d.glob("*.m3u8")] if d.is_dir() else None
+
+
+def rename_root(cfg, old, new):
+    if not folder(cfg):
+        return {"renamed": False}
+    o, n = Path(folder(cfg)) / safe_name(old), Path(folder(cfg)) / safe_name(new)
+    if not o.is_dir():
+        return {"renamed": False}
+    if n.exists():
+        for f in n.glob("*.m3u8"):
+            f.unlink()  # se generan solas
+        try:
+            n.rmdir()
+        except OSError:
+            for f in o.glob("*.m3u8"):
+                os.replace(f, n / f.name)
+            return {"renamed": True}
+    os.replace(o, n)
+    return {"renamed": True}
+
+
+def root_folders(cfg):
+    if not folder(cfg) or not Path(folder(cfg)).is_dir():
+        return {}
+    return {d.name: [f.stem for f in d.glob("*.m3u8")] for d in Path(folder(cfg)).iterdir() if d.is_dir()}

@@ -102,6 +102,10 @@ header *{-webkit-app-region:no-drag}
 .trow .tp{width:40px;text-align:right;color:var(--text);font-weight:650}
 .trow.queued b::after{content:" · en cola";color:var(--org);font-weight:500}
 .trow.queued .pbar i{background:var(--line)}
+.trow .tx{width:22px;height:22px;padding:0;border-radius:6px;line-height:20px;font-size:12px;flex:none;background:transparent;border:1px solid transparent;color:var(--mute)}
+.trow button.tx:hover{border-color:var(--miss);color:var(--miss)}
+.spq-x{width:26px;height:26px;padding:0;border-radius:6px;line-height:24px;background:transparent;border:1px solid var(--line);color:var(--mute)}
+.spq-x:hover{border-color:var(--miss);color:var(--miss)}
 .pcard .big{font-size:56px;font-weight:800;letter-spacing:-.03em;color:var(--acid)}
 .pcard .pbar{display:block;width:100%;height:12px;margin:14px 0 10px}
 .spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--acid);border-radius:50%;animation:s .8s linear infinite;display:none}
@@ -225,7 +229,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 <div class="app">
   <header>
     <div class="logo">Brain<span>Order</span></div>
-    <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span></div>
+    <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span><a id="spqTag" class="lnk" style="display:none;margin-left:6px;color:var(--org)" onclick="spqModal()" title="Ver y cancelar lo que espera para Spotify"></a></div>
     <button class="ghost" id="btnConn" onclick="connect()">Conectar Spotify</button>
     <button onclick="openSettings()">Ajustes</button>
     <button onclick="exportMissing()" id="btnExport" disabled>Exportar a Excel</button>
@@ -295,8 +299,9 @@ function paintTasks(){
   $('prog').classList.toggle('busy', keys.length>0);
   if(keys.length) $('progTxt').textContent = keys.length===1 ? 'Trabajando…' : `${keys.length} tareas en curso`;
   box.innerHTML = keys.map(k => { const t=T[k];
-    return `<div class="trow${t.state==='queued'?' queued':''}"><b>${esc(t.label)}</b><span class="tm">${esc(t.msg||'')}</span>
-      <div class="pbar"><i style="width:${t.pct||0}%"></i></div><span class="tp mono">${t.state==='queued'?'–':(t.pct||0)+'%'}</span></div>`; }).join('');
+    return `<div class="trow${t.state==='queued'?' queued':''}" data-key="${esc(k)}"><b>${esc(t.label)}</b><span class="tm">${esc(t.msg||'')}</span>
+      <div class="pbar"><i style="width:${t.pct||0}%"></i></div><span class="tp mono">${t.state==='queued'?'–':(t.pct||0)+'%'}</span>
+      ${t.state==='queued' ? `<button class="tx" title="Cancelar (todavía no empieza)" onclick="cancelTask(${jsq(k)})">✕</button>` : '<span class="tx"></span>'}</div>`; }).join('');
   // botones y tarjetas que muestran el % de su propia tarea
   document.querySelectorAll('[data-task]').forEach(el => {
     const t = T[el.dataset.task], kind = el.dataset.kind;
@@ -324,7 +329,11 @@ function setAnalysis(analysis, rev){
   if(id){ const i = analysis.findIndex(p=>p.id===id); S.view = i>=0 ? `${m[1]}:${i}` : 'missing'; if(m[1]==='reorg' && i>=0) RG.i = i; }
 }
 const plIdx = id => (S.analysis||[]).findIndex(p=>p.id===id);
-function taskErr(r){ if(r.spotify_paused !== undefined){ S.spPause = r.spotify_paused; renderCore(); } if(r.dup) toast(esc(r.error)); else toast(esc(r.error), true); }
+async function cancelTask(k){
+  const t = T[k]; const r = await api().cancel_task(k);
+  toast(r.ok ? `Cancelando «${esc(t ? t.label : k)}»…` : esc(r.error), !r.ok);
+}
+function taskErr(r){ if(r.cancelled){ toast(esc(r.error)); return; } if(r.spotify_paused !== undefined){ S.spPause = r.spotify_paused; renderCore(); } if(r.dup) toast(esc(r.error)); else toast(esc(r.error), true); }
 const warnHtml = r => (r && r.warnings && r.warnings.length) ? '<br><span style="color:var(--org)">' + r.warnings.map(esc).join('<br>') + '</span>' : '';
 function toast(msg, err){ const t=$('toast'); t.innerHTML=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast', err?9000:5000); }
 function modal(html){ $('modal').innerHTML = html; $('mbg').classList.add('show'); }
@@ -503,8 +512,20 @@ async function spqRun(){
   fdLoad();
 }
 async function spqCancel(id){
-  await api().spotify_queue_cancel(id); fdLoad(); S.spQueue = Math.max(0,(S.spQueue||1)-1); renderCore();
-  toast('Listo: esa ya no pasa a Spotify (en BrainOrder sigue igual).');
+  const r = await api().spotify_queue_cancel(id); fdLoad(); S.spQueue = (r.jobs||[]).length; renderCore();
+  if($('spqList')) spqModal(r.jobs);
+  toast('Listo: ese pendiente se canceló (en BrainOrder todo sigue igual).');
+}
+// la lista de pendientes para Spotify, desde la cabecera
+async function spqModal(jobs){
+  if(!jobs){ const r = await api().spotify_queue(); jobs = r.jobs || []; }
+  if(!jobs.length){ if($('spqList')) closeModal(); toast('No hay nada pendiente para Spotify.'); return; }
+  const what = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
+  modal(`<h3>⏳ Pendientes para Spotify</h3>
+    <div class="art" style="margin-bottom:8px">Se hacen solos en cuanto Spotify lo permita. Cancela los que ya no quieras (con ✕ o clic derecho).</div>
+    <table id="spqList">${jobs.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${what(j)}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+      <td style="text-align:right;width:40px"><button class="spq-x" onclick="spqCancel(${jsq(j.id)})" title="Cancelar este pendiente">✕</button></td></tr>`).join('')}</table>
+    <div class="actions"><button onclick="closeModal()">Cerrar</button></div>`);
 }
 window.onSpotifyQueue = async (x) => {
   S.spQueue = x.left;
@@ -538,8 +559,8 @@ function foldersView(){
   const qBox = q.length ? `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="flex:1">⏳ Pendientes para Spotify (${q.length})</b>
         ${qp ? `<span class="art">Spotify en pausa hasta las ${new Date(d.spotify.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}: se hacen solas después.</span>` : `<button onclick="spqRun()">Pasarlas ya</button>`}</div>
-      <table style="margin-top:8px">${q.map(j=>`<tr><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
-        <td style="text-align:right"><button class="ghost" onclick="spqCancel(${jsq(j.id)})" title="No pasarla a Spotify (en BrainOrder se queda como está)">Cancelar</button></td></tr>`).join('')}</table></div>` : '';
+      <table style="margin-top:8px">${q.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+        <td style="text-align:right;width:40px"><button class="spq-x" onclick="spqCancel(${jsq(j.id)})" title="Cancelar este pendiente (en BrainOrder se queda como está)">✕</button></td></tr>`).join('')}</table></div>` : '';
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>
     ${qBox}${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
@@ -797,6 +818,11 @@ function plResult(x){
   return m;
 }
 document.addEventListener('contextmenu', e => {
+  const tk = e.target.closest('#tasks .trow[data-key]');
+  if(tk){ e.preventDefault(); const k = tk.dataset.key, t = T[k]; if(!t) return;
+    cmenuOpen(e.clientX, e.clientY, [['#', t.label], t.state==='queued' ? ['✕ Cancelar', () => cancelTask(k)] : ['✕ Cancelar', null, true, 'Ya empezó: no se corta a mitad para no dejar cosas a medias']]); return; }
+  const sq = e.target.closest('[data-spq]');
+  if(sq){ e.preventDefault(); cmenuOpen(e.clientX, e.clientY, [['#', sq.dataset.name||'Pendiente para Spotify'], ['✕ Cancelar este pendiente', () => spqCancel(sq.dataset.spq)]]); return; }
   const nv = e.target.closest('#plNav a[data-v]');
   if(nv){ e.preventDefault(); const i = +nv.dataset.v.split(':')[1], pl = S.analysis && S.analysis[i]; if(pl) cmenuOpen(e.clientX, e.clientY, plMenu(pl, i)); return; }
   const tr = e.target.closest('#tbl tr[data-pos], #tbl tr[data-mid]');
@@ -907,7 +933,9 @@ function renderCore(){
   $('dot').classList.toggle('on', S.connected);
   const pausa = S.spPause && S.spPause*1000 > Date.now();
   $('connTxt').textContent = (pausa ? `Spotify en pausa hasta las ${new Date(S.spPause*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}` : (S.connected ? 'Spotify conectado' : 'Sin conectar'))
-    + (S.spQueue ? ` · ${S.spQueue} pendiente${S.spQueue===1?'':'s'}` : '');
+;
+  $('spqTag').style.display = S.spQueue ? '' : 'none';
+  $('spqTag').textContent = S.spQueue ? `· ${S.spQueue} pendiente${S.spQueue===1?'':'s'}` : '';
   $('connTxt').title = (pausa ? 'Spotify limitó a tu app por exceso de consultas. Mientras tanto se usa lo último que se leyó; Deezer, archivos y tu música siguen funcionando.' : '')
     + (S.spQueue ? (pausa?' ':'') + `Hay ${S.spQueue} cosa(s) esperando para pasar a Spotify (las ves en «Playlists nuevas»); se hacen solas en cuanto Spotify lo permita.` : '');
   $('dot').style.background = pausa ? 'var(--org)' : '';
@@ -1540,8 +1568,18 @@ async function cxSave(){
   render();
   const dz = (r.info||{}).deezer;
   toast('Conexiones guardadas.' + (dz&&dz.user?`<br>Deezer: perfil de <b>${esc(dz.user)}</b>.`:'') + (dz&&dz.playlists.length?`<br>Deezer: ${dz.playlists.map(esc).join(', ')}.`:'')
-    + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'') + '<br>Dale ⟳ para traer las playlists.', !!(r.warnings||[]).length);
+    + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'') + folderRenMsg((r.info||{}).folder_rename) + '<br>Dale ⟳ para traer las playlists.', !!(r.warnings||[]).length);
 }
+// cambiaste el nombre de la carpeta de BrainOrder en tus programas de DJ: se renombró (no se duplicó)
+function folderRenMsg(x){
+  if(!x) return '';
+  let m = '';
+  const done = Object.values(x.done||{});
+  if(done.length) m += `<br>🎛️ Carpeta renombrada a <b>«${esc(x.name)}»</b> en ${done.map(esc).join(', ')}: son las mismas playlists, no se duplicaron.`;
+  if((x.pending||[]).length) m += `<br><span style="color:var(--org)">${x.pending.map(esc).join(', ')}: se renombra en cuanto lo cierres.</span>`;
+  return m;
+}
+window.onFolderRenamed = x => toast('✅' + folderRenMsg(x).replace(/^<br>/, ' '));
 
 // ---------- asistente de primer uso ----------
 let W = null;
@@ -2075,7 +2113,7 @@ async function organize(){
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
-  msg += djSummary(r.dj);
+  msg += folderRenMsg(r.folder_rename) + djSummary(r.dj);
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
   const skipped = ((r.dj||{}).rekordbox||{}).stats ? r.dj.rekordbox.stats.skipped||[] : [];
   Object.values(r.dj||{}).forEach(x=>{ const s_ = x.stats||{};
@@ -2153,7 +2191,7 @@ async function saveSettings(){
   const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
   if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();
-  toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).`);
+  toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).` + folderRenMsg(r && r.folder_rename));
 }
 
 window.addEventListener('pywebviewready', async () => {

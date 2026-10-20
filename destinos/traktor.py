@@ -314,3 +314,52 @@ def edit(cfg, renames=None, deletes=None):
     fsub.set("COUNT", str(len(fsub.findall("NODE"))))
     col.save()
     return out
+
+
+def _root_folder(col, name):
+    return next((n for n in col._root_subnodes().findall("NODE") if n.get("TYPE") == "FOLDER" and n.get("NAME") == name), None)
+
+
+def root_children(cfg, name):
+    path = nml_path(cfg)
+    if not path or not Path(path).exists():
+        return None
+    f = _root_folder(Collection(path), name)
+    sub = f.find("SUBNODES") if f is not None else None
+    return None if f is None else [n.get("NAME") for n in (sub.findall("NODE") if sub is not None else [])]
+
+
+def rename_root(cfg, old, new):
+    path = nml_path(cfg)
+    if not path or not Path(path).exists():
+        return {"renamed": False}
+    col = Collection(path)
+    src = _root_folder(col, old)
+    if src is None:
+        return {"renamed": False}
+    _open(cfg)
+    bk = backup(path)
+    col = Collection(path)
+    src, dup = _root_folder(col, old), _root_folder(col, new)
+    root = col._root_subnodes()
+    out = {"renamed": True, "replaced": 0, "backup": bk}
+    if dup is not None:
+        sub = dup.find("SUBNODES")
+        out["replaced"] = len(sub.findall("NODE")) if sub is not None else 0
+        root.remove(dup)
+        root.set("COUNT", str(len(root.findall("NODE"))))
+    src.set("NAME", new)
+    col.save()
+    return out
+
+
+def root_folders(cfg):
+    path = nml_path(cfg)
+    if not path or not Path(path).exists():
+        return {}
+    out = {}
+    for f in Collection(path)._root_subnodes().findall("NODE"):
+        if f.get("TYPE") == "FOLDER":
+            sub = f.find("SUBNODES")
+            out[f.get("NAME")] = [n.get("NAME") for n in (sub.findall("NODE") if sub is not None else [])]
+    return out

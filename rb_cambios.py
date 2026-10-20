@@ -21,6 +21,7 @@ from config import SUPPORT_DIR, log
 from plataforma import native
 
 BASELINE = SUPPORT_DIR / "rb_baseline.json"
+FOUND = {"name": None, "renamed": False}  # carpeta de BrainOrder que se leyó la última vez en Rekordbox
 _LOCK = threading.Lock()
 
 
@@ -65,10 +66,25 @@ def _read_direct(cfg, src):
     con = rekordbox_sync.connect_ro(src)
     try:
         alive = "COALESCE(rb_local_deleted, 0) = 0"
-        folder = cfg.get("rekordbox_folder") or "BrainOrder"
+        import carpeta_dj
+        folder = carpeta_dj.for_program(cfg, "rekordbox")
         row = con.execute(f"SELECT ID FROM djmdPlaylist WHERE ParentID = 'root' AND Name = ? AND Attribute = 1 AND {alive} "
                           "ORDER BY Seq LIMIT 1", (folder,)).fetchone()
+        FOUND.update(name=folder, renamed=False)
         if row is None:
+            # ¿le cambiaste el nombre a la carpeta en Rekordbox? se reconoce por sus playlists (mismos id)
+            ids = list(load_baseline())
+            if ids:
+                marks = ",".join("?" * len(ids))
+                cand = con.execute(f"SELECT p.ParentID, f.Name, COUNT(*) n FROM djmdPlaylist p JOIN djmdPlaylist f ON f.ID = p.ParentID "
+                                   f"WHERE p.ID IN ({marks}) AND f.ParentID = 'root' AND f.Attribute = 1 "
+                                   f"AND COALESCE(f.rb_local_deleted, 0) = 0 GROUP BY p.ParentID ORDER BY n DESC LIMIT 1",
+                                   ids).fetchone()
+                if cand and cand[2] >= max(1, len(ids) // 2):
+                    row = (cand[0],)
+                    FOUND.update(name=cand[1], renamed=True)
+        if row is None:
+            FOUND.update(name=None)
             return {}
         pls = con.execute(f"SELECT ID, Name FROM djmdPlaylist WHERE ParentID = ? AND COALESCE(Attribute, 0) = 0 AND {alive}",
                           (row[0],)).fetchall()
@@ -116,7 +132,8 @@ def _read_copy(cfg, path=None):
                 shutil.copy2(f, Path(tmpdir) / ("master.db" + suffix))
         db = DB(path=Path(tmpdir) / "master.db")
         try:
-            folder = cfg.get("rekordbox_folder") or "BrainOrder"
+            import carpeta_dj
+            folder = carpeta_dj.for_program(cfg, "rekordbox")
             root = next((p for p in db.get_playlist(ParentID="root", Name=folder) if (p.Attribute or 0) == 1), None)
             if root is None:
                 return {}
@@ -141,6 +158,8 @@ def diff(baseline, state, analysis=None):
     """Lista de cambios entre la foto y Rekordbox. Cada cambio tiene un id estable."""
     if state is None:
         return []
+    if not state and baseline and FOUND.get("name") is None:
+        return []  # no encontré la carpeta de BrainOrder: no se puede decir que borraste tus playlists
     by_name = {}
     for pl in analysis or []:
         by_name.setdefault(pl["name"], pl)
@@ -206,3 +225,13 @@ def follow(renames=None, deletes=None, moved=None):
             b = {**b, "paths": [moved.get(p, p) for p in b.get("paths") or []]}
         out[rid] = b
     save_baseline(out)
+
+
+def drop_ids(rids):
+    """Playlists que ya no existen en Rekordbox porque BrainOrder las reemplazó: fuera de la foto."""
+    rids = set(rids or [])
+    if not rids:
+        return
+    data = load_baseline()
+    if any(r in data for r in rids):
+        save_baseline({k: v for k, v in data.items() if k not in rids})

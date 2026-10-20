@@ -28,3 +28,15 @@ def fix_paths(cfg, moved, repoint=None):
 
 def edit(cfg, renames=None, deletes=None):
     return rekordbox_sync.edit_playlists(cfg, renames, deletes)
+
+
+def root_children(cfg, name):
+    return rekordbox_sync.root_children(cfg, name) if available(cfg) else None
+
+
+def rename_root(cfg, old, new):
+    return rekordbox_sync.rename_root(cfg, old, new)
+
+
+def root_folders(cfg):
+    return rekordbox_sync.root_folders(cfg) if available(cfg) else {}

@@ -109,6 +109,12 @@ Lo que analizó Mixed In Key pasa a **Rekordbox, Traktor, Serato y Engine DJ** (
 - **Hot cues de MIK** (A, B, C… con su energía), **solo en canciones que todavía no tienen hot cues** en ese programa: los tuyos nunca se pisan. En Rekordbox también FLAC (se calcula la posición como lo hace Rekordbox); las MP3 VBR se saltan. En Engine DJ, cuando la pista ya está analizada. **Serato** lee los cues del propio archivo: los ve si MIK tiene activada su opción de escribir cue points para Serato (BrainOrder avisa cuántas canciones no los tienen).
 Pasa al **Organizar** y **cada 5 minutos** en cada programa que esté cerrado (con respaldo de su librería). En Conexiones → Mixed In Key hay **Ver qué falta** y **Actualizar ahora**. No toca BPM, grid ni memory cues.
 
+## Nombre de la carpeta de BrainOrder en tus programas
+Se cambia en Conexiones. Al cambiarlo, BrainOrder **renombra la carpeta** en Rekordbox, Traktor, Serato, Engine DJ y M3U: son las mismas playlists, no se duplican, no aparecen en «Playlists nuevas» ni como borradas en «Cambios en Rekordbox». Un programa abierto se renombra al cerrarlo (Organizar no le crea otra carpeta mientras tanto). Si la renombras dentro de Rekordbox, BrainOrder usa ese nombre y lo pasa a los demás; si la cambiaste en una versión anterior, encuentra la carpeta vieja por sus playlists y la arregla.
+
+## Cancelar
+Lo que está **en cola** (esperando a que termine otra tarea) se cancela con su ✕ en la barra de tareas o con clic derecho. Una tarea que ya empezó no se corta a mitad, para no dejar archivos ni programas a medio cambiar. Los pendientes para Spotify se cancelan igual (✕ o clic derecho) desde «· N pendientes» arriba o desde «Playlists nuevas».
+
 ## Cambios en Rekordbox → Spotify
 Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras una playlist, o le agregas o quitas canciones**, BrainOrder lo detecta (aunque Rekordbox siga abierto) y pregunta qué hacer con cada cambio:
 - **Hacer lo mismo en Spotify** (busca cada canción por tus playlists, por ISRC o por artista + título con la misma duración; lo que no encuentre te lo dice).
