@@ -1311,7 +1311,9 @@ const DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', eng
 function links(r){
   const out=[];
   if(r.url) out.push(`<a class="lnk" onclick="openUrl(${jsq(r.url)})">${hostLabel(r.url)} ↗</a>`);
-  if(r.deezer && r.deezer.url && r.deezer.url!==r.url) out.push(`<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
+  if(r.deezer && r.deezer.url && r.deezer.url!==r.url) out.push(r.deezer.other
+    ? `<a class="lnk" style="color:var(--org)" title="Deezer no tiene esta versión: el link es de «${esc(r.deezer.other)}». Si la bajas, BrainOrder te propone usarla como esta canción." onclick="openUrl(${jsq(r.deezer.url)})">Deezer (otra versión) ↗</a>`
+    : `<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
   return out.join('<span style="color:var(--line)"> · </span>');
 }
 async function exportPlaylist(i){
@@ -2174,6 +2176,13 @@ async function askOrganizeAll(){
     <p><b>${ib.count}</b> archivo${ib.count!==1?'s':''} en <code>${esc(base(S.settings.inbox))}</code>.</p>
     <div class="box">✅ <b>${rows.length}</b> coinciden con canciones de tus playlists analizadas: se mueven a su carpeta (${dests} carpeta${dests!==1?'s':''}).
       ${dups.length?`<br>🗂️ <b>${dups.length}</b> ya las tenías: se apartan en <code>_duplicados</code>.`:''}</div>
+    ${(ib.similar||[]).length?`<div style="margin:10px 0 4px;font-weight:650">🔎 Parecen de tus playlists <span class="art">— la misma canción en otra versión o con otra duración</span></div>
+      <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px">${ib.similar.map((x,k)=>`<div class="oxrow" style="padding:6px 10px;align-items:center">
+        ${pvBtn({source:x.path, id:'f'+k, name:x.file, artists:[]})}
+        <div style="min-width:0;flex:1"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.file)}${x.seconds?` <span class="art">(${pvFmt(x.seconds)})</span>`:''}</div>
+          <div class="art">${esc(x.why)} de ${x.options.length>1?`<select id="simOpt${k}" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12px">${x.options.map((o,j)=>`<option value="${j}">«${esc(o.name)}» en ${esc(o.playlist)}${o.duration_ms?` (${pvFmt(o.duration_ms/1000)})`:''}</option>`).join('')}</select>`
+            : `«${esc(x.options[0].name)}» en <b>${esc(x.options[0].playlist)}</b>${x.options[0].duration_ms?` (${pvFmt(x.options[0].duration_ms/1000)})`:''}`}</div></div>
+        <button onclick="oxAccept(${k})" title="Este archivo cuenta como esa canción de tu playlist (se organiza con ella)">Usar esta versión</button></div>`).join('')}</div>`:''}
     ${unmatched?`<div class="box warn">❓ <b>${unmatched}</b> no coinciden con ninguna playlist analizada${ib.pending?` (tienes <b>${ib.pending}</b> playlists sin analizar; puede que sean de ahí)`:''}.
         <div style="margin-top:8px"><button onclick="closeModal();analyze()">Analizar todo para ubicarlas</button></div></div>
       ${ib.groups.length?`<div style="margin:10px 0 4px;font-weight:650">Subcarpetas de descargas <span class="art">— márcalas para moverlas como carpeta de playlist</span></div>
@@ -2187,6 +2196,14 @@ async function askOrganizeAll(){
     ${djChecks(st, null)}
     <div class="actions"><span id="oxSum" class="art" style="margin-right:auto;align-self:center"></span><button onclick="closeModal()">Cancelar</button><button class="warn" id="oxGo" onclick="organize()">Organizar</button></div>`);
   oxSum();
+}
+async function oxAccept(k){
+  const x = OX.ib.similar[k], sel = $('simOpt'+k), o = x.options[sel ? +sel.value : 0];
+  const r = await api().accept_version(o.tid, x.path);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); render();
+  toast(r.matched ? `✅ <b>${esc(x.file)}</b> ahora cuenta como «${esc(o.name)}» de <b>${esc(o.playlist)}</b>: se organiza con ella.` : `Listo, pero no la pude ubicar todavía: dale Analizar a «${esc(o.playlist)}».`, !r.matched);
+  askOrganizeAll();
 }
 function oxAllLoose(on){ document.querySelectorAll('input.oxl').forEach(c=>{ c.checked=on; on?OX.loose.add(c.dataset.f):OX.loose.delete(c.dataset.f); }); oxSum(); }
 async function oxPickDest(){ const p = await api().pick_folder(OX.dest || S.settings.dest_root); if(p){ OX.dest=p; $('oxDest').textContent = short(p); oxSum(); } }

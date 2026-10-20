@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 
 from config import SUPPORT_DIR, log
-from biblioteca import norm, core_title
+from biblioteca import norm, core_title, extras, version_diff, same_length
 
 CACHE = SUPPORT_DIR / "deezer_cache.json"
 API = "https://api.deezer.com"
@@ -46,21 +46,52 @@ def search_url(row):
     return "https://www.deezer.com/search/" + urllib.parse.quote(q)
 
 
+V = 2  # versión del criterio de búsqueda (los links buscados con uno anterior se vuelven a buscar)
+
+
+def _pick(row, items):
+    """De los resultados de Deezer, la MISMA versión que la canción de tu playlist: mismo título base y artista,
+    sin palabras de otra versión (remix, dream version, extended…) y con la misma duración.
+    -> (item, misma_version) o (None, False)"""
+    artist = (row.get("artists") or [""])[0]
+    want_a, want_t, ex = norm(artist), core_title(row["name"]), extras(row["name"])
+    tdur = (row.get("duration_ms") or 0) / 1000 or None
+    cands = []
+    for item in items:
+        a = norm((item.get("artist") or {}).get("name", ""))
+        if not (want_a and (want_a in a or a in want_a)) or core_title(item.get("title", "")) != want_t:
+            continue
+        fx = extras(item.get("title", ""))
+        same_v = (ex <= fx or fx <= ex) and not version_diff(ex, fx)
+        same_len = same_length(tdur, item.get("duration")) if tdur and item.get("duration") else True
+        dd = abs((item.get("duration") or 0) - tdur) if tdur and item.get("duration") else 0
+        # igual que lo acepta BrainOrder al reconocer el archivo: mismo título exacto, o una variante
+        # (radio edit…) con la misma duración. Lo demás es otra versión (remix, dream version…).
+        tier = 0 if ex == fx and same_len else 1 if ex == fx else 2 if same_v and same_len else 3
+        cands.append((tier, dd, item))
+    if not cands:
+        return None, False
+    best = min(cands, key=lambda c: c[:2])
+    return best[2], best[0] < 3
+
+
 def _lookup(row):
     isrc = row.get("isrc")
     if isrc:
         d = _get(f"{API}/track/isrc:{urllib.parse.quote(isrc)}")
         if isinstance(d, dict) and d.get("link") and not d.get("error"):
-            return {"url": d["link"], "exact": True}
+            return {"url": d["link"], "exact": True, "v": V}
     artist = (row.get("artists") or [""])[0]
     q = f"{artist} {core_title(row['name'])}".strip()
-    d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 5}))
-    want_a, want_t = norm(artist), core_title(row["name"])
-    for item in (d.get("data") or []) if isinstance(d, dict) else []:
-        a = norm((item.get("artist") or {}).get("name", ""))
-        if want_a and (want_a in a or a in want_a) and core_title(item.get("title", "")) == want_t:
-            return {"url": item["link"], "exact": False}
-    return None
+    d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 25}))
+    item, same = _pick(row, (d.get("data") or []) if isinstance(d, dict) else [])
+    if item is None:
+        return None
+    out = {"url": item["link"], "exact": False, "v": V}
+    if not same:  # Deezer no tiene esa versión: el link es de otra (se avisa para que no te confunda)
+        dur = item.get("duration") or 0
+        out["other"] = f"{item.get('title', '')} ({dur // 60}:{dur % 60:02d})"
+    return out
 
 
 _LOCK = threading.Lock()
@@ -93,11 +124,12 @@ def add_links(analysis, progress=None, offline=False):
         if i.startswith("dz:") and r.get("url") and i not in cache:
             with _LOCK:
                 cache[i] = {"url": r["url"], "exact": True}
-    todo = [] if offline else [r for i, r in missing.items() if i not in cache]
+    stale = (lambda c: not c.get("exact") and c.get("v") != V)  # buscado con el criterio viejo (podía ser otra versión)
+    todo = [] if offline else [r for i, r in missing.items() if i not in cache or stale(cache[i])]
     for n, r in enumerate(todo, 1):
         if progress:
             progress(f"Buscando links de Deezer: {n}/{len(todo)}", n / len(todo))
-        if r["id"] in cache:  # otra tarea ya lo buscó mientras tanto
+        if r["id"] in cache and not stale(cache[r["id"]]):  # otra tarea ya lo buscó mientras tanto
             continue
         try:
             res = _lookup(r)
@@ -117,6 +149,8 @@ def add_links(analysis, progress=None, offline=False):
             c = cache.get(r["id"]) or {}
             if c.get("url"):
                 r["deezer"] = {"url": c["url"], "found": True, "exact": c.get("exact", False)}
+                if c.get("other"):
+                    r["deezer"]["other"] = c["other"]
             else:
                 r["deezer"] = {"url": search_url(r), "found": False, "exact": False}
     return analysis
@@ -151,13 +185,8 @@ def preview(artist, title, isrc=""):
     if out is None:
         q = f"{artist} {core_title(title)}".strip()
         d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 8}))
-        want_a, want_t = norm(artist), core_title(title)
         items = [i for i in ((d.get("data") or []) if isinstance(d, dict) else []) if i.get("preview")]
-        for item in items:
-            a = norm((item.get("artist") or {}).get("name", ""))
-            if (not want_a or want_a in a or a in want_a) and core_title(item.get("title", "")) == want_t:
-                out = item
-                break
+        out, _same = _pick({"name": title, "artists": [artist]}, items)
     res = {"preview": out["preview"], "link": out.get("link"),
            "title": f"{(out.get('artist') or {}).get('name', '')} - {out.get('title', '')}"} if out else None
     _PREV[key] = (time.time(), res)

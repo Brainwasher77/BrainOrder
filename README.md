@@ -62,6 +62,9 @@ Carpetas por defecto en instalaciones nuevas (se cambian en el asistente o en Aj
 - Música por playlist: `Música/Playlists BrainOrder/<playlist>`
 - Descargas por organizar: `Música/Descargas BrainOrder`
 
+## Descargas en otra versión
+Una descarga se reconoce solo si es la misma grabación que la de la playlist. Los links de Deezer buscan esa misma versión (título y duración); si Deezer no la tiene, el link dice «Deezer (otra versión)». Si bajas otra versión (remix, Dream Version, corte largo…), al organizar aparece en «Parecen de tus playlists» con ▶ y **Usar esta versión** para que cuente como esa canción.
+
 ## Vista previa
 Cada canción tiene **▶** (playlists, faltantes, Comparar y clic derecho → Escuchar). Si tienes el archivo suena tu archivo (desde el 25 %, sin la intro); si te falta, 30 s de Deezer. Reproductor abajo con pausa (barra espaciadora), adelantar, −15/+15 s y ½ (ir a la mitad). Tus archivos se sirven solo dentro del computador (127.0.0.1, con clave de sesión) y solo los de tus carpetas de música.
 

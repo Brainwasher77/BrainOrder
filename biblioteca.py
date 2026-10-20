@@ -397,6 +397,12 @@ def analyze(playlists, cfg, progress=None):
     total_tracks = sum(len(p["tracks"]) for p in playlists) or 1
     done_tracks = 0
     idx = Index(files)
+    # versiones que aceptaste a mano («usar esta versión»): {id de la canción: [nombre de archivo normalizado]}
+    manual = cfg.get("version_links") or {}
+    by_stem = {}
+    if manual:
+        for f in files:
+            by_stem.setdefault(norm(Path(f.path).stem), []).append(f)
     inbox_s = str(inbox) + os.sep
     dest_s = str(dest_root) + os.sep
 
@@ -423,6 +429,8 @@ def analyze(playlists, cfg, progress=None):
             if progress and done_tracks % 20 == 0:
                 progress(f"Cruzando canciones: {done_tracks}/{total_tracks}", 0.35 + 0.65 * done_tracks / total_tracks)
             matches = idx.find(t)
+            for k in manual.get(t["id"]) or []:
+                matches += [f for f in by_stem.get(k, []) if f not in matches]
             ex = extras(t["name"])
             rank = lambda f, ex=ex: (f.extras != ex, not f.path.startswith(dest_s)) + _rank(f)
             hdir = home[hk(t)]
@@ -450,6 +458,7 @@ def analyze(playlists, cfg, progress=None):
                 "album": t.get("album", ""),
                 "url": t.get("url", ""),
                 "isrc": t.get("isrc", ""),
+                "duration_ms": t.get("duration_ms") or 0,
                 "status": status,
                 "source": src.path if src else None,
                 "dest_dir": hdir,
