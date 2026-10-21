@@ -1,5 +1,5 @@
 {
-  "version": "2.16.1",
-  "build": 41,
-  "notes": "Las descargas que pusiste en una playlist de Rekordbox ya no quedan «sin playlist» sin explicación: al organizar ves en cuál están y la puedes importar. Arreglado: Organizar ahora corrige la ruta en Rekordbox de las descargas que ya estaban en tu librería."
+  "version": "2.16.2",
+  "build": 42,
+  "notes": "Arreglado: los informes «_FALTAN EN ESTA CARPETA» ya no aparecen como playlists «(no se pudo leer)»; las que habían quedado se quitan solas."
 }
