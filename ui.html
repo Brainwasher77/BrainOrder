@@ -444,7 +444,7 @@ async function fdAsk(f, rest){
   const sp = (FD.data && FD.data.spotify) || {};
   const opts = fdPlatformOptions(sp), def = opts[0][3] ? 'ninguna' : 'spotify';
   const dj = f.kind === 'dj', n = f.count ?? 0;
-  const what = dj ? `Playlist nueva en ${esc(f.label)}: «${esc(f.name)}»` : `Carpeta nueva: «${esc(f.name)}»`;
+  const what = dj ? `Playlist ${f.new===false?'de':'nueva en'} ${esc(f.label)}: «${esc(f.name)}»` : `Carpeta nueva: «${esc(f.name)}»`;
   const desc = dj ? `Tiene <b>${n}</b> ${n===1?'canción':'canciones'}. ¿La importo como playlist de BrainOrder?`
     : (n ? `Tiene <b>${n}</b> ${n===1?'canción':'canciones'} y todavía no es una playlist. ¿La importo como playlist?`
          : `Está vacía. Si la importo, la playlist se llena sola con lo que vayas poniendo en la carpeta.`);
@@ -459,7 +459,7 @@ async function fdAsk(f, rest){
     ${fdCanMove(f) ? `<div style="font-weight:650;margin:12px 0 6px">¿Paso sus archivos a tu carpeta de playlists?</div>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
       <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/${esc(f.name)}</code></b><br>
-      <span class="art">Quedan junto a tus otras playlists. ${dj?'Si alguna canción también está en otra playlist, se mueve igual (Reorganizar la puede devolver). ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
+      <span class="art">Quedan junto a tus otras playlists. ${dj?'Las que ya son de otra de tus playlists se quedan en su carpeta. ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
       <input type="radio" name="fdm" value="0" style="margin-top:3px"><span><b>No, dejarlos donde están</b></span></label>` : ''}
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="fdDj" ${n?'checked':''}> Pasarla ya a ${dj?'mis otros programas de DJ':'mis programas de DJ (Rekordbox, Traktor…)'}</label>
@@ -520,6 +520,7 @@ async function fdImport(){
   if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
   if(r.index !== null && r.index !== undefined){ S.view = 'pl:' + r.index; }
   render(); toast(msg);
+  if(f.kind === 'dj' && OX.afterImport === f.program + ':' + f.ref){ OX.afterImport = null; if(!dj){ setTimeout(askOrganizeAll, 700); return; } }
   if(dj && r.pid){
     const g = await api().organize(true, r.pid, null);
     if(g.ok){ await applyAnalysis(g); render(); toast(msg + djSummary(g.dj)); } else toast(msg + `<br><span style="color:var(--org)">Programas de DJ: ${esc(g.error)}</span>`, true);
@@ -2304,6 +2305,12 @@ async function askOrganizeAll(){
     <p><b>${ib.count}</b> archivo${ib.count!==1?'s':''} en <code>${esc(base(S.settings.inbox))}</code>.</p>
     <div class="box">✅ <b>${rows.length}</b> coinciden con canciones de tus playlists analizadas: se mueven a su carpeta (${dests} carpeta${dests!==1?'s':''}).
       ${dups.length?`<br>🗂️ <b>${dups.length}</b> ya las tenías: se apartan en <code>_duplicados</code>.`:''}</div>
+    ${(ib.in_dj||[]).length?`<div style="margin:10px 0 4px;font-weight:650">🎛️ Ya están en tus playlists de tu programa de DJ <span class="art">— por eso no son de ninguna playlist de BrainOrder</span></div>
+      <div style="border:1px solid var(--line);border-radius:8px">${ib.in_dj.map((d,k)=>`<div class="oxrow" style="padding:6px 10px;align-items:center">
+        <div style="min-width:0;flex:1"><div><b>${esc(d.name)}</b> <span class="art">en ${esc(d.label)} · ${d.count} de tus descargas${d.total>d.count?` (de ${d.total} canciones)`:''}</span></div>
+          <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.files.map(esc).join(' · ')}${d.count>d.files.length?' …':''}</div></div>
+        <button onclick="oxImportDj(${k})" title="La playlist pasa a ser de BrainOrder: sus descargas se organizan en su carpeta y Rekordbox queda con las rutas nuevas">Importarla…</button></div>`).join('')}</div>
+      <div class="art" style="margin:4px 0 6px">Al importarla, sus descargas se organizan en su carpeta (y Rekordbox queda apuntando a ellas). También puedes pasarla a Spotify.</div>`:''}
     ${(ib.similar||[]).length?`<div style="margin:10px 0 4px;font-weight:650">🔎 Parecen de tus playlists <span class="art">— la misma canción en otra versión o con otra duración</span></div>
       <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px">${ib.similar.map((x,k)=>`<div class="oxrow" style="padding:6px 10px;align-items:center">
         ${pvBtn({source:x.path, id:'f'+k, name:x.file, artists:[]})}
@@ -2324,6 +2331,11 @@ async function askOrganizeAll(){
     ${djChecks(st, null)}
     <div class="actions"><span id="oxSum" class="art" style="margin-right:auto;align-self:center"></span><button onclick="closeModal()">Cancelar</button><button class="warn" id="oxGo" onclick="organize()">Organizar</button></div>`);
   oxSum();
+}
+function oxImportDj(k){
+  const d = OX.ib.in_dj[k]; closeModal();
+  OX.afterImport = d.program + ':' + d.ref;  // al terminar, vuelve a Organizar con lo que ahora sí coincide
+  fdAsk({kind:'dj', program:d.program, ref:d.ref, name:d.name, label:d.label, count:d.total, new:false}, []);
 }
 async function oxAccept(k){
   const x = OX.ib.similar[k], sel = $('simOpt'+k), o = x.options[sel ? +sel.value : 0];

@@ -488,6 +488,36 @@ class Api:
             return {**out, "state": st}
         return self._task(run, "setup", "Configuración inicial")
 
+    def _fix_moved_downloads(self, journal, keep, rb):
+        """Después de Organizar: las descargas que ya estaban en Rekordbox (u otro programa) quedan apuntando
+        a su lugar nuevo. Las repetidas que se apartaron pasan a usar la copia que se queda."""
+        moved = {a: b for a, b in journal}
+        dup_dir = os.sep + "_duplicados" + os.sep
+        path_change = {a: b for a, b in moved.items() if dup_dir not in b}
+        retired = {a: b for a, b in moved.items() if dup_dir in b}
+        final = (lambda p: path_change.get(p, p))
+        dup_of = {a: final(keep[a]) for a in retired if a in keep}
+        out = {}
+        if rb:
+            pc = {a: b for a, b in path_change.items() if a in rb}
+            do = {a: k for a, k in dup_of.items() if a in rb}
+            rt = {a: retired[a] for a in retired if a in rb and a not in do}
+            pc.update(rt)  # repetida sin copia conocida: su entrada apunta a donde quedó (no se pierde)
+            if pc or do:
+                try:
+                    self._progress("Corrigiendo rutas en Rekordbox…")
+                    rekordbox_sync.backup()
+                    out["rekordbox"] = unificar._rb_apply(pc, do, {a: retired[a] for a in do})
+                except Exception as e:
+                    config.log(f"Organizar: rutas en Rekordbox: {e!r}")
+                    out["rekordbox_error"] = str(e)
+        fixed, warn = self._dj_fix(path_change, dup_of)
+        if fixed:
+            out["otros"] = fixed
+        if warn:
+            out["warnings"] = warn
+        return out
+
     def _folder_renamed(self, old):
         """Cambiaste el nombre de la carpeta de BrainOrder en los programas de DJ: se renombra en cada uno
         (las playlists siguen siendo las mismas). Los que estén abiertos se hacen cuando los cierres."""
@@ -1092,6 +1122,24 @@ class Api:
                 subset = [p for p in analysis if p["id"] == pid] if pid else analysis
                 if pid and not subset:
                     raise SpotifyError("No encontré esa playlist.")
+                # descargas que YA usas en Rekordbox (por ejemplo en una playlist que armaste allá): al moverlas
+                # hay que corregir su ruta en Rekordbox, o quedarían «perdidas» allá
+                moving = set(organizador.plan(subset)[0]) | set(organizador.plan(subset)[1]) if subset else set()
+                if extra and not pid:
+                    inbox_p = Path(self._cfg["inbox"])
+                    for name in extra.get("groups") or []:
+                        moving |= {str(p) for p in (inbox_p / name).rglob("*") if p.is_file()}
+                    moving |= {it.get("src") for it in extra.get("files") or [] if it.get("src")}
+                rb = set()
+                if moving and destinos.DESTINATIONS["rekordbox"].available(self._cfg):
+                    rb = unificar.rb_paths(self._progress) or set()
+                    if any(p in rb for p in moving) and rekordbox_sync.rekordbox_running():
+                        raise rekordbox_sync.RekordboxError(
+                            "Rekordbox está abierto y algunas descargas ya están en tu librería de Rekordbox: ciérralo y vuelve "
+                            "a Organizar (así se corrigen sus rutas allá y no quedan perdidas).")
+                if moving:
+                    self._dj_precheck()
+                keep = organizador.keepers(subset) if subset else {}
                 files = organizador.organize(subset, self._cfg, self._progress) if subset else \
                     {"moved": 0, "duplicates": 0, "errors": []}
                 extra_res = None
@@ -1115,6 +1163,7 @@ class Api:
                         extra_res = organizador.move_unmatched(groups, sel, self._cfg, self._progress)
                 journal = files.pop("journal", []) + ((extra_res or {}).pop("journal", []) if extra_res else [])
                 op_id = historial.record("organize", label, journal)
+                files["dj_paths"] = self._fix_moved_downloads(journal, keep, rb)
                 if not sp_data["playlists"] or not analysis:
                     self._inbox_sig = None
                     self._inbox_n = (0.0, 0)
@@ -1197,7 +1246,7 @@ class Api:
                 return {"restored": 0, "skipped": skipped, "analysis": None}
             back = {cur: orig for cur, orig in todo}
             # Rekordbox: si alguna pista movida está en la librería, hay que corregirla (cerrado y con respaldo)
-            rb = unificar.rb_index(self._progress) or {}
+            rb = unificar.rb_paths(self._progress) or set()
             rb_change = {cur: orig for cur, orig in back.items() if cur in rb}
             if rb_change and rekordbox_sync.rekordbox_running():
                 raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a deshacer: hay pistas de tu librería entre los archivos.")
@@ -1361,8 +1410,32 @@ class Api:
         rest = [f for f in files if f not in ready and f not in dups]
         return {"count": n, "ready": len(ready & fset), "dups": len(dups & fset),
                 "groups": out_groups, "loose": loose, "similar": self._similar_downloads(rest, analysis),
+                "in_dj": self._downloads_in_dj(rest),
                 "analyzed": sum(1 for p in analysis if not p.get("pending")),
                 "pending": sum(1 for p in analysis if p.get("pending") and not p.get("ignored"))}
+
+    def _downloads_in_dj(self, files):
+        """Descargas que no son de ninguna playlist de BrainOrder pero que ya pusiste en una playlist de tu
+        programa de DJ (por ejemplo una que armaste en Rekordbox). -> [{program, label, ref, name, count, files}]"""
+        import dj_playlists as DJ
+        from fuentes import carpetas as FC
+        if not files:
+            return []
+        want = {os.path.normcase(f): f for f in files}
+        imported = {(e.get("program"), str(e.get("ref"))) for e in FC.entries(self._cfg) if e.get("program")}
+        out = []
+        for prog in DJ.enabled_programs(self._cfg):
+            lists = (getattr(self, "_dj_last", None) or {}).get(prog)
+            if lists is None:
+                lists = DJ.read(self._cfg, prog) or {}
+            for ref, v in lists.items():
+                hits = [want[k] for k in (os.path.normcase(p) for p in v.get("paths") or []) if k in want]
+                if hits:
+                    out.append({"program": prog, "label": DJ.LABELS.get(prog, prog), "ref": str(ref), "name": v["name"],
+                                "count": len(hits), "total": len(v.get("paths") or []), "files": [Path(h).name for h in hits[:6]],
+                                "imported": (prog, str(ref)) in imported})
+        out.sort(key=lambda x: -x["count"])
+        return out
 
     def _similar_downloads(self, files, analysis):
         """Descargas que no se reconocieron pero son la misma canción que una que te falta en una playlist,
@@ -1654,7 +1727,11 @@ class Api:
         dest = biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)
         # la crea BrainOrder para esta playlist: no es una «carpeta nueva» por la que haya que preguntar
         CN.mark(dest, known=True, imported=True)
-        ops = [(f, str(dest)) for f in files if os.path.exists(f) and CN._key(Path(f).parent) != CN._key(dest)]
+        # las que ya son de OTRA playlist de BrainOrder se quedan en su carpeta (no se le quitan a esa playlist)
+        used = {CN._key(r["source"]) for p in self._analysis() or [] for r in p["tracks"]
+                if r.get("source") and r.get("status") in ("ok", "elsewhere")}
+        ops = [(f, str(dest)) for f in files if os.path.exists(f) and CN._key(Path(f).parent) != CN._key(dest)
+               and CN._key(f) not in used]
         info = {"dest": str(dest), "moved": 0, "skipped": [], "already": len(files) - len(ops)}
         if not ops:
             dest.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,5 @@
 {
-  "version": "2.16.0",
-  "build": 40,
-  "notes": "Clic derecho en una playlist → «Ocultar de mis estadísticas»: deja de contar en tus números y faltantes (se sigue organizando). Se vuelve a mostrar con clic derecho o desde Estadísticas."
+  "version": "2.16.1",
+  "build": 41,
+  "notes": "Las descargas que pusiste en una playlist de Rekordbox ya no quedan «sin playlist» sin explicación: al organizar ves en cuál están y la puedes importar. Arreglado: Organizar ahora corrige la ruta en Rekordbox de las descargas que ya estaban en tu librería."
 }

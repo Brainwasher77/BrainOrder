@@ -35,6 +35,17 @@ def plan(analysis):
     return moves, dups
 
 
+def keepers(analysis):
+    """{descarga repetida: la copia que se queda} (para que los programas de DJ apunten a esa)."""
+    out = {}
+    for pl in analysis:
+        for r in pl["tracks"]:
+            for d in r.get("inbox_dups") or []:
+                if r.get("source"):
+                    out.setdefault(d, r["source"])
+    return out
+
+
 def organize(analysis, cfg, progress=None):
     moves, dups = plan(analysis)
     inbox = Path(cfg["inbox"])
@@ -100,7 +111,7 @@ def relocate(ops, cfg, progress=None):
     import rekordbox_sync
     import unificar
 
-    rb = unificar.rb_index(progress) or {}
+    rb = unificar.rb_paths(progress) or set()
     need_rb = any(src in rb for src, _ in ops)
     if need_rb and rekordbox_sync.rekordbox_running():
         raise rekordbox_sync.RekordboxError(
