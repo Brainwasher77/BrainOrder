@@ -32,6 +32,27 @@ class UnifyError(Exception):
 
 
 # ---------------------------------------------------------------- Rekordbox (lectura)
+def rb_paths(progress=None):
+    """Rutas de las pistas de tu librería de Rekordbox (solo lectura, rápido: una consulta directa).
+    Sirve para saber si hay que corregir rutas allá al mover archivos. None si no se puede leer."""
+    try:
+        import rekordbox_sync
+        if not (rekordbox_sync.RB_DIR / "master.db").exists():
+            return None
+        if progress:
+            progress("Revisando tu librería de Rekordbox…")
+        con = rekordbox_sync.connect_ro()
+        try:
+            return {native(r[0]) for r in con.execute(
+                "SELECT FolderPath FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0 AND FolderPath IS NOT NULL")}
+        finally:
+            con.close()
+    except Exception as e:
+        log(f"Rekordbox: lectura rápida falló ({e!r}); uso la completa")
+        idx = rb_index(progress)
+        return set(idx) if idx is not None else None
+
+
 def rb_index(progress=None):
     """{ruta: {"id", "playlists", "cues"}} de la librería de Rekordbox (solo lectura)."""
     try:

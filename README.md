@@ -62,6 +62,9 @@ Carpetas por defecto en instalaciones nuevas (se cambian en el asistente o en Aj
 - Música por playlist: `Música/Playlists BrainOrder/<playlist>`
 - Descargas por organizar: `Música/Descargas BrainOrder`
 
+## Descargas que ya usas en Rekordbox
+Si pones descargas en una playlist que armas en Rekordbox (u otro programa), al organizar aparecen en «Ya están en tus playlists de tu programa de DJ» con esa playlist y el botón **Importarla…**. Organizar corrige la ruta en Rekordbox (y Traktor, Serato, Engine) de toda descarga que ya esté en tu librería, para que nada quede perdido.
+
 ## Descargas en otra versión
 Una descarga se reconoce solo si es la misma grabación que la de la playlist. Los links de Deezer buscan esa misma versión (título y duración); si Deezer no la tiene, el link dice «Deezer (otra versión)». Si bajas otra versión (remix, Dream Version, corte largo…), al organizar aparece en «Parecen de tus playlists» con ▶ y **Usar esta versión** para que cuente como esa canción.
 
