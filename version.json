@@ -1,5 +1,5 @@
 {
-  "version": "2.15.0",
-  "build": 39,
-  "notes": "Nueva sección «Sin Mixed In Key»: las canciones que te faltan por analizar, para mandarlas a Mixed In Key de una vez; cuando las analiza, salen solas de la lista."
+  "version": "2.16.0",
+  "build": 40,
+  "notes": "Clic derecho en una playlist → «Ocultar de mis estadísticas»: deja de contar en tus números y faltantes (se sigue organizando). Se vuelve a mostrar con clic derecho o desde Estadísticas."
 }

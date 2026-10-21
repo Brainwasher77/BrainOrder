@@ -374,10 +374,13 @@ function closeModal(){ $('mbg').classList.remove('show'); }
 let DC = {a: undefined};
 function memo(key, fn){ if(DC.a !== S.analysis) DC = {a: S.analysis}; return key in DC ? DC[key] : (DC[key] = fn()); }
 function allRows(){ return memo('rows', () => (S.analysis||[]).flatMap(pl => pl.tracks.map(t => ({...t, pl})))); }
+// las playlists que ocultaste de tus estadísticas no cuentan en los números (pero se organizan igual)
+const statHidden = pl => !!(pl && (S.statsHidden||[]).includes(pl.id));
+function statRows(){ return memo('srows', () => allRows().filter(r => !statHidden(r.pl))); }
 function missingUnique(){
   return memo('missing', () => {
     const m = new Map();
-    for (const r of allRows()) if (r.status==='missing'){
+    for (const r of statRows()) if (r.status==='missing'){
       if(!m.has(r.id)) m.set(r.id, {...r, pls:[]});
       m.get(r.id).pls.push(r.pl);
     }
@@ -893,6 +896,14 @@ function cmpView(){
     ${rows.length ? `<table><tr><th title="Posición en «${esc(A.name)}»">A</th><th title="Posición en «${esc(B.name)}»">B</th><th>Canción</th><th>Estado</th><th>Key / BPM</th></tr>${tb}</table>${rows.length>600?`<div class="art">Mostrando 600 de ${rows.length}.</div>`:''}`
       : `<div class="empty"><h3>Nada aquí</h3></div>`}`;
 }
+async function plStatsHide(pid, hide){
+  const r = await api().set_stats_hidden(pid, hide);
+  if(!r.ok){ toast(esc(r.error||'No se pudo'), true); return; }
+  S.statsHidden = r.stats_hidden; DC = {a: undefined}; render();
+  const pl = (S.analysis||[]).find(p => p.id === pid);
+  toast(hide ? `🙈 «${esc(pl?pl.name:'')}» ya no cuenta en tus estadísticas. <a class="lnk" onclick="plStatsHide(${jsq(pid)}, false)">Deshacer</a>`
+             : `👁 «${esc(pl?pl.name:'')}» vuelve a contar en tus estadísticas.`);
+}
 // ---------- clic derecho en una playlist: renombrar, fusionar, eliminar (en todas partes) ----------
 const PL_DJ_LABEL = {rekordbox:'Rekordbox', traktor:'Traktor', serato:'Serato', engine:'Engine DJ', m3u:'Playlists M3U'};
 function plDjNames(){ return Object.entries(S.dests||{}).filter(([k,x])=>x.enabled).map(([k,x])=>x.label||PL_DJ_LABEL[k]||k); }
@@ -913,6 +924,8 @@ function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='
 function plMenu(pl, i){
   const it = [['#', pl.name], ['⚖️ Comparar con…', () => cmpPick(i), false, 'Cuántas canciones tienen en común y cuáles están solo en una'], '-', ['✏️ Renombrar…', () => plRename(i)]];
   it.push(['🔀 Fusionar con otra…', () => plMerge(i), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
+  it.push(statHidden(pl) ? ['👁 Volver a contarla en mis estadísticas', () => plStatsHide(pl.id, false)]
+                         : ['🙈 Ocultar de mis estadísticas', () => plStatsHide(pl.id, true), false, 'No cuenta en tus números ni en «Faltan por descargar»; se sigue organizando igual']);
   it.push('-');
   it.push(['🗑 Eliminar…', () => plDelete(i), !!pl.liked, pl.liked ? '«Me gusta» no se puede eliminar (desactívala en Ajustes)' : 'Eliminarla en BrainOrder, tus programas de DJ y su plataforma']);
   return it;
@@ -1176,7 +1189,7 @@ function renderCore(){
       <span class="name" style="color:var(--mute)">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">${pl.total ?? '—'}</span></div>
       <div class="bar" style="opacity:.4"></div></a>`;
     const c = plStats(pl), n = c.total || 1, oc = orgCount(pl.id);
-    return `<a data-v="pl:${i}" onclick="show('pl:${i}')"><div class="row"><span class="name">${pl.liked?'♥ ':''}${esc(pl.name)}</span>
+    return `<a data-v="pl:${i}" onclick="show('pl:${i}')" ${statHidden(pl)?'title="Fuera de tus estadísticas (clic derecho para volver a contarla)" style="opacity:.6"':''}><div class="row"><span class="name">${statHidden(pl)?'🙈 ':''}${pl.liked?'♥ ':''}${esc(pl.name)}</span>
       <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
       <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
   }).join('');
@@ -1186,7 +1199,7 @@ function renderCore(){
 }
 
 function cards(){
-  const rows = allRows(); const c={ok:0,org:0,miss:0};
+  const rows = statRows(); const c={ok:0,org:0,miss:0};
   rows.forEach(r => (r.status==='ok'||r.status==='elsewhere')?c.ok++:r.status==='missing'?c.miss++:c.org++);
   return `<div class="cards">
     <div class="card" onclick="show('missing')"><div class="k">Canciones en Spotify</div><div class="v mono">${rows.length}</div></div>
@@ -1373,19 +1386,20 @@ function plStats0(pl){
 function globalStats(){ return memo('gs', globalStats0); }
 function globalStats0(){
   const songs=new Map(), files=new Set(); let refs=0;
-  for(const r of allRows()){ songs.set(r.id, r.status); if((r.status==='ok'||r.status==='elsewhere') && r.source){ refs++; files.add(r.source); } }
+  for(const r of statRows()){ songs.set(r.id, r.status); if((r.status==='ok'||r.status==='elsewhere') && r.source){ refs++; files.add(r.source); } }
   const vals=[...songs.values()], owned=vals.filter(v=>v==='ok'||v==='elsewhere').length;
   return {songs:songs.size, owned, inbox:vals.filter(v=>v==='inbox').length, missing:vals.filter(v=>v==='missing').length,
           files:files.size, saved:refs-files.size, pct: songs.size?Math.round(owned/songs.size*100):100};
 }
 function mikStats(){ return memo('mik', () => { const seen=new Set(); let owned=0, mik=0;
-  for(const r of allRows()) if(r.source && !seen.has(r.source)){ seen.add(r.source); owned++; if(r.mik) mik++; }
+  for(const r of statRows()) if(r.source && !seen.has(r.source)){ seen.add(r.source); owned++; if(r.mik) mik++; }
   return {owned, mik, pct: owned? Math.round(mik/owned*100) : 0}; }); }
 function statsView(){
   const g = globalStats();
-  const rows = S.analysis.map((pl,i)=>({pl,i,c:plStats(pl)})).filter(x=>!x.pl.pending).sort((a,b)=>a.c.pct-b.c.pct);
+  const rows = S.analysis.map((pl,i)=>({pl,i,c:plStats(pl)})).filter(x=>!x.pl.pending && !statHidden(x.pl)).sort((a,b)=>a.c.pct-b.c.pct);
+  const hid = S.analysis.map((pl,i)=>({pl,i})).filter(x=>statHidden(x.pl));
   const origins = new Map();
-  for(const r of allRows()) if((r.status==='ok'||r.status==='elsewhere') && r.source) origins.set(dirOf(r.source), (origins.get(dirOf(r.source))||new Set()).add(r.source));
+  for(const r of statRows()) if((r.status==='ok'||r.status==='elsewhere') && r.source) origins.set(dirOf(r.source), (origins.get(dirOf(r.source))||new Set()).add(r.source));
   const top = [...origins].map(([d,set])=>[d,set.size]).sort((a,b)=>b[1]-a[1]).slice(0,12), max = top.length?top[0][1]:1;
   return `<div class="cards">
       <div class="card"><div class="k">Canciones únicas</div><div class="v mono">${g.songs}</div></div>
@@ -1407,6 +1421,10 @@ function statsView(){
         <span style="color:var(--line)"> · </span><a class="lnk" style="color:#34d399" onclick="exportPlaylist(${i})">📊 Excel</a></td></tr>`; }).join('')}</table>
     <div style="display:flex;gap:16px;margin:10px 0 0;font-size:12px;color:var(--mute)">
       <span class="st ok">Aquí</span><span class="st elsewhere">Otra carpeta</span><span class="st inbox">En descargas</span><span class="st missing">Falta</span></div>
+    ${hid.length?`<div class="vhead" style="margin-top:28px"><h2>Fuera de tus estadísticas</h2><span class="sub">No cuentan en los números de arriba ni en «Faltan por descargar». Se siguen organizando y yendo a tus programas de DJ.</span></div>
+      <table>${hid.map(({pl,i})=>`<tr><td><a class="lnk" style="color:var(--mute);font-size:13.5px" onclick="show('pl:${i}')">${pl.liked?'♥ ':''}${esc(pl.name)}</a></td>
+        <td class="mono" style="color:var(--mute)">${pl.tracks.length || pl.total || 0} canciones</td>
+        <td style="text-align:right"><button class="ghost" onclick="plStatsHide(${jsq(pl.id)}, false)">👁 Volver a contarla</button></td></tr>`).join('')}</table>`:''}
     <div class="vhead" style="margin-top:28px"><h2>Dónde viven tus canciones</h2><span class="sub">Carpetas de donde salen los archivos que usan tus playlists.</span></div>
     <table>${top.map(([d,nf])=>`<tr><td style="width:45%"><span class="path" onclick="reveal(${jsq(d)})">${esc(short(d))}</span></td>
       <td><div class="bar" style="margin:6px 0 0;height:7px"><i style="width:${nf/max*100}%;background:var(--info)"></i></div></td><td class="mono" style="width:60px;text-align:right">${nf}</td></tr>`).join('')}</table>`;
@@ -2426,7 +2444,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  PREF = {...PREF, ...(st.ui||{})}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
   try{ api().start_watch(); }catch(e){}
