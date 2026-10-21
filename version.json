@@ -1,5 +1,5 @@
 {
-  "version": "2.16.2",
-  "build": 42,
-  "notes": "Arreglado: los informes «_FALTAN EN ESTA CARPETA» ya no aparecen como playlists «(no se pudo leer)»; las que habían quedado se quitan solas."
+  "version": "2.17.0",
+  "build": 43,
+  "notes": "Nuevo: instaladores para Mac (.dmg) y Windows (.exe) con su propio Python. Durante la instalación eliges tus carpetas y te guía con la app de Spotify (Client ID revisado y botón Conectar y probar)."
 }

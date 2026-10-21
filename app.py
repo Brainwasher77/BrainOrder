@@ -4,6 +4,7 @@ Ventana nativa de macOS (pywebview). Ejecutar: python app.py
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -431,6 +432,27 @@ class Api:
                 "warnings": warnings, "info": info, "folder_name": self._cfg.get("rekordbox_folder")}
 
     # ---------- asistente de primer uso ----------
+    PRECONFIG = config.SUPPORT_DIR / "preconfig.json"
+
+    def _preconfig(self):
+        """Lo que elegiste en el instalador de Windows (carpetas y Client ID de Spotify): el asistente
+        lo trae ya puesto. Se borra al terminar el asistente."""
+        try:
+            d = json.loads(self.PRECONFIG.read_text("utf-8-sig"))
+            return {k: str(d.get(k) or "").strip() for k in ("dest_root", "inbox", "client_id")} if isinstance(d, dict) else None
+        except Exception:
+            return None
+
+    def set_client_id(self, client_id):
+        """Guarda solo el Client ID (paso de Spotify del asistente, antes de conectar)."""
+        cid = (client_id or "").strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", cid):
+            return {"ok": False, "error": "El Client ID son 32 letras y números (cópialo de tu app en developer.spotify.com)."}
+        if cid != self._cfg.get("client_id"):
+            self._cfg["client_id"] = cid
+            config.save(self._cfg)
+        return {"ok": True, "connected": self._sp().connected}
+
     def setup_info(self):
         """Lo que el asistente puede sugerir: programas de DJ detectados y carpetas con música."""
         home = Path.home()
@@ -455,7 +477,9 @@ class Api:
         cfg_all = {**self._cfg, "destinations": {k: {"enabled": True} for k in destinos.DESTINATIONS}}
         found = {k: {"label": m.LABEL, "available": bool(m.available(cfg_all)) if k != "m3u" else False}
                  for k, m in destinos.DESTINATIONS.items()}
-        return {"ok": True, "home": str(home), "music_dirs": cands[:20], "dj": found,
+        pre = None if self._cfg.get("setup_done") else self._preconfig()
+        return {"ok": True, "home": str(home), "music_dirs": cands[:20], "dj": found, "preconfig": pre,
+                "packaged": os.environ.get("BRAINORDER_PACKAGED") == "1", "connected": self._sp().connected,
                 "defaults": {"dest_root": self._cfg.get("dest_root"), "inbox": self._cfg.get("inbox"),
                              "library_roots": self._cfg.get("library_roots") or [],
                              "client_id": self._cfg.get("client_id", ""), "redirect_uri": self._cfg.get("redirect_uri")}}
@@ -483,6 +507,10 @@ class Api:
                                            "folder_name": payload.get("folder_name") or "BrainOrder"})
             self._cfg["setup_done"] = True
             config.save(self._cfg)
+            try:
+                self.PRECONFIG.unlink()
+            except OSError:
+                pass
             self._progress("¡Listo!", 1)
             st = self.get_state()
             return {**out, "state": st}

@@ -1,0 +1,79 @@
+# Arma los instaladores de BrainOrder (.dmg para Mac y .exe para Windows) y los publica en Releases.
+# Corre solo cuando cambia version.json en main (cada versión nueva) o a mano desde la pestaña Actions.
+name: Instaladores
+
+on:
+  push:
+    branches: [main]
+    paths: [version.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: instaladores
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15-intel]   # Apple Silicon e Intel
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Armar BrainOrder.app y el .dmg
+        run: bash empaquetar/mac/construir_dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.os }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Armar el instalador .exe
+        shell: bash
+        run: bash empaquetar/windows/construir.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  publicar:
+    needs: [mac, windows]
+    if: ${{ !cancelled() && (needs.mac.result == 'success' || needs.windows.result == 'success') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publicar en Releases
+        run: |
+          VER=$(jq -r .version version.json)
+          NOTES=$(jq -r .notes version.json)
+          BODY=$(printf '%s\n\n**Instalar:**\n- **Mac con chip Apple (M1, M2, M3, M4…):** `BrainOrder-%s-Mac-AppleSilicon.dmg`\n- **Mac con Intel:** `BrainOrder-%s-Mac-Intel.dmg`\n- **Windows 10/11:** `BrainOrder-%s-Windows.exe`\n\nNo están firmados con cuenta de desarrollador: la primera vez macOS/Windows avisan. Mac: Configuración del Sistema → Privacidad y seguridad → «Abrir igualmente». Windows: «Más información» → «Ejecutar de todas formas».\nDespués BrainOrder se actualiza sola.' "$NOTES" "$VER" "$VER" "$VER")
+          ls -la dist
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            gh release upload "v$VER" dist/* --clobber
+            gh release edit "v$VER" --notes "$BODY" --latest
+          else
+            gh release create "v$VER" dist/* --title "BrainOrder $VER" --notes "$BODY" --latest
+          fi

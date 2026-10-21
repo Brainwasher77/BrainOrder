@@ -144,6 +144,8 @@ def migrate_launcher(log=print):
     Mac: SpotiSync.app -> BrainOrder.app (con su lanzador nuevo). Windows: SpotiSync.lnk -> BrainOrder.lnk.
     No toca la carpeta de datos (eso lo hace el instalador). Seguro de repetir."""
     import shutil
+    if os.environ.get("BRAINORDER_PACKAGED") == "1":
+        return None
     try:
         if IS_MAC:
             import plistlib
@@ -229,8 +231,8 @@ def mac_branding(name="BrainOrder", icon=None):
 def refresh_launcher(log=print):
     """Las actualizaciones automáticas cambian el código pero no el lanzador que está dentro de
     BrainOrder.app: si cambió, se copia el nuevo (se usa desde la próxima vez que se abra)."""
-    if not IS_MAC:
-        return False
+    if not IS_MAC or os.environ.get("BRAINORDER_PACKAGED") == "1":
+        return False  # el programa del instalador (.dmg) trae su propio lanzador
     import filecmp
     import shutil
     bundle = os.environ.get("BRAINORDER_BUNDLE")
