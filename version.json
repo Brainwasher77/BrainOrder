@@ -1,5 +1,5 @@
 {
-  "version": "2.14.2",
-  "build": 37,
-  "notes": "Íconos centrados en sus botones (play/pausa, ✕, flechas…), números alineados en botones y filtros, y el círculo de «cargando» ya no aparece cuando no hay nada en curso."
+  "version": "2.14.3",
+  "build": 38,
+  "notes": "Ajustes muestra qué programas de DJ están activos y un botón para abrir Conexiones (donde se activan Rekordbox, Traktor, Serato, Engine DJ y M3U)."
 }

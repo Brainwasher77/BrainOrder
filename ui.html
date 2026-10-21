@@ -2299,6 +2299,9 @@ function openSettings(){
     <div id="rootsList"></div>
     <button onclick="addRoot()" style="margin-top:6px">＋ Agregar carpeta…</button>
     <label class="f">Nombre de la carpeta de playlists en tus programas de DJ</label><input class="t" id="sRb" value="${esc(s.rekordbox_folder)}">
+    <div class="box" style="margin-top:8px;display:flex;gap:10px;align-items:center">
+      <span style="flex:1">🎛️ <b>Programas de DJ</b>: ${(()=>{ const on = Object.values(S.dests||{}).filter(x=>x.enabled).map(x=>esc(x.label)); return on.length ? 'activos ' + on.join(', ') : 'ninguno activo'; })()}. Rekordbox, Traktor, Serato, Engine DJ y M3U se activan en Conexiones.</span>
+      <button onclick="closeModal(); show('conn')">Abrir Conexiones</button></div>
     <label class="f">Canciones que te gustan</label>
     <div style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="sLiked" ${s.include_liked?'checked':''}>
       <span>Incluir como playlist llamada</span><input class="t" id="sLikedName" value="${esc(s.liked_name)}" style="width:180px"></div>
