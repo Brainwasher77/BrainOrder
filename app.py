@@ -305,6 +305,7 @@ class Api:
             "spotify_paused": spotify_api.paused_until(),
             "spotify_queue": len(__import__("cola_spotify").load()),
             "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
+            "stats_hidden": list(self._cfg.get("stats_hidden") or []),
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -1301,6 +1302,18 @@ class Api:
         config.save(self._cfg)
         return {"ok": True, "ui": {**UI_DEFAULTS, **cur}}
 
+    def set_stats_hidden(self, pid, hidden=True):
+        """Ocultar (o volver a mostrar) una playlist de tus estadísticas y conteos. La playlist sigue funcionando
+        igual: se organiza y va a tus programas de DJ; solo no cuenta en los números."""
+        cur = list(self._cfg.get("stats_hidden") or [])
+        if hidden and pid not in cur:
+            cur.append(pid)
+        elif not hidden:
+            cur = [x for x in cur if x != pid]
+        self._cfg["stats_hidden"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "stats_hidden": cur}
+
     def pin(self, paths):
         """Fijar archivos donde están: Reorganizar no los vuelve a proponer."""
         self._cfg["pinned_paths"] = sorted(set(self._cfg.get("pinned_paths", [])) | set(paths or []))
@@ -2057,6 +2070,7 @@ class Api:
             self._cfg["rules"] = rules
         self._cfg["rb_keep"] = [x for x in self._cfg.get("rb_keep") or [] if x != pid]
         (self._cfg.get("playlist_origin") or {}).pop(pid, None)
+        self._cfg["stats_hidden"] = [x for x in self._cfg.get("stats_hidden") or [] if x != pid]
         config.save(self._cfg)
         self._update_sp(lambda d: d.update(playlists=[x for x in d["playlists"] if x["id"] != pid],
                                            foreign_ok=[x for x in d.get("foreign_ok") or [] if x["id"] != pid]))
@@ -2078,6 +2092,7 @@ class Api:
             rules["playlist_mode"] = mode
             self._cfg["rules"] = rules
         self._cfg["rb_keep"] = [new if x == old else x for x in self._cfg.get("rb_keep") or []]
+        self._cfg["stats_hidden"] = [new if x == old else x for x in self._cfg.get("stats_hidden") or []]
         po = self._cfg.get("playlist_origin") or {}
         if old in po:
             po[new] = po.pop(old)
@@ -3046,6 +3061,8 @@ class Api:
             path = str(Path(default_dir) / name)
         if not path.lower().endswith(".xlsx"):
             path += ".xlsx"
+        hidden = set(self._cfg.get("stats_hidden") or [])  # las que ocultaste de tus estadísticas no cuentan
+        analysis = [p for p in analysis if p["id"] not in hidden]
         try:
             n = excel.build(analysis, path)
         except Exception as e:
