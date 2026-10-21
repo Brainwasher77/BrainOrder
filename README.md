@@ -108,6 +108,9 @@ Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Histo
 ## Key y energía (Mixed In Key)
 Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus archivos, leídos de las etiquetas que deja **Mixed In Key 10 u 11** (los datos de **Mixed In Key siempre tienen prioridad**; solo si una canción no tiene nada de MIK se usa la key de otros programas —«Am», «C#m», Open Key «1m»…—, marcada con *). Se ordena por cualquiera de esas columnas, el filtro **Sin Mixed In Key** muestra lo que falta analizar y escribir **8A** en el buscador deja solo esa key. BrainOrder solo lee: nunca cambia las etiquetas.
 
+## Sin Mixed In Key
+Sección del menú con las canciones que tienes y que Mixed In Key todavía no analizó (una por archivo, con sus playlists). Marca y dale **Mandar a Mixed In Key**: se abren en tu Mixed In Key; cuando las analiza, BrainOrder lo nota y salen de la lista. También con clic derecho en una canción. Sin Mixed In Key instalado, te abre las carpetas en Finder para arrastrarlas.
+
 ## Mixed In Key → tus programas de DJ (automático)
 Lo que analizó Mixed In Key pasa a **Rekordbox, Traktor, Serato y Engine DJ** (los que tengas activos en Conexiones):
 - **Key** en la columna Key de cada programa (MIK siempre gana sobre la que tuviera).

@@ -2813,6 +2813,99 @@ class Api:
                     "keep": self._cfg.get("rb_keep")}
         return self._task(run, "rb_apply", "Cambios de Rekordbox")
 
+    # ---------- canciones sin analizar en Mixed In Key ----------
+    def mik_info(self):
+        app = plataforma.mik_app()
+        return {"ok": True, "app": app, "name": Path(app).stem if app else None,
+                "watching": len(getattr(self, "_mik_watch", {}) or {})}
+
+    def mik_send(self, paths):
+        """Manda esas canciones a Mixed In Key para que las analice. Después BrainOrder nota solo cuáles
+        ya quedaron analizadas (Mixed In Key escribe la key y la energía en el archivo)."""
+        paths = [p for p in dict.fromkeys(paths or []) if p and os.path.isfile(p)]
+        if not paths:
+            return {"ok": False, "error": "No hay archivos para mandar."}
+        app = plataforma.mik_app()
+        if not app:
+            return {"ok": False, "no_app": True, "error": "No encontré Mixed In Key instalado en Aplicaciones."}
+        try:
+            n = plataforma.open_with_mik(paths, app)
+        except Exception as e:
+            config.log(f"Mixed In Key: {e!r}")
+            return {"ok": False, "error": f"No pude abrir Mixed In Key: {e}"}
+        self._mik_watch_start(paths)
+        return {"ok": True, "sent": n, "app": Path(app).stem}
+
+    def mik_reveal(self, paths):
+        """Sin Mixed In Key instalado (o si prefieres arrastrarlas): las muestra en Finder."""
+        paths = [p for p in paths or [] if os.path.isfile(p)]
+        if not paths:
+            return {"ok": False, "error": "No hay archivos."}
+        dirs = list(dict.fromkeys(str(Path(p).parent) for p in paths))
+        for p in [next(x for x in paths if str(Path(x).parent) == d) for d in dirs[:5]]:
+            plataforma.reveal(p)  # una ventana por carpeta (máx. 5): arrastra los archivos a Mixed In Key
+        return {"ok": True, "folders": len(dirs)}
+
+    def _mik_watch_start(self, paths):
+        """Vigila las canciones mandadas: cuando Mixed In Key las cambia, se actualiza el análisis."""
+        import armonia
+        import time
+        w = getattr(self, "_mik_watch", None)
+        if w is None:
+            w = self._mik_watch = {}
+        for p in paths:
+            try:
+                w[p] = os.stat(p).st_mtime
+            except OSError:
+                pass
+        if getattr(self, "_mik_thread", None) and self._mik_thread.is_alive():
+            return
+
+        def loop():
+            idle = 0
+            while self._mik_watch and idle < 720:  # hasta ~2 h sin novedades
+                time.sleep(10)
+                changed = []
+                for p, m in list(self._mik_watch.items()):
+                    try:
+                        if os.stat(p).st_mtime != m:
+                            changed.append(p)
+                    except OSError:
+                        self._mik_watch.pop(p, None)
+                if not changed:
+                    idle += 1
+                    continue
+                idle = 0
+                time.sleep(4)  # que termine de escribir
+                done = [p for p in changed if armonia.info(p).get("mik")]
+                for p in changed:
+                    try:
+                        self._mik_watch[p] = os.stat(p).st_mtime
+                    except OSError:
+                        pass
+                for p in done:
+                    self._mik_watch.pop(p, None)
+                if not done:
+                    continue
+                try:
+                    if self._state.acquire(timeout=30):
+                        try:
+                            self._build_analysis(light=True, quiet=True)
+                        finally:
+                            self._state.release()
+                    if self._window:
+                        self._window.evaluate_js(f"window.onMikAnalyzed && onMikAnalyzed({json.dumps({'done': len(done), 'left': len(self._mik_watch)})})")
+                except Exception as e:
+                    config.log(f"vigilar Mixed In Key: {e!r}")
+            self._mik_watch = {}
+        import threading as _th
+        self._mik_thread = _th.Thread(target=loop, daemon=True, name="mik-watch")
+        self._mik_thread.start()
+
+    def mik_refresh(self):
+        """Volver a mirar qué canciones ya analizó Mixed In Key."""
+        return self._task(lambda: {"analysis": self._build_analysis(light=True)}, "mik_refresh", "Revisar Mixed In Key")
+
     # ---------- Mixed In Key -> programas de DJ ----------
     def _mik_targets(self, only=None):
         keys = [k for k in mik_dj.PROGRAMS if destinos.DESTINATIONS[k].enabled(self._cfg)]

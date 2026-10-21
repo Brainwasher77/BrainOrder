@@ -334,3 +334,36 @@ def any_process(pred):
     if procs is None:
         return None
     return any(pred(p) for p in procs)
+
+
+def mik_app():
+    """Dónde está Mixed In Key (la versión más nueva instalada) o None."""
+    import glob
+    import re as _re
+    if IS_MAC:
+        cands = glob.glob("/Applications/Mixed In Key*.app") + glob.glob(str(Path.home() / "Applications" / "Mixed In Key*.app"))
+    elif IS_WIN:
+        roots = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+        cands = [p for r in roots for p in glob.glob(os.path.join(r, "Mixed In Key*", "**", "*.exe"), recursive=True)
+                 if "uninst" not in os.path.basename(p).lower() and "mixed" in os.path.basename(p).lower()]
+    else:
+        cands = []
+    if not cands:
+        return None
+    ver = lambda p: [int(x) for x in _re.findall(r"\d+", os.path.basename(p))] or [0]
+    return max(cands, key=ver)
+
+
+def open_with_mik(paths, app=None):
+    """Abre esos archivos con Mixed In Key (quedan en su lista para analizar). -> cuántos se mandaron"""
+    app = app or mik_app()
+    if not app:
+        raise FileNotFoundError("Mixed In Key")
+    paths = [str(p) for p in paths if os.path.isfile(p)]
+    for i in range(0, len(paths), 100):  # de a 100 para no pasar el límite de argumentos
+        chunk = paths[i:i + 100]
+        if IS_MAC:
+            subprocess.run(["open", "-a", app] + chunk, check=True, timeout=60)
+        else:
+            subprocess.Popen([app] + chunk)
+    return len(paths)
