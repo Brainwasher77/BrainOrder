@@ -268,6 +268,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="missing" onclick="show('missing')"><div class="row"><span class="name">Faltan por descargar</span><span class="cnt mono" id="nMissing">–</span></div></a>
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
+        <a data-v="mik" onclick="show('mik')"><div class="row"><span class="name">Sin Mixed In Key</span><span class="cnt mono" id="nMik">–</span></div></a>
         <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
@@ -661,6 +662,86 @@ document.addEventListener('keydown', e => {  // barra espaciadora: pausa / sigue
   e.preventDefault(); pvToggle();
 });
 
+// ---------- canciones sin analizar en Mixed In Key ----------
+let MK = {sel:new Set(), pl:'', q:'', app:undefined};
+// tus archivos (uno por canción) que todavía no tienen key/energía de Mixed In Key
+function mikRows(){
+  return memo('mik', () => {
+    const by = new Map();
+    for(const pl of S.analysis||[]){
+      if(pl.pending || pl.ignored) continue;
+      for(const r of pl.tracks){
+        if(!r.source || r.mik) continue;
+        let x = by.get(r.source);
+        if(!x){ x = {source:r.source, id:r.id, name:r.name, artists:r.artists||[], key:r.key, bpm:r.bpm, status:r.status, pls:[]}; by.set(r.source, x); }
+        if(!x.pls.includes(pl.name)) x.pls.push(pl.name);
+      }
+    }
+    return [...by.values()].sort((a,b) => (a.artists[0]||'').localeCompare(b.artists[0]||'', 'es') || a.name.localeCompare(b.name, 'es'));
+  });
+}
+async function mikInit(){ MK.sel = new Set(); try{ const r = await api().mik_info(); MK.app = r.app ? r.name : null; MK.watching = r.watching; }catch(e){ MK.app = null; } if(S.view==='mik') renderMain(); }
+function mikVisible(){
+  const q = (MK.q||'').toLowerCase();
+  return mikRows().filter(x => (!MK.pl || x.pls.includes(MK.pl)) && (!q || (x.name+' '+x.artists.join(' ')).toLowerCase().includes(q)));
+}
+function mikView(){
+  const all = mikRows(), rows = mikVisible();
+  const pls = [...new Set(all.flatMap(x => x.pls))].sort((a,b)=>a.localeCompare(b,'es'));
+  const head = `<div class="vhead"><h2>🎹 Sin Mixed In Key</h2>
+    <span class="sub">Canciones que tienes (un archivo por canción) y que Mixed In Key todavía no ha analizado: sin su key, energía ni hot cues. Márcalas y mándalas a Mixed In Key; cuando las analice, salen solas de aquí.</span></div>`;
+  if(!all.length) return head + `<div class="empty"><h3>Todo analizado con Mixed In Key 🎉</h3><p>Las canciones de tus playlists ya tienen su key y energía.</p></div>`;
+  const appMsg = MK.app === undefined ? '' : MK.app
+    ? `<span class="art">Se abren en <b>${esc(MK.app)}</b> y quedan en su lista para analizar.</span>`
+    : `<span style="color:var(--org)">No encontré Mixed In Key en Aplicaciones: te muestro los archivos en Finder para que los arrastres.</span>`;
+  const tb = rows.slice(0, 600).map(x => `<tr><td style="width:30px"><input type="checkbox" class="mkc" data-f="${esc(x.source)}" ${MK.sel.has(x.source)?'checked':''} onchange="this.checked?MK.sel.add(this.dataset.f):MK.sel.delete(this.dataset.f);mikSum()"></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn(x)}<div><div>${esc(x.name)}</div><div class="art">${esc(x.artists.join(', '))}</div></div></div></td>
+      <td>${x.pls.slice(0,3).map(n=>`<span class="chip" style="cursor:default">♫ ${esc(n)}</span>`).join('')}${x.pls.length>3?`<span class="art">+${x.pls.length-3}</span>`:''}</td>
+      <td class="mono" style="color:var(--mute)">${x.key?esc(x.key):''}${x.bpm?` · ${Math.round(x.bpm)}`:''}</td>
+      <td class="art path" onclick="reveal(${jsq(x.source)})" title="${esc(x.source)}">${esc(base(x.source))}</td></tr>`).join('');
+  return head + `<div class="cards" style="grid-template-columns:repeat(3,1fr)">
+      <div class="card"><div class="k">Sin analizar</div><div class="v" style="color:#b48cff">${all.length}</div></div>
+      <div class="card"><div class="k">En la lista</div><div class="v">${rows.length}</div></div>
+      <div class="card"><div class="k">Marcadas</div><div class="v" id="mkSel">0</div></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select onchange="MK.pl=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;max-width:260px">
+        <option value="">Todas las playlists</option>${pls.map(n=>`<option ${MK.pl===n?'selected':''}>${esc(n)}</option>`).join('')}</select>
+      <input placeholder="Buscar…" value="${esc(MK.q)}" oninput="MK.q=this.value; clearTimeout(MK.t); MK.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
+      <button class="ghost" onclick="mikAll(true)">Marcar las de la lista</button><button class="ghost" onclick="mikAll(false)">Ninguna</button>
+      <button class="ghost" onclick="mikRefresh()" title="Volver a mirar cuáles ya analizó Mixed In Key">↻ Revisar</button>
+      <button id="mkGo" style="background:#b48cff;border-color:#b48cff;color:#111;font-weight:650" onclick="mikSend()">🎹 Mandar a Mixed In Key</button></div>
+    <div style="margin:-2px 0 10px">${appMsg}${MK.watching?` <span class="art">· Esperando a que Mixed In Key termine ${MK.watching} canción(es)…</span>`:''}</div>
+    ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Playlists</th><th>Key / BPM</th><th>Archivo</th></tr>${tb}</table>${rows.length>600?`<div class="art">Mostrando 600 de ${rows.length}: filtra por playlist o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function mikSum(){
+  const n = MK.sel.size, el = $('mkSel'), b = $('mkGo');
+  if(el) el.textContent = n;
+  if(b){ b.disabled = !n; b.textContent = n ? `🎹 Mandar ${n} a Mixed In Key` : '🎹 Mandar a Mixed In Key'; }
+}
+function mikAll(on){ const rows = mikVisible().slice(0, 600); rows.forEach(x => on ? MK.sel.add(x.source) : MK.sel.delete(x.source)); renderMain(); }
+async function mikSend(){
+  const paths = [...MK.sel]; if(!paths.length) return;
+  const r = await api().mik_send(paths);
+  if(!r.ok){
+    if(r.no_app){ await api().mik_reveal(paths); toast(`${esc(r.error)}<br>Te abrí las carpetas en Finder: arrastra los archivos a Mixed In Key.`, true); }
+    else toast(esc(r.error), true);
+    return;
+  }
+  MK.watching = (MK.watching||0) + r.sent; MK.sel = new Set(); renderMain();
+  toast(`🎹 ${r.sent} canción(es) mandadas a <b>${esc(r.app)}</b>. Dale analizar allá; cuando termine, salen solas de esta lista (y la key, energía y hot cues pasan a tus programas de DJ al Organizar).`);
+}
+async function mikRefresh(){
+  const r = await api().mik_refresh();
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); render(); toast(`Listo: quedan ${mikRows().length} sin analizar.`);
+}
+window.onMikAnalyzed = async x => {
+  MK.watching = x.left;
+  try{ const st = await api().get_state(S.rev ?? null); if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev); }catch(e){}
+  for(const p of [...MK.sel]) if(!mikRows().some(r => r.source === p)) MK.sel.delete(p);
+  render(); toast(`🎹 Mixed In Key analizó ${x.done} canción(es)${x.left?` · faltan ${x.left}`:''}.`);
+};
+
 // ---------- menú del clic derecho sobre una canción ----------
 let CM = null;  // {items: [[texto, fn] | '-' | ['#', título]]}
 function cmenuOpen(x, y, items){
@@ -959,6 +1040,7 @@ document.addEventListener('contextmenu', e => {
 function songMenu(r, pl){
   const label = (r.artists && r.artists.length ? r.artists.join(', ') + ' - ' : '') + r.name;
   const it = [['#', label], [r.source ? '▶ Escuchar' : '▶ Escuchar 30 s (Deezer)', () => pvPlay(r)]];
+  if(r.source && !r.mik) it.push(['🎹 Mandar a Mixed In Key', async () => { MK.sel = new Set([r.source]); await mikSend(); }]);
   const finder = S.win ? 'Mostrar en el Explorador' : 'Mostrar en Finder';
   if(pl && r.source && (r.status==='ok' || r.status==='elsewhere')){
     const cur = dirOf(r.source), seen = new Set([cur]);
@@ -1081,6 +1163,7 @@ function renderCore(){
   $('nRules').textContent = nr ? nr : '–';
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
+  { const n = mikRows().length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
   $('nHist').textContent = (S.hist||[]).filter(o=>!o.undone).length || '–';
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
@@ -1122,6 +1205,7 @@ function renderMain(){
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
+  if(S.view==='mik' && S.analysis){ m.innerHTML = mikView(); mikSum(); return; }
   if(S.view==='cmp' && S.analysis){ m.innerHTML = cmpView(); return; }
   if(!anySource() && !S.analysis){
     m.innerHTML = `<div class="empty"><h3>¿De dónde vienen tus playlists?</h3>
@@ -1576,7 +1660,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
