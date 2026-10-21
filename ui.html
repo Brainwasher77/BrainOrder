@@ -58,6 +58,10 @@ header *{-webkit-app-region:no-drag}
 .wiz .opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;cursor:pointer;background:var(--panel2)}
 .wiz .opt input[type=checkbox]{margin-top:3px}
 .wiz .opt .tag{margin-left:6px;margin-right:0}
+.wiz .wizol{margin:6px 0 10px;padding-left:20px;font-size:13.5px;line-height:1.55}
+.wiz .wizol li{margin:5px 0}
+.wiz .uri{display:flex;gap:8px;align-items:center;margin:5px 0 2px}
+.wiz .uri code{flex:1;padding:6px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);user-select:all}
 .wiz .big{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:4px 0 8px}
 .cx{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0 0;background:var(--panel2)}
 .cxh{display:flex;align-items:center;gap:10px;margin-bottom:4px}
@@ -1810,48 +1814,35 @@ function folderRenMsg(x){
 }
 window.onFolderRenamed = x => toast('✅' + folderRenMsg(x).replace(/^<br>/, ' '));
 
-// ---------- asistente de primer uso ----------
+// ---------- asistente de primer uso (también es la instalación del programa .dmg / .exe) ----------
 let W = null;
 async function openWizard(){
   let info;
   try{ info = await api().setup_info(); }catch(e){ toast('No pude abrir el asistente: '+esc(e), true); return; }
   const dj = {}; Object.entries(info.dj).forEach(([k,x])=>{ if(k!=='m3u') dj[k] = x.available; });
-  const d = info.defaults;
+  const d = info.defaults, pre = info.preconfig || {};
   W = {step:0, info, dj, m3u:false, m3uFolder:'', folder_name:S.settings.rekordbox_folder||'BrainOrder',
-    spotify:true, client_id:d.client_id||'', deezer:false, dzUser:'', files:false, filesFolder:'',
-    dest_root:d.dest_root, inbox:d.inbox, roots:new Set(d.library_roots||[])};
+    spotify:true, client_id:pre.client_id||d.client_id||'', deezer:false, dzUser:'', files:false, filesFolder:'',
+    dest_root:pre.dest_root||d.dest_root, inbox:pre.inbox||d.inbox, roots:new Set(d.library_roots||[]),
+    first:!S.settings.setup_done, pre:!!info.preconfig, connected:!!info.connected, spUser:'', spBusy:false, spErr:''};
   wizRender();
 }
-const WSTEPS = 5;
+const CID_RE = /^[0-9a-f]{32}$/i;
+// pasos: el de Spotify solo si lo usas
+function wizSteps(){ return ['hola','carpetas','dj','fuentes'].concat(W.spotify?['spotify']:[]).concat(['listo']); }
+function wizGo(d){ W.step = Math.max(0, Math.min(wizSteps().length-1, W.step+d)); W.spErr=''; wizRender(); }
 function wizRender(){
-  const w = W, i = w.info, st = w.step;
-  const bar = `<div class="steps">${Array.from({length:WSTEPS},(_,k)=>`<i class="${k<=st?'on':''}"></i>`).join('')}</div>`;
+  const w = W, i = w.info, steps = wizSteps(); if(w.step>=steps.length) w.step = steps.length-1;
+  const id = steps[w.step], last = w.step===steps.length-1;
+  const bar = `<div class="steps">${steps.map((_,k)=>`<i class="${k<=w.step?'on':''}"></i>`).join('')}</div>`;
   const pickRow = (label, val, fn) => `<label class="f">${label}</label><div style="display:flex;gap:8px;align-items:center"><span class="path" style="flex:1">${val?'📁 '+esc(short(val)):'<span class="hint">sin elegir</span>'}</span><button onclick="${fn}">Elegir…</button></div>`;
   let body = '';
-  if(st===0) body = `<div class="big">Bienvenido a BrainOrder 👋</div>
-    <p>Te ayuda a tener en tu computador las canciones de tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…), ordenadas en carpetas y listas dentro de tus programas de DJ.</p>
-    <div class="box">En 4 pasos: programas de DJ → de dónde vienen tus playlists → carpetas → listo. Puedes cambiar todo después en <b>Conexiones</b>, <b>Reglas</b> y <b>Ajustes</b>.</div>
+  if(id==='hola') body = `<div class="big">${w.first?'Instalación de BrainOrder 👋':'Asistente de configuración'}</div>
+    <p>BrainOrder te ayuda a tener en tu computador las canciones de tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…), ordenadas en carpetas y listas dentro de tus programas de DJ.</p>
+    ${w.pre?'<div class="box">✅ Ya elegiste tus carpetas'+(w.client_id?' y tu Client ID de Spotify':'')+' en el instalador: aquí están puestas, solo revisa y sigue.</div>':''}
+    <div class="box">En ${steps.length-1} pasos: carpetas → programas de DJ → de dónde vienen tus playlists${w.spotify?' → conectar Spotify':''} → listo. Todo se puede cambiar después en <b>Conexiones</b>, <b>Reglas</b> y <b>Ajustes</b>.</div>
     <div class="box">🔒 BrainOrder nunca borra música: lo repetido se aparta en una carpeta <code>_duplicados</code>, cada programa de DJ se respalda antes de tocarlo y todo lo que mueve se puede deshacer desde <b>Historial</b>.</div>`;
-  if(st===1) body = `<div class="big">¿Qué programas de DJ usas?</div>
-    <p class="hint">Marqué los que encontré en este computador. BrainOrder crea ahí tus playlists, en el mismo orden.</p>
-    ${Object.entries(i.dj).filter(([k])=>k!=='m3u').map(([k,x])=>`<label class="opt"><input type="checkbox" ${w.dj[k]?'checked':''} onchange="W.dj['${k}']=this.checked">
-      <div><b>${esc(x.label)}</b><span class="tag ${x.available?'ok':''}">${x.available?'encontrado':'no encontrado'}</span>
-      ${x.available?'':'<div class="hint" style="margin:2px 0 0">Si lo usas, ábrelo una vez y luego actívalo en Conexiones.</div>'}</div></label>`).join('')}
-    <label class="opt"><input type="checkbox" ${w.m3u?'checked':''} onchange="W.m3u=this.checked;wizRender()"><div><b>Otro (VirtualDJ, djay, Mixxx…)</b><div class="hint" style="margin:2px 0 0">Guarda tus playlists como archivos M3U para importarlas.</div></div></label>
-    ${w.m3u?pickRow('Carpeta para las playlists M3U', w.m3uFolder, "wizPick('m3uFolder')"):''}
-    <label class="f">Nombre de la carpeta de playlists dentro de cada programa</label><input class="t" value="${esc(w.folder_name)}" oninput="W.folder_name=this.value">`;
-  if(st===2) body = `<div class="big">¿De dónde vienen tus playlists?</div>
-    <p class="hint">Puedes usar varias a la vez.</p>
-    <label class="opt"><input type="checkbox" ${w.spotify?'checked':''} onchange="W.spotify=this.checked;wizRender()"><div style="flex:1"><b>Spotify</b>
-      ${w.spotify?`<div class="hint" style="margin:4px 0 0">1. Entra a <a class="lnk" onclick="openUrl('https://developer.spotify.com/dashboard')">developer.spotify.com/dashboard</a> y crea una app (Web API).<br>
-        2. En «Redirect URIs» agrega <code>${esc(i.defaults.redirect_uri)}</code> <a class="lnk" onclick="api().copy_text(${jsq(i.defaults.redirect_uri)});toast('Copiado.')">copiar</a><br>3. Pega aquí su <b>Client ID</b>:</div>
-        <input class="t" style="margin-top:6px" placeholder="Client ID" value="${esc(w.client_id)}" oninput="W.client_id=this.value.trim()">`:''}</div></label>
-    <label class="opt"><input type="checkbox" ${w.deezer?'checked':''} onchange="W.deezer=this.checked;wizRender()"><div style="flex:1"><b>Deezer</b> <span class="tag">sin login</span>
-      ${w.deezer?`<input class="t" style="margin-top:6px" placeholder="Link de tu perfil de Deezer" value="${esc(w.dzUser)}" oninput="W.dzUser=this.value">`:''}</div></label>
-    <label class="opt"><input type="checkbox" ${w.files?'checked':''} onchange="W.files=this.checked;wizRender()"><div style="flex:1"><b>Apple Music, SoundCloud, Tidal u otros</b>
-      <div class="hint" style="margin:2px 0 0">Exportas la playlist a un archivo y la dejas en una carpeta (en Conexiones te explico cómo).</div>
-      ${w.files?`<div style="margin-top:6px">${pickRow('Carpeta de playlists exportadas', w.filesFolder, "wizPick('filesFolder')")}</div>`:''}</div></label>`;
-  if(st===3) body = `<div class="big">Tus carpetas</div>
+  if(id==='carpetas') body = `<div class="big">Tus carpetas</div>
     ${pickRow('📂 Dónde quieres tu música organizada (una subcarpeta por playlist)', w.dest_root, "wizPick('dest_root')")}
     ${pickRow('⬇ Dónde caen tus descargas nuevas', w.inbox, "wizPick('inbox')")}
     <div class="hint" style="margin-top:4px">Si no existen, se crean.</div>
@@ -1860,28 +1851,77 @@ function wizRender(){
       <div style="flex:1;min-width:0"><span class="path">📁 ${esc(short(x.path))}</span> <span class="art">${x.count}${x.capped?'+':''} audios</span></div></label>`).join('') || '<div class="hint">No encontré otras carpetas con música.</div>'}
     ${[...w.roots].filter(r=>!i.music_dirs.some(x=>x.path===r)).map(r=>`<div class="opt" style="padding:7px 10px;margin:5px 0"><span class="path" style="flex:1">📁 ${esc(short(r))}</span><button class="ghost ib sq" title="Quitar" onclick="W.roots.delete(${jsq(r)});wizRender()">${IC.x}</button></div>`).join('')}
     <button style="margin-top:6px" onclick="wizAddRoot()">＋ Otra carpeta…</button>`;
-  if(st===4){ const dj = Object.entries(w.dj).filter(([,v])=>v).map(([k])=>DJ_LABEL[k]).concat(w.m3u?['M3U']:[]);
+  if(id==='dj') body = `<div class="big">¿Qué programas de DJ usas?</div>
+    <p class="hint">Marqué los que encontré en este computador. BrainOrder crea ahí tus playlists, en el mismo orden.</p>
+    ${Object.entries(i.dj).filter(([k])=>k!=='m3u').map(([k,x])=>`<label class="opt"><input type="checkbox" ${w.dj[k]?'checked':''} onchange="W.dj['${k}']=this.checked">
+      <div><b>${esc(x.label)}</b><span class="tag ${x.available?'ok':''}">${x.available?'encontrado':'no encontrado'}</span>
+      ${x.available?'':'<div class="hint" style="margin:2px 0 0">Si lo usas, ábrelo una vez y luego actívalo en Conexiones.</div>'}</div></label>`).join('')}
+    <label class="opt"><input type="checkbox" ${w.m3u?'checked':''} onchange="W.m3u=this.checked;wizRender()"><div><b>Otro (VirtualDJ, djay, Mixxx…)</b><div class="hint" style="margin:2px 0 0">Guarda tus playlists como archivos M3U para importarlas.</div></div></label>
+    ${w.m3u?pickRow('Carpeta para las playlists M3U', w.m3uFolder, "wizPick('m3uFolder')"):''}
+    <label class="f">Nombre de la carpeta de playlists dentro de cada programa</label><input class="t" value="${esc(w.folder_name)}" oninput="W.folder_name=this.value">`;
+  if(id==='fuentes') body = `<div class="big">¿De dónde vienen tus playlists?</div>
+    <p class="hint">Puedes usar varias a la vez.</p>
+    <label class="opt"><input type="checkbox" ${w.spotify?'checked':''} onchange="W.spotify=this.checked;wizRender()"><div style="flex:1"><b>Spotify</b>
+      <div class="hint" style="margin:2px 0 0">En el paso siguiente te guío para conectarlo (5 minutos, una sola vez).</div></div></label>
+    <label class="opt"><input type="checkbox" ${w.deezer?'checked':''} onchange="W.deezer=this.checked;wizRender()"><div style="flex:1"><b>Deezer</b> <span class="tag">sin login</span>
+      ${w.deezer?`<input class="t" style="margin-top:6px" placeholder="Link de tu perfil de Deezer" value="${esc(w.dzUser)}" oninput="W.dzUser=this.value">`:''}</div></label>
+    <label class="opt"><input type="checkbox" ${w.files?'checked':''} onchange="W.files=this.checked;wizRender()"><div style="flex:1"><b>Apple Music, SoundCloud, Tidal u otros</b>
+      <div class="hint" style="margin:2px 0 0">Exportas la playlist a un archivo y la dejas en una carpeta (en Conexiones te explico cómo).</div>
+      ${w.files?`<div style="margin-top:6px">${pickRow('Carpeta de playlists exportadas', w.filesFolder, "wizPick('filesFolder')")}</div>`:''}</div></label>`;
+  if(id==='spotify'){ const ok = CID_RE.test(w.client_id), uri = i.defaults.redirect_uri;
+    body = `<div class="big">Conectar Spotify</div>
+    <p class="hint">Spotify pide que cada persona use su propia «app» de desarrollador (es gratis). Se hace una sola vez:</p>
+    <ol class="wizol">
+      <li>Abre el <a class="lnk" onclick="openUrl('https://developer.spotify.com/dashboard')">panel de desarrolladores de Spotify</a> e inicia sesión con tu cuenta de Spotify (acepta los términos si te los pide).</li>
+      <li>Toca <b>Create app</b>. Nombre y descripción: lo que quieras (por ejemplo «BrainOrder»).</li>
+      <li>En <b>Redirect URIs</b> pega esto y toca <b>Add</b>:<div class="uri"><code>${esc(uri)}</code><button class="ghost" onclick="api().copy_text(${jsq(uri)});toast('Copiado.')">Copiar</button></div></li>
+      <li>En «Which API/SDKs are you planning to use?» marca <b>Web API</b>, acepta y toca <b>Save</b>.</li>
+      <li>Entra a <b>Settings</b> de tu app, copia el <b>Client ID</b> y pégalo aquí:</li>
+    </ol>
+    <input class="t" id="wizCid" placeholder="Client ID (32 letras y números)" value="${esc(w.client_id)}" oninput="W.client_id=this.value.trim();wizCidMark()">
+    <div id="wizCidMsg" class="hint" style="margin:4px 0 0">${wizCidTxt()}</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+      <button class="primary" ${!ok||w.spBusy?'disabled':''} id="wizSpBtn" onclick="wizSpotify()">${w.spBusy?'Esperando a Spotify…':w.connected?'Volver a conectar':'Conectar y probar'}</button>
+      <span style="font-size:13px">${w.connected?`✅ Conectado${w.spUser?' como <b>'+esc(w.spUser)+'</b>':''}`:w.spBusy?'Autoriza en la ventana del navegador y vuelve aquí.':''}</span></div>
+    ${w.spErr?`<div class="box warn" style="margin-top:10px">${esc(w.spErr)}</div>`:''}
+    <p class="hint" style="margin-top:10px">Si prefieres hacerlo después, sigue sin conectar: queda en <b>Ajustes</b>.</p>`; }
+  if(id==='listo'){ const dj = Object.entries(w.dj).filter(([,v])=>v).map(([k])=>DJ_LABEL[k]).concat(w.m3u?['M3U']:[]);
     const src = [w.spotify?'Spotify':'', w.deezer?'Deezer':'', w.files?'archivos exportados':''].filter(Boolean);
     body = `<div class="big">Todo listo ✅</div>
-    <div class="box">🎧 Playlists de: <b>${src.join(', ')||'—'}</b></div>
+    <div class="box">🎧 Playlists de: <b>${src.join(', ')||'—'}</b>${w.spotify?(w.connected?' · Spotify conectado':CID_RE.test(w.client_id)?' · falta autorizar Spotify (te lo abro al terminar)':' · <span style="color:var(--org)">falta el Client ID de Spotify</span>'):''}</div>
     <div class="box">🎛️ Programas de DJ: <b>${dj.join(', ')||'ninguno'}</b> (carpeta «${esc(w.folder_name)}»)</div>
     <div class="box">📂 Música organizada en <code>${esc(short(w.dest_root))}</code><br>⬇ Descargas en <code>${esc(short(w.inbox))}</code><br>🔎 Además busca en ${w.roots.size} carpeta${w.roots.size!==1?'s':''}.</div>
-    ${w.spotify&&!w.client_id?'<div class="box warn">Te falta el Client ID de Spotify: puedes ponerlo después en Ajustes.</div>':''}
-    <p class="hint">Después: ${w.spotify&&w.client_id?'<b>Conectar Spotify</b>, luego ':''}<b>⟳ Cargar playlists</b> y <b>🔄 Analizar</b> la que quieras.</p>`; }
-  const err = wizCheck();
+    ${w.spotify&&!CID_RE.test(w.client_id)?'<div class="box warn">Sin Client ID no puedo leer tus playlists de Spotify: puedes ponerlo después en Ajustes.</div>':''}
+    <p class="hint">Al terminar: ${w.spotify&&CID_RE.test(w.client_id)&&!w.connected?'autorizas Spotify en el navegador, luego ':''}traigo tus playlists y le das <b>🔄 Analizar</b> a la que quieras.</p>`; }
+  const err = wizCheck(id);
   modal(`<div class="wiz">${bar}${body}
-    <div class="actions">${st>0?'<button onclick="W.step--;wizRender()">Atrás</button>':(S.settings.setup_done?'<button onclick="closeModal()">Cerrar</button>':'')}
+    <div class="actions">${w.step>0?'<button onclick="wizGo(-1)">Atrás</button>':(S.settings.setup_done?'<button onclick="closeModal()">Cerrar</button>':'')}
       <span style="flex:1;align-self:center;color:var(--org);font-size:12.5px">${err||''}</span>
-      ${st<WSTEPS-1?`<button class="primary" ${err?'disabled':''} onclick="W.step++;wizRender()">${st===0?'Empezar':'Siguiente'}</button>`
-        :`<button class="primary" id="wizGo" onclick="wizFinish()">Terminar</button>`}</div></div>`);
+      ${!last?`<button class="${id==='spotify'&&!w.connected?'':'primary'}" ${err||w.spBusy?'disabled':''} onclick="wizGo(1)">${w.step===0?'Empezar':id==='spotify'&&!w.connected?'Seguir sin conectar':'Siguiente'}</button>`
+        :`<button class="primary" id="wizGo" onclick="wizFinish()">${w.first?'Terminar instalación':'Terminar'}</button>`}</div></div>`);
 }
-function wizCheck(){
+function wizCidTxt(){ const c = W.client_id; return !c ? '' : CID_RE.test(c) ? '✓ Se ve bien.' : '<span style="color:var(--org)">El Client ID son 32 letras y números; revisa que lo copiaste completo.</span>'; }
+function wizCidMark(){ const m = $('wizCidMsg'), b = $('wizSpBtn'); if(m) m.innerHTML = wizCidTxt(); if(b) b.disabled = !CID_RE.test(W.client_id) || W.spBusy; }
+async function wizSpotify(){
+  const w = W; w.spBusy = true; w.spErr = ''; wizRender();
+  try{
+    const s = await api().set_client_id(w.client_id);
+    if(!s.ok){ w.spErr = s.error; return; }
+    S.settings.client_id = w.client_id;
+    if(w.connected){ try{ await api().disconnect(); }catch(e){} w.connected = false; }
+    const r = await api().connect();
+    if(r.ok){ w.connected = true; w.spUser = r.user || ''; S.connected = true; }
+    else w.spErr = (r.error||'No se pudo conectar.') + ' Revisa que el Redirect URI esté agregado tal cual y que el Client ID sea el de esa app.';
+  }catch(e){ w.spErr = String(e); }
+  finally{ w.spBusy = false; if(W===w && $('mbg').classList.contains('show') && $('modal').querySelector('.wiz')) wizRender(); }
+}
+function wizCheck(id){
   const w = W;
-  if(w.step===1 && w.m3u && !w.m3uFolder) return 'Elige la carpeta para las M3U.';
-  if(w.step===2){ if(!w.spotify && !w.deezer && !w.files) return 'Elige al menos una fuente.';
+  if(id==='dj' && w.m3u && !w.m3uFolder) return 'Elige la carpeta para las M3U.';
+  if(id==='fuentes'){ if(!w.spotify && !w.deezer && !w.files) return 'Elige al menos una fuente.';
     if(w.deezer && !w.dzUser.trim()) return 'Pega el link de tu perfil de Deezer.';
     if(w.files && !w.filesFolder) return 'Elige la carpeta de playlists exportadas.'; }
-  if(w.step===3){ if(!w.dest_root || !w.inbox) return 'Elige las dos carpetas.';
+  if(id==='carpetas'){ if(!w.dest_root || !w.inbox) return 'Elige las dos carpetas.';
     if(w.dest_root===w.inbox) return 'Música organizada y descargas deben ser carpetas distintas.'; }
   return '';
 }
@@ -1889,17 +1929,20 @@ async function wizPick(key){ const p = await api().pick_folder(W[key] || S.setti
 async function wizAddRoot(){ const p = await api().pick_folder(''); if(p){ W.roots.add(p); wizRender(); } }
 async function wizFinish(){
   const w = W, b = $('wizGo'); if(b){ b.disabled = true; b.textContent = 'Guardando…'; }
+  const cid = w.spotify && CID_RE.test(w.client_id) ? w.client_id : (w.spotify ? '' : S.settings.client_id||'');
   const dests = {}; Object.entries(w.dj).forEach(([k,v])=>dests[k]={enabled:v});
   dests.m3u = {enabled:w.m3u, folder:w.m3uFolder};
-  const r = await api().finish_setup({dest_root:w.dest_root, inbox:w.inbox, library_roots:[...w.roots], client_id:w.spotify?w.client_id:'',
+  const r = await api().finish_setup({dest_root:w.dest_root, inbox:w.inbox, library_roots:[...w.roots], client_id:cid,
     folder_name:w.folder_name, sources:{spotify:{enabled:w.spotify}, deezer:{enabled:w.deezer, user:w.dzUser, playlists:[]}, archivos:{enabled:w.files, folder:w.filesFolder}},
     destinations:dests});
   if(!r.ok){ toast(esc(r.error), true); if(b){ b.disabled=false; b.textContent='Terminar'; } return; }
   const st = r.state; S.settings = st.settings; S.settings.setup_done = true; S.sources = st.sources; S.dests = st.destinations; S.inboxCount = st.inbox_count||0;
+  S.connected = !!st.connected;
   closeModal(); render();
-  toast('¡Listo! BrainOrder quedó configurado.' + ((r.warnings||[]).length?`<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>`:'')
-    + (w.spotify&&w.client_id?'<br>Ahora toca <b>Conectar Spotify</b>.':'<br>Ahora dale <b>⟳</b> en Tus playlists.'), !!(r.warnings||[]).length);
-  if(!(w.spotify&&w.client_id)) loadPlaylists();
+  const warn = (r.warnings||[]).length ? `<br><span style="color:var(--org)">${r.warnings.map(esc).join('<br>')}</span>` : '';
+  if(w.spotify && cid && !S.connected){ toast('¡Listo! BrainOrder quedó configurado. Ahora autoriza Spotify en el navegador…' + warn, !!warn); connect(); return; }
+  toast('¡Listo! BrainOrder quedó configurado. Traigo tus playlists…' + warn, !!warn);
+  loadPlaylists();
 }
 
 // ---------- cambios hechos a mano en Rekordbox -> ¿también en Spotify? ----------

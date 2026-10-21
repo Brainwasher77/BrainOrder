@@ -10,7 +10,13 @@ Estructura instalada (carpeta de datos de BrainOrder):
   arranque.py   <- este archivo
   app/          <- código de la app
   update/       <- versión nueva descargada, esperando el próximo arranque
-  venv/         <- entorno de Python
+  venv/         <- entorno de Python (instalación con el script; la del instalador trae su propio Python)
+  componentes/  <- (instalador .dmg/.exe) componentes nuevos que pidió una actualización
+
+Con el instalador (.dmg / .exe) el código viene dentro del programa y se ejecuta así:
+  python arranque.py --seed     (desde el código que trae el programa)
+Si el programa trae una versión más nueva que la instalada (o no hay ninguna), la copia a <datos>/app
+y sigue con el arranque normal desde <datos>/arranque.py (así las actualizaciones automáticas funcionan igual).
 """
 import json
 import os
@@ -21,11 +27,30 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-SUP = Path(__file__).resolve().parent
+IS_WIN = sys.platform.startswith("win")
+SEED = "--seed" in sys.argv[1:]  # lo usa el programa instalado (.dmg / .exe)
+
+
+def _support_dir():
+    home = Path.home()
+    if IS_WIN:
+        base = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    new, old = base / "BrainOrder", base / "SpotiSync"
+    return new if new.exists() or not old.exists() else old
+
+
+SUP = _support_dir() if SEED else Path(__file__).resolve().parent
+if SEED:
+    os.environ["BRAINORDER_PACKAGED"] = "1"
+PACKAGED = os.environ.get("BRAINORDER_PACKAGED") == "1"
+EXTRA = SUP / "componentes"
 APP = SUP / "app"
 UPDATE = SUP / "update"
 LOG = SUP / "brainorder.log"
-IS_WIN = sys.platform.startswith("win")
 NEEDED = ("webview", "pyrekordbox", "mutagen", "openpyxl")
 
 
@@ -45,6 +70,42 @@ def notify(msg):
                            timeout=5, capture_output=True)
     except Exception:
         pass
+
+
+def _build(folder):
+    try:
+        return int(json.loads((Path(folder) / "version.json").read_text("utf-8")).get("build", 0))
+    except Exception:
+        return -1
+
+
+def seed_from_bundle(bundle):
+    """El programa instalado (.dmg / .exe) trae el código: si es más nuevo que el instalado (o no hay), se copia."""
+    bundle = Path(bundle)
+    have, new_b = _build(APP) if (APP / "app.py").exists() else -1, _build(bundle)
+    if new_b <= have:
+        return False
+    SUP.mkdir(parents=True, exist_ok=True)
+    tmp = SUP / "app.new"
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.copytree(bundle, tmp, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+    prev = SUP / "app.prev"
+    shutil.rmtree(prev, ignore_errors=True)
+    if APP.exists():
+        APP.rename(prev)
+    tmp.rename(APP)
+    shutil.copy2(APP / "arranque.py", SUP / "arranque.py")
+    # una actualización descargada que no es más nueva que esta ya no sirve
+    try:
+        if int(json.loads((UPDATE / "ready.json").read_text("utf-8")).get("build", 0)) <= new_b:
+            shutil.rmtree(UPDATE, ignore_errors=True)
+    except Exception:
+        pass
+    # el programa trae sus componentes: los que se agregaron después ya no hacen falta
+    shutil.rmtree(EXTRA, ignore_errors=True)
+    _write(SUP / ".componentes", _req_stamp())
+    log(f"programa instalado: código versión build {new_b} (antes {have})")
+    return True
 
 
 def apply_update():
@@ -113,6 +174,9 @@ def ensure_deps():
     notify("Preparando componentes, puede tardar un par de minutos…")
     req = APP / "requirements.txt"
     args = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
+    if PACKAGED:  # el Python del programa no se toca: lo nuevo va a <datos>/componentes
+        EXTRA.mkdir(parents=True, exist_ok=True)
+        args += ["--upgrade", "--target", str(EXTRA)]
     args += ["-r", str(req)] if req.exists() else ["pywebview", "pyrekordbox>=0.4", "mutagen", "openpyxl"]
     py = sys.executable
     if IS_WIN and py.lower().endswith("pythonw.exe"):
@@ -165,6 +229,21 @@ def run_app():
 
 
 def main():
+    if PACKAGED and EXTRA.is_dir() and str(EXTRA) not in sys.path:
+        sys.path.insert(0, str(EXTRA))
+    if SEED:
+        try:
+            seed_from_bundle(Path(__file__).resolve().parent)
+        except Exception as e:
+            log(f"no pude copiar el código del programa: {e!r}")
+        mine, inst = Path(__file__).resolve(), SUP / "arranque.py"
+        if inst.exists() and inst.resolve() != mine:
+            # el arranque instalado puede ser más nuevo (llegó con una actualización): manda ese
+            sys.argv = [str(inst)]
+            for m in [k for k in sys.modules if k not in _BASE_MODULES]:
+                sys.modules.pop(m, None)
+            runpy.run_path(str(inst), run_name="__main__")
+            return
     info = apply_update()
     ensure_deps()
     if not (APP / "app.py").exists():

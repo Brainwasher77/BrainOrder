@@ -16,25 +16,33 @@ App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playli
 
 ## Instalación
 
-Necesitas **Python 3.9 o superior**.
+### Con el instalador (recomendado, no necesitas Python)
+Descarga el instalador de la última versión en **[Releases](https://github.com/Brainwasher77/BrainOrder/releases/latest)**:
 
-### macOS
-1. Si no tienes Python: `brew install python` (o descárgalo de python.org).
-2. Doble clic en **`Instalar BrainOrder.command`**. Si macOS lo bloquea: clic derecho → Abrir.
-3. Queda **BrainOrder** en Aplicaciones. Ábrelo con Spotlight (⌘ + espacio) y, si quieres, déjalo fijo en el Dock.
+| Tu computador | Archivo |
+|---|---|
+| Mac con chip Apple (M1, M2, M3, M4…) | `BrainOrder-<versión>-Mac-AppleSilicon.dmg` |
+| Mac con Intel | `BrainOrder-<versión>-Mac-Intel.dmg` |
+| Windows 10 / 11 | `BrainOrder-<versión>-Windows.exe` |
 
-### Windows 10 / 11
-1. Si no tienes Python: instálalo desde [python.org](https://www.python.org/downloads/) marcando **"Add python.exe to PATH"**, o en una terminal: `winget install Python.Python.3.12`.
-2. Doble clic en **`Instalar BrainOrder (Windows).bat`**. Si aparece "Windows protegió tu PC": Más información → Ejecutar de todas formas.
-3. Queda un acceso directo **BrainOrder** en el Escritorio y en el Menú Inicio.
+Traen su propio Python y todos los componentes. Durante la instalación te pregunta **tus carpetas** (música organizada y descargas) y te guía paso a paso para crear la **app de Spotify** y pegar el **Client ID**; al final abre Spotify en el navegador para autorizar y queda todo listo.
 
-El instalador copia la app a tu carpeta de datos y crea un entorno de Python propio (no toca tu Python del sistema). **Después de instalar puedes borrar la carpeta descargada.**
+- **Mac:** abre el `.dmg` y arrastra **BrainOrder** a **Aplicaciones**. La primera vez macOS dice que no puede verificarla (no está firmada con una cuenta de Apple de pago): toca **Listo**, ve a **Configuración del Sistema → Privacidad y seguridad** y toca **Abrir igualmente** (en macOS 14 o anterior también sirve clic derecho → Abrir). Al abrirse, el asistente de instalación te lleva por carpetas → programas de DJ → fuentes → Spotify (con botón **Conectar y probar**).
+- **Windows:** abre el `.exe`. Si aparece «Windows protegió tu PC»: **Más información → Ejecutar de todas formas**. El instalador pregunta tus carpetas y el Client ID de Spotify (con botón para abrir el panel de Spotify y el Redirect URI listo para copiar). Al abrir BrainOrder ya está todo puesto: solo revisas y autorizas Spotify. Se instala solo para tu usuario (no pide administrador) con accesos en el Escritorio y el Menú Inicio.
+- Si ya tenías BrainOrder (o SpotiSync) instalada con el script, el instalador conserva tu configuración, historial y cachés.
+- Los instaladores los arma GitHub Actions solo (`.github/workflows/instaladores.yml`, scripts en `empaquetar/`) cada vez que cambia `version.json` en `main`, y quedan en Releases.
+
+### Con el script (si ya tienes Python 3.9+)
+- **macOS:** `brew install python` si no lo tienes, y doble clic en **`Instalar BrainOrder.command`** (si macOS lo bloquea: clic derecho → Abrir).
+- **Windows:** instala Python desde [python.org](https://www.python.org/downloads/) marcando **"Add python.exe to PATH"** (o `winget install Python.Python.3.12`) y doble clic en **`Instalar BrainOrder (Windows).bat`**.
+
+El script copia la app a tu carpeta de datos y crea un entorno de Python propio (no toca tu Python del sistema). Después de instalar puedes borrar la carpeta descargada.
 
 ## Actualizaciones automáticas
 - Cada vez que abres BrainOrder revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
-- Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app. La primera vez después de eso tarda un par de minutos.
+- Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app (solo en la instalación con script: la del instalador trae su propio Python).
 - Si una versión nueva no llegara a arrancar, BrainOrder vuelve sola a la anterior y no reintenta esa versión.
-- Si una versión nueva necesita componentes nuevos, se instalan solos al abrirla.
+- Si una versión nueva necesita componentes nuevos, se instalan solos al abrirla (con el instalador quedan en `componentes/` de la carpeta de datos). Si instalas un `.dmg`/`.exe` más nuevo que tu versión, su código reemplaza al anterior; si es más viejo, se sigue usando el actualizado.
 - Solo hace falta volver a correr el instalador si cambias de computador.
 
 Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en `version.json`.
@@ -103,7 +111,7 @@ En la barra lateral, **Conexiones**:
   - **Playlists M3U** para VirtualDJ, djay, Mixxx o cualquier otro.
 
 ## Primer uso
-La primera vez se abre un **asistente** de 4 pasos: programas de DJ (detecta los instalados), de dónde vienen tus playlists, tus carpetas (sugiere las que tienen música) y listo. Se puede volver a abrir desde **Ajustes → Asistente de configuración**.
+La primera vez se abre el **asistente de instalación**: tus carpetas (sugiere las que tienen música), programas de DJ (detecta los instalados), de dónde vienen tus playlists, **Conectar Spotify** (guía paso a paso para crear tu app de desarrollador, Redirect URI para copiar, revisa que el Client ID esté completo y botón **Conectar y probar**) y listo. Al terminar trae tus playlists solo. Si instalaste con el `.exe`, las carpetas y el Client ID ya vienen puestos. Se puede volver a abrir desde **Ajustes → Asistente de configuración**.
 
 ## Historial y Deshacer
 Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Historial**. **Deshacer** devuelve cada archivo a donde estaba y corrige las rutas en Rekordbox, Traktor, Serato y Engine DJ (con respaldo). Nunca pisa un archivo: si algo cambió desde entonces, ese archivo se salta y te lo dice.
@@ -178,7 +186,8 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 |---|---|
 | `arranque.py` | Instala actualizaciones pendientes y componentes que falten, y abre la app |
 | `actualizador.py` | Revisa y descarga versiones nuevas desde GitHub |
-| `mac/lanzador.sh`, `windows/abrir.*` | Lanzadores que reparan el entorno de Python si se daña |
+| `mac/lanzador.sh`, `windows/abrir.*` | Lanzadores (instalación con script) que reparan el entorno de Python si se daña |
+| `empaquetar/` | Arma los instaladores `.dmg` y `.exe` con su propio Python (lo corre GitHub Actions) |
 | `app.py` | Ventana (pywebview) y puente con la interfaz |
 | `ui.html` | Interfaz |
 | `spotify_api.py` | Login PKCE y lectura de playlists |
