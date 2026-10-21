@@ -163,15 +163,44 @@ def parse_file(p: Path):
     return parse_table(text, p.stem)
 
 
-def _files(folder):
+def _skip_dirs(cfg):
+    """Carpetas donde BrainOrder guarda lo suyo (informes, playlists, descargas, M3U que genera): ahí no hay
+    playlists exportadas, y sus .txt de faltantes no son playlists."""
+    out = set()
+    for k in ("dest_root", "inbox"):
+        if cfg and cfg.get(k):
+            out.add(os.path.normcase(os.path.abspath(cfg[k])))
+    m3u = ((cfg or {}).get("destinations") or {}).get("m3u") or {}
+    if m3u.get("folder"):
+        out.add(os.path.normcase(os.path.abspath(os.path.join(m3u["folder"], (cfg.get("rekordbox_folder") or "BrainOrder")))))
+    return out
+
+
+def is_own(cfg, path, root=None):
+    """True si el archivo es de BrainOrder (no una playlist que exportaste tú)."""
+    p = Path(path)
+    if p.name.startswith("_") or any(part.startswith("_") for part in p.parent.parts[-3:]):
+        return True  # _FALTAN EN ESTA CARPETA.txt, _Informes, _duplicados…
+    here = os.path.normcase(os.path.abspath(str(p.parent)))
+    rootk = os.path.normcase(os.path.abspath(str(root))) if root else None
+    for d in _skip_dirs(cfg):
+        if d == rootk:
+            continue  # elegiste esa misma carpeta como la de playlists exportadas
+        if here == d or here.startswith(d + os.sep):
+            return True
+    return False
+
+
+def _files(folder, cfg=None):
     root = Path(folder)
     if not root.is_dir():
         return []
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [d for d in dirnames if not d.startswith((".", "_"))
+                       and not is_own(cfg, Path(dirpath) / d / "x", root)]
         for fn in sorted(filenames):
-            if not fn.startswith(".") and Path(fn).suffix.lower() in EXTS:
+            if not fn.startswith((".", "_")) and Path(fn).suffix.lower() in EXTS and not is_own(cfg, Path(dirpath) / fn, root):
                 out.append(Path(dirpath) / fn)
     return out
 
@@ -185,14 +214,15 @@ def list_playlists(cfg, progress=None):
     s = (cfg.get("sources") or {}).get(KEY) or {}
     root = Path(s.get("folder") or "")
     metas = []
-    for p in _files(root):
+    for p in _files(root, cfg):
         try:
             st = p.stat()
             lists = parse_file(p)
         except Exception as e:
-            metas.append({"id": _pid(root, p, p.stem), "name": f"{p.stem} (no se pudo leer)", "source": KEY,
-                          "error": str(e), "file": str(p), "snapshot": None, "total": 0})
-            continue
+            if p.suffix.lower() in (".m3u", ".m3u8", ".csv"):  # parece una playlist exportada: se avisa
+                metas.append({"id": _pid(root, p, p.stem), "name": f"{p.stem} (no se pudo leer)", "source": KEY,
+                              "error": str(e), "file": str(p), "snapshot": None, "total": 0})
+            continue  # un .txt cualquiera que no es una playlist: se ignora
         for name, tr in lists.items():
             metas.append({"id": _pid(root, p, name), "name": name, "source": KEY, "file": str(p),
                           "snapshot": f"{st.st_size}:{int(st.st_mtime)}", "total": len(tr)})

@@ -705,6 +705,20 @@ class Api:
         # renombradas / eliminadas desde BrainOrder (mientras Spotify no lo confirme, o donde no se puede)
         names = self._cfg.get("playlist_names") or {}
         deleted = set(self._cfg.get("deleted_playlists") or [])
+        # versiones anteriores tomaban los .txt de faltantes de BrainOrder como playlists exportadas: fuera
+        if any(p.get("source") == "archivos" for p in sp_data["playlists"]):
+            from fuentes import archivos as FA
+            root = ((self._cfg.get("sources") or {}).get("archivos") or {}).get("folder")
+            own = [p["id"] for p in sp_data["playlists"] if p.get("source") == "archivos" and p.get("file")
+                   and FA.is_own(self._cfg, p["file"], root)]
+            if own:
+                self._update_sp(lambda d: d.update(playlists=[x for x in d["playlists"] if x["id"] not in set(own)]))
+                rules = dict(self._cfg.get("rules") or {})
+                if rules.get("playlist_order"):
+                    rules["playlist_order"] = [x for x in rules["playlist_order"] if x not in set(own)]
+                    self._cfg["rules"] = rules
+                    config.save(self._cfg)
+                sp_data = self._load_sp()
         if names or deleted:
             sp_data = {**sp_data,
                        "playlists": [{**p, "name": names.get(p["id"], p["name"])} for p in sp_data["playlists"]
