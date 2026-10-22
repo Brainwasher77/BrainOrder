@@ -47,6 +47,18 @@ jobs:
       - name: Armar el instalador .exe
         shell: bash
         run: bash empaquetar/windows/construir.sh
+      - name: Probar el instalador (instala, abre BrainOrder y revisa que la ventana siga abierta)
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem dist\*.exe).FullName
+          Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          $app = "$env:LOCALAPPDATA\Programs\BrainOrder"
+          $p = Start-Process "$app\python\python.exe" -ArgumentList "`"$app\app\arranque.py`"","--seed" -WorkingDirectory $app -RedirectStandardError err.txt -PassThru
+          Start-Sleep 45
+          $ok = -not $p.HasExited
+          "--- registro"; Get-Content "$env:APPDATA\BrainOrder\brainorder.log" -ErrorAction SilentlyContinue
+          "--- errores"; Get-Content err.txt
+          if ($ok) { Stop-Process -Id $p.Id -Force; "BrainOrder abrió y siguió abierta: OK" } else { Write-Error "BrainOrder se cerró sola al abrir"; exit 1 }
       - uses: actions/upload-artifact@v5
         with:
           name: windows

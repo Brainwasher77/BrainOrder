@@ -3359,8 +3359,10 @@ def main():
     import inspect
     kw = {}
     try:
-        if icon.exists() and "icon" in inspect.signature(webview.start).parameters:
-            kw["icon"] = str(icon)
+        # Windows exige un .ico (con un .png la ventana se cae al abrir); en Mac el ícono ya lo pone mac_branding
+        win_icon = HERE / "icon.ico" if plataforma.IS_WIN else icon
+        if win_icon.exists() and "icon" in inspect.signature(webview.start).parameters:
+            kw["icon"] = str(win_icon)
     except (TypeError, ValueError):
         pass
     webview.start(**kw)
