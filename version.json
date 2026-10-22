@@ -1,5 +1,5 @@
 {
-  "version": "2.18.0",
-  "build": 46,
-  "notes": "Nuevo: cuando creas una playlist en Rekordbox te pregunto si importas su música nueva, revisando antes que no se dupliquen archivos (mismo archivo, copia exacta o misma canción) ni playlists (si ya existe una con ese nombre, le sumo lo nuevo). Las playlists de otros ya no salen en una ventana: quedan en su sección. BrainOrder by @BRAINWASHERDJ."
+  "version": "2.18.1",
+  "build": 47,
+  "notes": "Ajuste: «by @BRAINWASHERDJ» va debajo del logo de BrainOrder."
 }

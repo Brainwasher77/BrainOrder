@@ -29,7 +29,9 @@ header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:
 header *{-webkit-app-region:no-drag}
 .logo{font-weight:800;letter-spacing:-.02em;font-size:18px;margin-right:6px}
 .logo span{color:var(--acid)}
-.by{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--mute);margin:3px 0 0 -2px;align-self:flex-end;padding-bottom:3px}
+.brand{display:flex;flex-direction:column;align-items:flex-start;margin-right:6px;line-height:1.1}
+.brand .logo{margin-right:0}
+.by{font-size:9.5px;font-weight:700;letter-spacing:.08em;color:var(--mute);margin-top:2px}
 /* marca de agua del autor: tenue, detrás de todo y sin estorbar clics */
 .wm{position:fixed;right:18px;bottom:12px;font-weight:800;letter-spacing:.12em;font-size:13px;color:var(--text);opacity:.07;pointer-events:none;user-select:none;z-index:0;white-space:nowrap}
 .wm.big{right:50%;bottom:50%;transform:translate(50%,50%) rotate(-18deg);font-size:64px;opacity:.025}
@@ -262,7 +264,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 <body>
 <div class="app">
   <header>
-    <div class="logo">Brain<span>Order</span></div><div class="by" title="BrainOrder es de @BRAINWASHERDJ">by @BRAINWASHERDJ</div>
+    <div class="brand"><div class="logo">Brain<span>Order</span></div><div class="by" title="BrainOrder es de @BRAINWASHERDJ">by @BRAINWASHERDJ</div></div>
     <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span><a id="spqTag" class="lnk" style="display:none;font-size:inherit;color:var(--org)" onclick="spqModal()" title="Ver y cancelar lo que espera para Spotify"></a></div>
     <button class="ghost" id="btnConn" onclick="connect()">Conectar Spotify</button>
     <button onclick="openSettings()">Ajustes</button>
