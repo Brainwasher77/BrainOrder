@@ -5,7 +5,7 @@ name: Instaladores
 on:
   push:
     branches: [main]
-    paths: [version.json]
+    paths: [version.json, empaquetar/**, .github/workflows/instaladores.yml]
   workflow_dispatch:
 
 permissions:
@@ -25,10 +25,10 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Armar BrainOrder.app y el .dmg
         run: bash empaquetar/mac/construir_dmg.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: mac-${{ matrix.os }}
           path: dist/*.dmg
@@ -39,7 +39,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Inno Setup
         shell: pwsh
         run: |
@@ -47,7 +47,7 @@ jobs:
       - name: Armar el instalador .exe
         shell: bash
         run: bash empaquetar/windows/construir.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows
           path: dist/*.exe
@@ -55,13 +55,13 @@ jobs:
 
   publicar:
     needs: [mac, windows]
-    if: ${{ !cancelled() && (needs.mac.result == 'success' || needs.windows.result == 'success') }}
+    if: ${{ !cancelled() }}   # publica lo que sí se armó aunque otro falle
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
@@ -71,6 +71,7 @@ jobs:
           NOTES=$(jq -r .notes version.json)
           BODY=$(printf '%s\n\n**Instalar:**\n- **Mac con chip Apple (M1, M2, M3, M4…):** `BrainOrder-%s-Mac-AppleSilicon.dmg`\n- **Mac con Intel:** `BrainOrder-%s-Mac-Intel.dmg`\n- **Windows 10/11:** `BrainOrder-%s-Windows.exe`\n\nNo están firmados con cuenta de desarrollador: la primera vez macOS/Windows avisan. Mac: Configuración del Sistema → Privacidad y seguridad → «Abrir igualmente». Windows: «Más información» → «Ejecutar de todas formas».\nDespués BrainOrder se actualiza sola.' "$NOTES" "$VER" "$VER" "$VER")
           ls -la dist
+          ls dist/* >/dev/null 2>&1 || { echo "No se armó ningún instalador"; exit 1; }
           if gh release view "v$VER" >/dev/null 2>&1; then
             gh release upload "v$VER" dist/* --clobber
             gh release edit "v$VER" --notes "$BODY" --latest

@@ -90,5 +90,10 @@ TXT
 mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/BrainOrder-$VER-Mac-$LABEL.dmg"
 rm -f "$OUT"
-hdiutil create -volname "BrainOrder $VER" -srcfolder "$STAGE" -ov -format UDZO "$OUT"
+# hdiutil a veces falla con «Resource busy» en los Mac de GitHub: se reintenta
+for i in 1 2 3 4 5 6; do
+  if hdiutil create -volname "BrainOrder $VER" -srcfolder "$STAGE" -ov -format UDZO "$OUT"; then break; fi
+  [ "$i" = 6 ] && { echo "hdiutil no pudo crear el .dmg"; exit 1; }
+  echo "hdiutil ocupado, reintento $i…"; sleep $((i * 10))
+done
 echo "Listo: $OUT"

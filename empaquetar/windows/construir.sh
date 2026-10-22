@@ -14,5 +14,6 @@ rm -rf "$WORK/python/Lib/test" "$WORK/python/Lib/idlelib" "$WORK/python/Lib/tkin
 find "$WORK/python" -name __pycache__ -type d -prune -exec rm -rf {} +
 copiar_codigo "$WORK/app"
 ISCC="${ISCC:-/c/Program Files (x86)/Inno Setup 6/ISCC.exe}"
-"$ISCC" "/DVER=$VER" "/DSRC=$(cygpath -w "$WORK")" "/DOUT=$(cygpath -w "$ROOT/dist")" "$(cygpath -w "$ROOT/empaquetar/windows/BrainOrder.iss")"
+# MSYS_NO_PATHCONV: que Git Bash no convierta «/DVER=…» en una ruta
+MSYS_NO_PATHCONV=1 "$ISCC" "/DVER=$VER" "/DSRC=$(cygpath -w "$WORK")" "/DOUT=$(cygpath -w "$ROOT/dist")" "$(cygpath -w "$ROOT/empaquetar/windows/BrainOrder.iss")"
 echo "Listo: $ROOT/dist/BrainOrder-$VER-Windows.exe"
