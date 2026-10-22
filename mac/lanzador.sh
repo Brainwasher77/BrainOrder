@@ -2,8 +2,6 @@
 # Lanzador de BrainOrder.app: repara el entorno de Python si se dañó y abre la app.
 BASE="$HOME/Library/Application Support"
 SUP="$BASE/BrainOrder"
-# instalaciones de cuando la app se llamaba SpotiSync
-if [ ! -f "$SUP/arranque.py" ] && [ -f "$BASE/SpotiSync/arranque.py" ]; then SUP="$BASE/SpotiSync"; fi
 PY="$SUP/venv/bin/python"
 LOG="$SUP/brainorder.log"
 export BRAINORDER_BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"

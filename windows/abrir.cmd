@@ -2,8 +2,6 @@
 rem Lanzador de BrainOrder: repara el entorno de Python si se dañó y abre la app.
 setlocal
 set "SUP=%APPDATA%\BrainOrder"
-rem instalaciones de cuando la app se llamaba SpotiSync
-if not exist "%SUP%\arranque.py" if exist "%APPDATA%\SpotiSync\arranque.py" set "SUP=%APPDATA%\SpotiSync"
 set "LOG=%SUP%\brainorder.log"
 "%SUP%\venv\Scripts\python.exe" -c "import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)" >nul 2>nul
 if errorlevel 1 call :reparar

@@ -216,7 +216,7 @@ def backup(path):
     p = Path(path)
     dst = p.with_name(f"collection.brainorder-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
     shutil.copy2(p, dst)
-    for old in sorted(list(p.parent.glob("collection.spotisync-*.nml.bak")) + list(p.parent.glob("collection.brainorder-*.nml.bak")),
+    for old in sorted(p.parent.glob("collection.brainorder-*.nml.bak"),
                      key=lambda x: x.name.split("-", 1)[-1])[:-5]:  # por la fecha del nombre
         try:
             old.unlink()

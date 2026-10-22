@@ -12,8 +12,6 @@ App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playli
 
 ---
 
-> **Antes se llamaba SpotiSync.** Si ya la tenías instalada no tienes que hacer nada: se actualiza sola, se renombra a BrainOrder y conserva tu configuración e historial.
-
 ## Instalación
 
 ### Con el instalador (recomendado, no necesitas Python)
@@ -29,7 +27,7 @@ Traen su propio Python y todos los componentes. Durante la instalación te pregu
 
 - **Mac:** abre el `.dmg` y arrastra **BrainOrder** a **Aplicaciones**. La primera vez macOS dice que no puede verificarla (no está firmada con una cuenta de Apple de pago): toca **Listo**, ve a **Configuración del Sistema → Privacidad y seguridad** y toca **Abrir igualmente** (en macOS 14 o anterior también sirve clic derecho → Abrir). Al abrirse, el asistente de instalación te lleva por carpetas → programas de DJ → fuentes → Spotify (con botón **Conectar y probar**).
 - **Windows:** abre el `.exe`. Si aparece «Windows protegió tu PC»: **Más información → Ejecutar de todas formas**. El instalador pregunta tus carpetas y el Client ID de Spotify (con botón para abrir el panel de Spotify y el Redirect URI listo para copiar). Al abrir BrainOrder ya está todo puesto: solo revisas y autorizas Spotify. Se instala solo para tu usuario (no pide administrador) con accesos en el Escritorio y el Menú Inicio.
-- Si ya tenías BrainOrder (o SpotiSync) instalada con el script, el instalador conserva tu configuración, historial y cachés.
+- Si ya tenías BrainOrder instalada con el script, el instalador conserva tu configuración, historial y cachés.
 - Los instaladores los arma GitHub Actions solo (`.github/workflows/instaladores.yml`, scripts en `empaquetar/`) cada vez que cambia `version.json` en `main`, y quedan en Releases.
 
 ### Con el script (si ya tienes Python 3.9+)
@@ -120,7 +118,7 @@ Todo lo que BrainOrder mueve (Organizar, Reorganizar, Unificar) queda en **Histo
 Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus archivos, leídos de las etiquetas que deja **Mixed In Key 10 u 11** (los datos de **Mixed In Key siempre tienen prioridad**; solo si una canción no tiene nada de MIK se usa la key de otros programas —«Am», «C#m», Open Key «1m»…—, marcada con *). Se ordena por cualquiera de esas columnas, el filtro **Sin Mixed In Key** muestra lo que falta analizar y escribir **8A** en el buscador deja solo esa key. BrainOrder solo lee: nunca cambia las etiquetas.
 
 ## Sin Mixed In Key
-Sección del menú con las canciones que tienes y que Mixed In Key todavía no analizó (una por archivo, con sus playlists). Marca y dale **Mandar a Mixed In Key**: se abren en tu Mixed In Key; cuando las analiza, BrainOrder lo nota y salen de la lista. También con clic derecho en una canción. Sin Mixed In Key instalado, te abre las carpetas en Finder para arrastrarlas.
+Sección del menú con las canciones que tienes y que Mixed In Key todavía no analizó (una por archivo, con sus playlists). Marca y dale **Mandar a Mixed In Key**: se abren en tu Mixed In Key; cuando las analiza, BrainOrder lo nota y salen de la lista. También con clic derecho en una canción. Sin Mixed In Key instalado, te abre las carpetas en Finder para arrastrarlas. En Windows lo busca en los programas instalados, sus carpetas y el Menú Inicio; si no lo encuentra, **Buscar Mixed In Key…** te deja elegir su programa.
 
 ## Mixed In Key → tus programas de DJ (automático)
 Lo que analizó Mixed In Key pasa a **Rekordbox, Traktor, Serato y Engine DJ** (los que tengas activos en Conexiones):

@@ -2948,8 +2948,33 @@ class Api:
         return self._task(run, "rb_apply", "Cambios de Rekordbox")
 
     # ---------- canciones sin analizar en Mixed In Key ----------
+    def _mik_app(self):
+        return plataforma.mik_app(self._cfg.get("mik_path"))
+
+    def mik_choose(self):
+        """No se encontró Mixed In Key (o quieres otro): eliges su programa a mano y queda guardado."""
+        import webview
+        mode = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
+        if plataforma.IS_WIN:
+            start, types = os.environ.get("ProgramFiles", r"C:\Program Files"), ("Programa (*.exe)",)
+        else:
+            start, types = "/Applications", ()
+        try:
+            res = self._window.create_file_dialog(mode, directory=start, file_types=types)
+        except Exception as e:
+            config.log(f"Elegir Mixed In Key: {e!r}")
+            return {"ok": False, "error": "No pude abrir el selector."}
+        if not res:
+            return {"ok": False, "cancel": True}
+        path = res[0] if isinstance(res, (list, tuple)) else str(res)
+        if not (path.lower().endswith((".exe", ".app")) and os.path.exists(path)):
+            return {"ok": False, "error": "Elige el programa de Mixed In Key (" + ("el .exe" if plataforma.IS_WIN else "la app") + ")."}
+        self._cfg["mik_path"] = path
+        config.save(self._cfg)
+        return self.mik_info()
+
     def mik_info(self):
-        app = plataforma.mik_app()
+        app = self._mik_app()
         return {"ok": True, "app": app, "name": Path(app).stem if app else None,
                 "watching": len(getattr(self, "_mik_watch", {}) or {})}
 
@@ -2959,9 +2984,9 @@ class Api:
         paths = [p for p in dict.fromkeys(paths or []) if p and os.path.isfile(p)]
         if not paths:
             return {"ok": False, "error": "No hay archivos para mandar."}
-        app = plataforma.mik_app()
+        app = self._mik_app()
         if not app:
-            return {"ok": False, "no_app": True, "error": "No encontré Mixed In Key instalado en Aplicaciones."}
+            return {"ok": False, "no_app": True, "error": "No encontré Mixed In Key instalado. Toca «Buscar Mixed In Key…» y elige su programa."}
         try:
             n = plataforma.open_with_mik(paths, app)
         except Exception as e:
@@ -3136,7 +3161,7 @@ class Api:
     def restart(self):
         """Cierra y vuelve a abrir BrainOrder (así se instala la actualización descargada)."""
         arr = config.SUPPORT_DIR / "arranque.py"
-        bundle = os.environ.get("BRAINORDER_BUNDLE") or os.environ.get("SPOTISYNC_BUNDLE")
+        bundle = os.environ.get("BRAINORDER_BUNDLE")
         try:
             if plataforma.IS_MAC and bundle and Path(bundle).exists():
                 subprocess.Popen(["/bin/sh", "-c", f'sleep 1; open -n "{bundle}"'])
@@ -3347,7 +3372,6 @@ def main():
         except Exception:
             pass
     import webview
-    plataforma.migrate_launcher(config.log)  # antes se llamaba SpotiSync: renombra el ícono
     plataforma.refresh_launcher(config.log)  # el lanzador de BrainOrder.app también se actualiza
     icon = HERE / "icon.png"
     plataforma.mac_branding("BrainOrder", icon)  # «BrainOrder» junto a la manzana, no «Python»

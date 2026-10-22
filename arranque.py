@@ -39,8 +39,13 @@ def _support_dir():
         base = home / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
-    new, old = base / "BrainOrder", base / "SpotiSync"
-    return new if new.exists() or not old.exists() else old
+    new, old = base / "BrainOrder", base / "SpotiSync"  # datos de las primeras versiones: se trasladan una vez
+    if not new.exists() and old.exists():
+        try:
+            os.rename(old, new)
+        except OSError:
+            return old
+    return new
 
 
 SUP = _support_dir() if SEED else Path(__file__).resolve().parent

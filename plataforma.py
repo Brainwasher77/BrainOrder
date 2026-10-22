@@ -11,10 +11,17 @@ HOME = Path.home()
 
 def support_dir() -> Path:
     """Instalación, ajustes, token, cachés y log de BrainOrder.
-    Instalaciones hechas cuando la app se llamaba SpotiSync siguen usando su carpeta (no se mueve nada
-    mientras la app corre); el instalador nuevo la renombra a BrainOrder."""
-    new, old = _support_base() / "BrainOrder", _support_base() / "SpotiSync"
-    return new if new.exists() or not old.exists() else old
+    Si quedó la carpeta de datos de las primeras versiones, se traslada aquí una sola vez."""
+    new, old = _support_base() / "BrainOrder", _support_base() / _OLD_DIR
+    if not new.exists() and old.exists():
+        try:
+            os.rename(old, new)
+        except OSError:
+            return old
+    return new
+
+
+_OLD_DIR = "SpotiSync"  # carpeta de datos de las primeras versiones (solo para trasladarla)
 
 
 def _support_base() -> Path:
@@ -137,61 +144,6 @@ def safe_name(name: str) -> str:
             name = "_" + name
     name = name.strip().lstrip(".")
     return name or "Sin nombre"
-
-
-def migrate_launcher(log=print):
-    """La app antes se llamaba SpotiSync: renombra su ícono/accesos directos a BrainOrder.
-    Mac: SpotiSync.app -> BrainOrder.app (con su lanzador nuevo). Windows: SpotiSync.lnk -> BrainOrder.lnk.
-    No toca la carpeta de datos (eso lo hace el instalador). Seguro de repetir."""
-    import shutil
-    if os.environ.get("BRAINORDER_PACKAGED") == "1":
-        return None
-    try:
-        if IS_MAC:
-            import plistlib
-            bundle = os.environ.get("BRAINORDER_BUNDLE") or os.environ.get("SPOTISYNC_BUNDLE")
-            if not bundle or not bundle.endswith("SpotiSync.app") or not Path(bundle).is_dir():
-                return None
-            old = Path(bundle)
-            new = old.with_name("BrainOrder.app")
-            if new.exists():
-                return None
-            plist = old / "Contents" / "Info.plist"
-            info = plistlib.loads(plist.read_bytes())
-            info.update(CFBundleName="BrainOrder", CFBundleDisplayName="BrainOrder",
-                        CFBundleIdentifier="com.brainwasher.brainorder", CFBundleExecutable="BrainOrder")
-            launcher = support_dir() / "app" / "mac" / "lanzador.sh"
-            exe_dir = old / "Contents" / "MacOS"
-            if launcher.exists():
-                shutil.copy2(launcher, exe_dir / "BrainOrder")
-            else:
-                shutil.copy2(exe_dir / "SpotiSync", exe_dir / "BrainOrder")
-            os.chmod(exe_dir / "BrainOrder", 0o755)
-            plist.write_bytes(plistlib.dumps(info))
-            try:
-                (exe_dir / "SpotiSync").unlink()
-            except OSError:
-                pass
-            os.rename(old, new)
-            os.utime(new, None)
-            subprocess.run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/"
-                            "Support/lsregister", "-f", str(new)], capture_output=True, timeout=20)
-            os.environ["BRAINORDER_BUNDLE"] = str(new)
-            log(f"app renombrada: {old} -> {new}")
-            return str(new)
-        if IS_WIN:
-            done = []
-            for d in (HOME / "Desktop", Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"):
-                o, n = d / "SpotiSync.lnk", d / "BrainOrder.lnk"
-                if o.exists() and not n.exists():
-                    os.rename(o, n)
-                    done.append(str(n))
-            if done:
-                log(f"accesos directos renombrados: {done}")
-            return done or None
-    except Exception as e:
-        log(f"no pude renombrar la app a BrainOrder: {e!r}")
-    return None
 
 
 # ---------------- nombre e ícono en macOS ----------------
@@ -338,21 +290,107 @@ def any_process(pred):
     return any(pred(p) for p in procs)
 
 
-def mik_app():
-    """Dónde está Mixed In Key (la versión más nueva instalada) o None."""
+def _win_mik_candidates():
+    """Windows: Mixed In Key no siempre se instala en «Program Files\\Mixed In Key»: se busca en el registro
+    (programas instalados y App Paths), en las carpetas de programas y en los accesos del Menú Inicio."""
+    import glob
+    out = []
+
+    def exes_in(folder):
+        try:
+            found = glob.glob(os.path.join(folder, "**", "*.exe"), recursive=True)
+        except Exception:
+            return []
+        bad = ("uninst", "update", "crash", "setup", "helper", "vc_redist", "dotnet", "createdump")
+        ok = [p for p in found if not any(x in os.path.basename(p).lower() for x in bad)]
+        named = [p for p in ok if any(x in os.path.basename(p).lower().replace(" ", "") for x in ("mixedinkey", "mik"))]
+        return named or ok[:1]
+
+    try:
+        import winreg
+        keys = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall")]
+        for hive, path in keys:
+            try:
+                root = winreg.OpenKey(hive, path)
+            except OSError:
+                continue
+            for i in range(winreg.QueryInfoKey(root)[0]):
+                try:
+                    sub = winreg.OpenKey(root, winreg.EnumKey(root, i))
+                    name = str(winreg.QueryValueEx(sub, "DisplayName")[0])
+                except OSError:
+                    continue
+                if "mixed in key" not in name.lower() and "mixedinkey" not in name.lower().replace(" ", ""):
+                    continue
+                for val in ("DisplayIcon", "InstallLocation"):
+                    try:
+                        v = str(winreg.QueryValueEx(sub, val)[0]).split(",")[0].strip().strip('"')
+                    except OSError:
+                        continue
+                    if v.lower().endswith(".exe") and os.path.isfile(v) and "uninst" not in os.path.basename(v).lower():
+                        out.append(v)
+                    elif v and os.path.isdir(v):
+                        out += exes_in(v)
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                ap = winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths")
+            except OSError:
+                continue
+            for i in range(winreg.QueryInfoKey(ap)[0]):
+                try:
+                    k = winreg.EnumKey(ap, i)
+                    if "mixed" in k.lower() or k.lower().startswith("mik"):
+                        v = str(winreg.QueryValue(ap, k)).strip('"')
+                        if os.path.isfile(v):
+                            out.append(v)
+                except OSError:
+                    continue
+    except Exception:
+        pass
+    env = os.environ.get
+    roots = [env("ProgramFiles", r"C:\Program Files"), env("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+             env("ProgramW6432", ""), os.path.join(env("LOCALAPPDATA", ""), "Programs"), env("LOCALAPPDATA", "")]
+    for r in [r for r in dict.fromkeys(roots) if r]:
+        for pat in ("Mixed In Key*", "MixedInKey*", "Mixed*In*Key*", "*ixed*n*ey*", os.path.join("Mixed In Key*", "*")):
+            for d in glob.glob(os.path.join(r, pat)):
+                if os.path.isdir(d):
+                    out += exes_in(d)
+    if not out:  # último recurso: el acceso directo del Menú Inicio
+        menus = [os.path.join(env("ProgramData", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs"),
+                 os.path.join(env("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")]
+        lnks = [p for m in menus for p in glob.glob(os.path.join(m, "**", "*Mixed*Key*.lnk"), recursive=True)]
+        for lnk in lnks[:3]:
+            try:
+                ps = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}').TargetPath"
+                r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=15,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                t = r.stdout.strip()
+                if t.lower().endswith(".exe") and os.path.isfile(t):
+                    out.append(t)
+            except Exception:
+                pass
+    return list(dict.fromkeys(out))
+
+
+def mik_app(custom=None):
+    """Dónde está Mixed In Key (la versión más nueva instalada) o None.
+    custom: la ruta que elegiste a mano en BrainOrder (manda si todavía existe)."""
     import glob
     import re as _re
+    if custom and os.path.exists(custom):
+        return custom
     if IS_MAC:
         cands = glob.glob("/Applications/Mixed In Key*.app") + glob.glob(str(Path.home() / "Applications" / "Mixed In Key*.app"))
     elif IS_WIN:
-        roots = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
-        cands = [p for r in roots for p in glob.glob(os.path.join(r, "Mixed In Key*", "**", "*.exe"), recursive=True)
-                 if "uninst" not in os.path.basename(p).lower() and "mixed" in os.path.basename(p).lower()]
+        cands = _win_mik_candidates()
     else:
         cands = []
     if not cands:
         return None
-    ver = lambda p: [int(x) for x in _re.findall(r"\d+", os.path.basename(p))] or [0]
+    # versión por el nombre del programa y su carpeta («Mixed In Key 11»), no por toda la ruta («(x86)»)
+    ver = lambda p: [int(x) for x in _re.findall(r"\d+", os.path.basename(os.path.dirname(p)) + " " + os.path.basename(p))] or [0]
     return max(cands, key=ver)
 
 

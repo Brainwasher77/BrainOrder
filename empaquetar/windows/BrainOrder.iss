@@ -74,8 +74,6 @@ var
 function SupportDir(): String;
 begin
   Result := ExpandConstant('{userappdata}\BrainOrder');
-  if (not DirExists(Result)) and DirExists(ExpandConstant('{userappdata}\SpotiSync')) then
-    Result := ExpandConstant('{userappdata}\SpotiSync');
 end;
 
 { ¿Ya estaba configurado? (instalación anterior): entonces no se pregunta nada y se mantiene todo }

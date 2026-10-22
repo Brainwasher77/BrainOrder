@@ -688,6 +688,8 @@ function mikRows(){
     return [...by.values()].sort((a,b) => (a.artists[0]||'').localeCompare(b.artists[0]||'', 'es') || a.name.localeCompare(b.name, 'es'));
   });
 }
+function IS_WIN_UI(){ return /^[A-Za-z]:[\\/]/.test(S.home||''); }
+async function mikChoose(){ const r = await api().mik_choose(); if(r.ok){ MK.app = r.app ? r.name : null; toast(r.app ? `Listo: uso <b>${esc(r.name)}</b>.` : 'No quedó elegido.', !r.app); renderMain(); } else if(!r.cancel) toast(esc(r.error), true); }
 async function mikInit(){ MK.sel = new Set(); try{ const r = await api().mik_info(); MK.app = r.app ? r.name : null; MK.watching = r.watching; }catch(e){ MK.app = null; } if(S.view==='mik') renderMain(); }
 function mikVisible(){
   const q = (MK.q||'').toLowerCase();
@@ -700,8 +702,8 @@ function mikView(){
     <span class="sub">Canciones que tienes (un archivo por canción) y que Mixed In Key todavía no ha analizado: sin su key, energía ni hot cues. Márcalas y mándalas a Mixed In Key; cuando las analice, salen solas de aquí.</span></div>`;
   if(!all.length) return head + `<div class="empty"><h3>Todo analizado con Mixed In Key 🎉</h3><p>Las canciones de tus playlists ya tienen su key y energía.</p></div>`;
   const appMsg = MK.app === undefined ? '' : MK.app
-    ? `<span class="art">Se abren en <b>${esc(MK.app)}</b> y quedan en su lista para analizar.</span>`
-    : `<span style="color:var(--org)">No encontré Mixed In Key en Aplicaciones: te muestro los archivos en Finder para que los arrastres.</span>`;
+    ? `<span class="art">Se abren en <b>${esc(MK.app)}</b> y quedan en su lista para analizar. <a class="lnk" onclick="mikChoose()">Cambiar</a></span>`
+    : `<span style="color:var(--org)">No encontré Mixed In Key en este computador: te muestro los archivos en ${IS_WIN_UI()?'el Explorador':'Finder'} para que los arrastres.</span> <button onclick="mikChoose()">Buscar Mixed In Key…</button>`;
   const tb = rows.slice(0, 600).map(x => `<tr><td style="width:30px"><input type="checkbox" class="mkc" data-f="${esc(x.source)}" ${MK.sel.has(x.source)?'checked':''} onchange="this.checked?MK.sel.add(this.dataset.f):MK.sel.delete(this.dataset.f);mikSum()"></td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(x)}<div><div>${esc(x.name)}</div><div class="art">${esc(x.artists.join(', '))}</div></div></div></td>
       <td>${x.pls.slice(0,3).map(n=>`<span class="chip" style="cursor:default">♫ ${esc(n)}</span>`).join('')}${x.pls.length>3?`<span class="art">+${x.pls.length-3}</span>`:''}</td>
@@ -731,7 +733,7 @@ async function mikSend(){
   const paths = [...MK.sel]; if(!paths.length) return;
   const r = await api().mik_send(paths);
   if(!r.ok){
-    if(r.no_app){ await api().mik_reveal(paths); toast(`${esc(r.error)}<br>Te abrí las carpetas en Finder: arrastra los archivos a Mixed In Key.`, true); }
+    if(r.no_app){ await api().mik_reveal(paths); toast(`${esc(r.error)}<br>Te abrí las carpetas en ${IS_WIN_UI()?'el Explorador':'Finder'}: arrastra los archivos a Mixed In Key.`, true); }
     else toast(esc(r.error), true);
     return;
   }
