@@ -71,6 +71,9 @@ Carpetas por defecto en instalaciones nuevas (se cambian en el asistente o en Aj
 - Música por playlist: `Música/Playlists BrainOrder/<playlist>`
 - Descargas por organizar: `Música/Descargas BrainOrder`
 
+## Descargas reconocidas aunque el nombre cambie
+Lo que bajas con los links de BrainOrder (Deezer) a veces trae el nombre escrito distinto que en Spotify («Can’t» / «Can't», «Alexis & Fido» / «Alexis y Fido», «Part 1» / «Pt. I», «Altın» / «Altin»…). BrainOrder empareja cada archivo por su **ISRC**, el código de la grabación que traen dentro las descargas, y compara los nombres con tolerancia a esas diferencias. También reconoce así canciones que ya tenías con otro nombre. La primera vez el análisis tarda unos segundos más porque lee esos códigos; después quedan guardados.
+
 ## Descargas que ya usas en Rekordbox
 Si pones descargas en una playlist que armas en Rekordbox (u otro programa), al organizar aparecen en «Ya están en tus playlists de tu programa de DJ» con esa playlist y el botón **Importarla…**. Organizar corrige la ruta en Rekordbox (y Traktor, Serato, Engine) de toda descarga que ya esté en tu librería, para que nada quede perdido.
 
