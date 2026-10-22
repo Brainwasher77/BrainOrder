@@ -40,6 +40,7 @@ El script copia la app a tu carpeta de datos y crea un entorno de Python propio 
 
 ## Actualizaciones automáticas
 - Cada vez que abres BrainOrder revisa si hay una versión nueva en este repositorio (`version.json`). Si la hay, la descarga en segundo plano y te ofrece **Reiniciar ahora**; si dices "Después", se instala sola la próxima vez que la abras.
+- Para revisar en cualquier momento: **Ajustes → 🔄 Buscar actualizaciones**. Te dice si ya tienes la última o te ofrece reiniciar con la nueva.
 - Si Python cambia en tu computador (por ejemplo después de `brew upgrade`), el lanzador rehace el entorno solo al abrir la app (solo en la instalación con script: la del instalador trae su propio Python).
 - Si una versión nueva no llegara a arrancar, BrainOrder vuelve sola a la anterior y no reintenta esa versión.
 - Si una versión nueva necesita componentes nuevos, se instalan solos al abrirla (con el instalador quedan en `componentes/` de la carpeta de datos). Si instalas un `.dmg`/`.exe` más nuevo que tu versión, su código reemplaza al anterior; si es más viejo, se sigue usando el actualizado.

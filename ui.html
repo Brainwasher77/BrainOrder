@@ -1620,6 +1620,18 @@ async function checkUpdates(){
     }
   }catch(e){}
 }
+// botón de Ajustes: revisa ya mismo si hay versión nueva (y la baja para instalarla al reiniciar)
+async function checkUpdatesNow(){
+  const b = $('btnUpd'); if(b){ b.disabled = true; b.textContent = '⏳ Buscando…'; }
+  let r = null;
+  try{ r = await api().check_updates(); }catch(e){}
+  if(b){ b.disabled = false; b.textContent = '🔄 Buscar actualizaciones'; }
+  const st = (r && r.status) || 'error', cur = (r && r.current && r.current.version) || (S.version||{}).version || '?';
+  if(st === 'ready' && r.new){ closeModal(); checkUpdates(); return; }
+  if(st === 'up_to_date') toast(`✅ Ya tienes la última versión (${esc(cur)}).`);
+  else if(st === 'dev') toast(`Esta copia corre desde la carpeta de desarrollo (${esc(cur)}): se actualiza con git, no sola.`);
+  else toast('No pude revisar si hay versión nueva. Revisa tu conexión a internet y vuelve a intentar.', true);
+}
 async function restartApp(){
   if(Object.keys(T).length){ toast('Espera a que terminen las tareas en curso para reiniciar.', true); return; }
   const r = await api().restart();
@@ -2479,8 +2491,10 @@ function openUrl(u){ api().open_url(u); }
 
 function openSettings(){
   const s = S.settings;
-  modal(`<h3 style="display:flex;align-items:center;gap:8px">Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')} · by @BRAINWASHERDJ</span>
+  modal(`<h3 style="display:flex;align-items:center;gap:8px">Ajustes
       <button class="ghost" style="margin-left:auto;font-size:12.5px" onclick="closeModal();openWizard()">🧭 Asistente de configuración</button></h3>
+    <div style="display:flex;align-items:center;gap:10px;margin:-4px 0 12px"><span class="art">BrainOrder <b class="mono">${esc((S.version||{}).version||'?')}</b> · by @BRAINWASHERDJ</span>
+      <button style="margin-left:auto;font-size:12.5px" id="btnUpd" onclick="checkUpdatesNow()">🔄 Buscar actualizaciones</button></div>
     <div class="box"><b>App de Spotify:</b> en <code>developer.spotify.com/dashboard</code> crea una app (Web API), agrega como Redirect URI
       <code>${esc(s.redirect_uri)}</code> y pega aquí su Client ID. No necesitas el Client Secret.</div>
     <label class="f">Client ID</label><input class="t mono" id="sClient" value="${esc(s.client_id)}" placeholder="32 caracteres">
