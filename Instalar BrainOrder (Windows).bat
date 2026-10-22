@@ -6,13 +6,8 @@ cd /d "%~dp0"
 set "SRC=%~dp0"
 if "%SRC:~-1%"=="\" set "SRC=%SRC:~0,-1%"
 set "SUP=%APPDATA%\BrainOrder"
-set "OLD=%APPDATA%\SpotiSync"
 
 echo == BrainOrder: instalacion ==
-rem La app antes se llamaba SpotiSync: se traslada su carpeta (ajustes, historial, caches) sin perder nada.
-if exist "%OLD%" if not exist "%SUP%" (
-  move "%OLD%" "%SUP%" >nul && echo Tu configuracion de SpotiSync paso a BrainOrder.
-)
 echo.
 
 rem --- Buscar Python 3.9 o superior ---
@@ -67,7 +62,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$sup = Join-Path $env:APPDATA 'BrainOrder';" ^
   "$targets = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'));" ^
   "foreach ($d in $targets) {" ^
-  "  Remove-Item -ErrorAction SilentlyContinue (Join-Path $d 'SpotiSync.lnk');" ^
   "  $l = $ws.CreateShortcut((Join-Path $d 'BrainOrder.lnk'));" ^
   "  $l.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe';" ^
   "  $l.Arguments = '\"' + (Join-Path $sup 'abrir.vbs') + '\"';" ^

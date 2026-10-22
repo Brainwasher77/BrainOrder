@@ -6,7 +6,6 @@ CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
 RES="$CONTENTS/Resources"
 BASE="$HOME/Library/Application Support"
 SUP="$BASE/BrainOrder"
-if [ ! -d "$SUP" ] && [ -d "$BASE/SpotiSync" ]; then SUP="$BASE/SpotiSync"; fi
 mkdir -p "$SUP"
 export BRAINORDER_BUNDLE="$(cd "$CONTENTS/.." && pwd)"
 export BRAINORDER_PACKAGED=1

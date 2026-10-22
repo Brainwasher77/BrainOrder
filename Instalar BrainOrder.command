@@ -6,15 +6,8 @@ set -e
 cd "$(dirname "$0")"
 SRC="$(pwd)"
 SUP="$HOME/Library/Application Support/BrainOrder"
-OLD="$HOME/Library/Application Support/SpotiSync"
 
 echo "== BrainOrder: instalación =="
-
-# La app antes se llamaba SpotiSync: se traslada su carpeta (ajustes, historial, cachés) sin perder nada.
-if [ -d "$OLD" ] && [ ! -d "$SUP" ]; then
-  pkill -f "$OLD/arranque.py" 2>/dev/null || true
-  mv "$OLD" "$SUP" && echo "Tu configuración de SpotiSync pasó a BrainOrder."
-fi
 
 ok_py() { [ -x "$1" ] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; }
 PY=""
@@ -53,7 +46,7 @@ echo "Componentes listos."
 # 3. BrainOrder.app (en /Applications si se puede, si no en ~/Applications)
 if [ -w /Applications ]; then DEST="/Applications"; else DEST="$HOME/Applications"; mkdir -p "$DEST"; fi
 APP="$DEST/BrainOrder.app"
-for old in "$HOME/Applications/SpotiSync.app" "/Applications/SpotiSync.app" "$HOME/Applications/BrainOrder.app" "/Applications/BrainOrder.app"; do
+for old in "$HOME/Applications/BrainOrder.app" "/Applications/BrainOrder.app"; do
   [ -d "$old" ] && [ "$old" != "$APP" ] && rm -rf "$old" && echo "Quité la versión anterior de $old"
 done
 rm -rf "$APP"

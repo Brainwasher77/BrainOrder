@@ -10,7 +10,7 @@ cfg["dj_folder_pending"]  {programa: nombre viejo} renombres que faltan por hace
 import config
 import destinos
 
-LEGACY = ("Spotify", "SpotiSync", "BrainOrder")  # nombres que usaron versiones anteriores
+LEGACY = ("Spotify", "BrainOrder")  # nombres que usaron versiones anteriores
 
 
 def current(cfg):

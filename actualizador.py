@@ -14,8 +14,7 @@ from pathlib import Path
 
 from config import SUPPORT_DIR, log
 
-# El repositorio se llamaba SpotiSync; se prueba primero el nombre nuevo y, si aún no existe, el viejo.
-REPOS = ["Brainwasher77/BrainOrder", "Brainwasher77/SpotiSync"]
+REPOS = ["Brainwasher77/BrainOrder"]
 BRANCH = "main"
 _repo = [None]  # el que respondió
 

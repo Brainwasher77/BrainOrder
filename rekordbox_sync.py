@@ -102,8 +102,8 @@ def backup():
         shutil.copy2(src, dst)
         if wal.exists() and wal.stat().st_size > 0:  # que el respaldo no pierda lo que estaba en el diario
             shutil.copy2(wal, dst.with_name(dst.name + "-wal"))
-    # conservar solo los 5 respaldos más recientes de BrainOrder (antes se llamaba SpotiSync)
-    olds = sorted(list(RB_DIR.glob("master.backup.spotisync-*.db")) + list(RB_DIR.glob("master.backup.brainorder-*.db")),
+    # conservar solo los 5 respaldos más recientes de BrainOrder
+    olds = sorted(RB_DIR.glob("master.backup.brainorder-*.db"),
                   key=_backup_stamp)
     for old in olds[:-5]:
         for f in (old, old.with_name(old.name + "-wal")):
