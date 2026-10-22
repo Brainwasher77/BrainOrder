@@ -1,24 +1,24 @@
 ﻿; Instalador de BrainOrder para Windows (Inno Setup 6). Lo arma GitHub Actions:
-;   iscc /DVER=2.17.0 /DSRC=..\..\dist\win /DOUT=..\..\dist empaquetar\windows\BrainOrder.iss
+;   iscc /DAPPVER=2.17.0 /DBOSRC=..\..\dist\win /DBOOUT=..\..\dist empaquetar\windows\BrainOrder.iss
 ; Trae su propio Python con todo lo necesario (no hace falta instalar nada más) y, durante la instalación,
 ; pregunta tus carpetas y te guía con la app de Spotify. Lo que elijas queda en %APPDATA%\BrainOrder\preconfig.json
 ; y BrainOrder lo usa al abrirse por primera vez.
 
-#ifndef VER
-  #define VER "0.0.0"
+#ifndef APPVER
+  #define APPVER "0.0.0"
 #endif
-#ifndef SRC
-  #define SRC "..\..\dist\win"
+#ifndef BOSRC
+  #define BOSRC "..\..\dist\win"
 #endif
-#ifndef OUT
-  #define OUT "..\..\dist"
+#ifndef BOOUT
+  #define BOOUT "..\..\dist"
 #endif
 
 [Setup]
 AppId={{6F0B7C1E-3B7A-4C55-9E3B-B0A1D0E2F0C7}
 AppName=BrainOrder
-AppVersion={#VER}
-AppVerName=BrainOrder {#VER}
+AppVersion={#APPVER}
+AppVerName=BrainOrder {#APPVER}
 AppPublisher=Brainwasher77
 AppPublisherURL=https://github.com/Brainwasher77/BrainOrder
 DefaultDirName={localappdata}\Programs\BrainOrder
@@ -26,9 +26,9 @@ DefaultGroupName=BrainOrder
 DisableProgramGroupPage=yes
 DisableDirPage=yes
 PrivilegesRequired=lowest
-OutputDir={#OUT}
-OutputBaseFilename=BrainOrder-{#VER}-Windows
-SetupIconFile={#SRC}\app\icon.ico
+OutputDir={#BOOUT}
+OutputBaseFilename=BrainOrder-{#APPVER}-Windows
+SetupIconFile={#BOSRC}\app\icon.ico
 UninstallDisplayIcon={app}\app\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
@@ -41,8 +41,8 @@ CloseApplications=yes
 Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Files]
-Source: "{#SRC}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SRC}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BOSRC}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BOSRC}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 ; el código viejo del programa se reemplaza entero
