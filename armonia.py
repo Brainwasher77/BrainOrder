@@ -194,11 +194,17 @@ def read_tags(path):
         return out
     try:
         f = mutagen.File(path)
+        t = f.tags if f is not None else None
     except Exception:
+        t = None
+    if t is None and str(path).lower().endswith((".mp3", ".aif", ".aiff", ".wav")):
+        try:  # el audio no se pudo leer (archivo dañado o raro), pero las etiquetas sí
+            from mutagen.id3 import ID3
+            t = ID3(path)
+        except Exception:
+            t = None
+    if t is None:
         return out
-    if f is None or f.tags is None:
-        return out
-    t = f.tags
     ext = Path(path).suffix.lower()
     mik_key = mik_energy = mik_bpm = None
     std_key = mik_energy_txt = std_bpm = None

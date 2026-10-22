@@ -731,7 +731,26 @@ function mikRows(){
 }
 function IS_WIN_UI(){ return /^[A-Za-z]:[\\/]/.test(S.home||''); }
 async function mikChoose(){ const r = await api().mik_choose(); if(r.ok){ MK.app = r.app ? r.name : null; toast(r.app ? `Listo: uso <b>${esc(r.name)}</b>.` : 'No quedó elegido.', !r.app); renderMain(); } else if(!r.cancel) toast(esc(r.error), true); }
-async function mikInit(){ MK.sel = new Set(); try{ const r = await api().mik_info(); MK.app = r.app ? r.name : null; MK.watching = r.watching; }catch(e){ MK.app = null; } if(S.view==='mik') renderMain(); }
+async function mikInit(){ MK.sel = new Set(); try{ const r = await api().mik_info(); MK.app = r.app ? r.name : null; MK.watching = r.watching; }catch(e){ MK.app = null; } if(S.view==='mik') renderMain(); mikTwins(); }
+// copias ya analizadas con Mixed In Key que quedaron apartadas en _duplicados
+async function mikTwins(){ try{ const r = await api().mik_recover(false); if(r.ok){ MK.twins = r.count; if(S.view==='mik') renderMain(); } }catch(e){} }
+async function mikRecover(){
+  const n = MK.twins || 0; if(!n) return;
+  modal(`<h3>♻️ Recuperar ${n} ${n===1?'copia analizada':'copias analizadas'}</h3>
+    <p>${n===1?'Esta canción tiene':'Estas canciones tienen'} otra copia que Mixed In Key <b>ya analizó</b> (key, energía y cues), apartada en <code>_duplicados</code> al unificar repetidos.
+    Mixed In Key reconoce la canción de su colección y la muestra como analizada, pero no vuelve a escribir en la copia que quedó.</p>
+    <div class="box">Pongo la copia analizada en el lugar de la otra (mismo nombre y carpeta: tus programas de DJ no cambian) y aparto la sin analizar en <code>_duplicados</code>. No se borra nada y se puede deshacer en Historial.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="mikRecoverGo()">Recuperar ${n}</button></div>`);
+}
+async function mikRecoverGo(){
+  closeModal(); toast('Recuperando las copias analizadas…');
+  const r = await api().mik_recover(true);
+  if(!r.ok){ taskErr(r); return; }
+  if(r.analysis){ await applyAnalysis(r); }
+  MK.twins = Math.max(0, (r.count||0) - (r.done||0)); loadHist(); render();
+  toast(`✅ ${r.done} ${r.done===1?'canción recuperada':'canciones recuperadas'} con sus datos de Mixed In Key.` + (r.op_id ? undoLink({op_id:r.op_id}) : '')
+    + ((r.errors||[]).length ? `<br><span style="color:var(--org)">${r.errors.length} no se pudieron: ${r.errors.slice(0,3).map(esc).join('; ')}</span>` : ''), !!(r.errors||[]).length);
+}
 function mikVisible(){
   const q = (MK.q||'').toLowerCase();
   return mikRows().filter(x => (!MK.pl || x.pls.includes(MK.pl)) && (!q || (x.name+' '+x.artists.join(' ')).toLowerCase().includes(q)));
@@ -762,6 +781,8 @@ function mikView(){
       <button class="ghost" onclick="mikRefresh()" title="Volver a mirar cuáles ya analizó Mixed In Key">↻ Revisar</button>
       <button id="mkGo" style="background:#b48cff;border-color:#b48cff;color:#111;font-weight:650" onclick="mikSend()">🎹 Mandar a Mixed In Key</button></div>
     <div style="margin:-2px 0 10px">${appMsg}${MK.watching?` <span class="art">· Esperando a que Mixed In Key termine ${MK.watching} canción(es)…</span>`:''}</div>
+    ${MK.twins ? `<div class="box" style="display:flex;gap:12px;align-items:center;margin-bottom:10px"><span style="flex:1">♻️ <b>${MK.twins}</b> ${MK.twins===1?'tiene':'tienen'} otra copia <b>ya analizada</b> con Mixed In Key, apartada en <code>_duplicados</code>. Recupérala${MK.twins===1?'':'s'} y no tienes que volver a analizar.</span><button class="primary" onclick="mikRecover()">Recuperar ${MK.twins}</button></div>` : ''}
+    <div class="art" style="margin:-4px 0 10px">¿En Mixed In Key ya salen analizadas y aquí no? Mixed In Key reconoce canciones que ya tenía en su colección y no vuelve a escribir sus datos en el archivo. Hay que obligarlo a analizarlas de nuevo: en Mixed In Key quítalas de su colección y vuelve a mandarlas desde aquí. Al escribir sus datos en el archivo, salen solas de esta lista.</div>
     ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Playlists</th><th>Key / BPM</th><th>Archivo</th></tr>${tb}</table>${rows.length>600?`<div class="art">Mostrando 600 de ${rows.length}: filtra por playlist o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
 }
 function mikSum(){

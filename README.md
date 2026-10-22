@@ -128,6 +128,8 @@ Cada playlist muestra **Key** (Camelot), **Energía** (1–10) y **BPM** de tus 
 ## Sin Mixed In Key
 Sección del menú con las canciones que tienes y que Mixed In Key todavía no analizó (una por archivo, con sus playlists). Marca y dale **Mandar a Mixed In Key**: se abren en tu Mixed In Key; cuando las analiza, BrainOrder lo nota y salen de la lista. También con clic derecho en una canción. Sin Mixed In Key instalado, te abre las carpetas en Finder para arrastrarlas. En Windows lo busca en los programas instalados, sus carpetas y el Menú Inicio; si no lo encuentra, **Buscar Mixed In Key…** te deja elegir su programa.
 
+**Canciones que en Mixed In Key salen analizadas pero aquí no:** BrainOrder sabe que una canción está analizada porque Mixed In Key escribe la key y la energía dentro del archivo. Si Mixed In Key ya tenía esa canción en su colección (otra copia), la muestra como analizada pero no vuelve a escribir en el archivo nuevo. Cuando la copia analizada quedó en `_duplicados`, el botón **Recuperar** la pone en el lugar de la otra (mismo nombre y carpeta; se puede deshacer). Para las demás, quítalas de la colección de Mixed In Key y vuelve a mandarlas. **Unificar repetidos** y **Duplicados** conservan siempre la copia analizada con Mixed In Key (salvo que otra tenga cues en Rekordbox).
+
 ## Mixed In Key → tus programas de DJ (automático)
 Lo que analizó Mixed In Key pasa a **Rekordbox, Traktor, Serato y Engine DJ** (los que tengas activos en Conexiones):
 - **Key** en la columna Key de cada programa (MIK siempre gana sobre la que tuviera).

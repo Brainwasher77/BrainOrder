@@ -78,13 +78,20 @@ def list_ops(limit=30):
 def plan_undo(op):
     """-> (devolver [(actual, original)], saltados [{file, why}])"""
     todo, skipped = [], []
+    # se simula en orden: un paso anterior puede liberar el lugar que necesita el siguiente (intercambios)
+    freed, filled = set(), set()
+
+    def exists(p):
+        return (Path(p).exists() and p not in freed) or p in filled
     for src, dst in reversed(op.get("moves") or []):
-        if not Path(dst).exists():
+        if not exists(dst):
             skipped.append({"file": Path(dst).name, "why": "ya no está donde BrainOrder lo dejó"})
-        elif Path(src).exists():
+        elif exists(src):
             skipped.append({"file": Path(src).name, "why": "en su lugar original ya hay otro archivo con ese nombre"})
         else:
             todo.append((dst, src))
+            freed.add(dst); filled.discard(dst)
+            filled.add(src); freed.discard(src)
     return todo, skipped
 
 

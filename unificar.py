@@ -94,6 +94,14 @@ def _q(path):
     return reglas.quality(path, b._RULES[0])
 
 
+def _mik(path):
+    try:
+        import armonia
+        return bool(armonia.info(path).get("mik"))
+    except Exception:
+        return False
+
+
 def _size(p):
     try:
         return os.path.getsize(p)
@@ -178,7 +186,9 @@ def plan(cfg, analysis=None, progress=None):
             def score(f):
                 info = rb.get(f.path) or {}
                 hd = home.get(f.path)
-                return (-info.get("cues", 0), -info.get("playlists", 0), -(f.path in rb),
+                # la copia analizada con Mixed In Key se conserva: MIK no vuelve a escribir en la otra
+                # (la reconoce de su colección y la muestra como ya analizada)
+                return (-info.get("cues", 0), -_mik(f.path), -info.get("playlists", 0), -(f.path in rb),
                         -(hd is not None and f.dir == hd), f.dir in merge_src, _q(f.path), -_size(f.path))
 
             members.sort(key=score)
@@ -186,6 +196,8 @@ def plan(cfg, analysis=None, progress=None):
             kinfo = rb.get(keep.path)
             if kinfo and kinfo.get("cues"):
                 why = "tiene cues en Rekordbox"
+            elif _mik(keep.path) and not all(_mik(x.path) for x in rest):
+                why = "está analizada con Mixed In Key"
             elif kinfo and kinfo.get("playlists"):
                 why = f"está en {kinfo['playlists']} playlist(s) de Rekordbox"
             elif kinfo:

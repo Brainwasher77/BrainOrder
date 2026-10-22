@@ -1,5 +1,5 @@
 {
-  "version": "2.18.4",
-  "build": 50,
-  "notes": "Arreglado: con el reproductor abierto, los avisos y ventanas ya no quedan tapados: se ajustan a su tamaño y terminan encima de él."
+  "version": "2.18.5",
+  "build": 51,
+  "notes": "Arreglado: «Unificar repetidos» conservaba a veces la copia sin analizar y apartaba la que Mixed In Key ya había analizado. Ahora conserva siempre la analizada, y en «Sin Mixed In Key» el botón Recuperar devuelve las copias analizadas que quedaron en _duplicados."
 }

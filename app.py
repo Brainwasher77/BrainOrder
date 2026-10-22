@@ -3067,6 +3067,92 @@ class Api:
         return {"ok": True, "app": app, "name": Path(app).stem if app else None,
                 "watching": len(getattr(self, "_mik_watch", {}) or {})}
 
+    def _mik_twins(self):
+        """Canciones sin datos de Mixed In Key cuya copia analizada quedó apartada en _duplicados
+        (Unificar repetidos de antes conservaba la otra). -> [(archivo sin analizar, copia analizada)]"""
+        import armonia
+        rows = {}
+        for pl in self._analysis() or []:
+            for r in pl.get("tracks") or []:
+                src = r.get("source")
+                if src and not r.get("mik") and os.path.isfile(src):
+                    rows[src] = r
+        if not rows:
+            return []
+        roots = [Path(self._cfg["dest_root"]) / "_duplicados", Path(self._cfg["inbox"]) / "_duplicados"]
+        roots += [Path(r) / "_duplicados" for r in self._cfg.get("library_roots") or []]
+        biblioteca.configure(self._cfg)
+
+        def key(p):
+            a, t = biblioteca.parse_file(Path(p))
+            f = biblioteca.LocalFile(Path(p), a, t)
+            return (f.artist_n.split(" and ")[0].split(",")[0].strip(), f.core, f.extras) if f.core else None
+        twins, seen = {}, set()
+        for root in roots:
+            if not root.is_dir() or str(root) in seen:
+                continue
+            seen.add(str(root))
+            for p in biblioteca.walk_audio(root):
+                k = key(p)
+                if k and k[0] not in biblioteca.UNKNOWN_ARTISTS and armonia.info(p).get("mik"):
+                    twins.setdefault(k, []).append(p)
+        out = []
+        for src in rows:
+            k = key(src)
+            if not k or k not in twins:
+                continue
+            d = biblioteca.duration(src)
+            ext = Path(src).suffix.lower()
+            cands = [t for t in twins[k] if Path(t).suffix.lower() == ext and biblioteca.same_length(d, biblioteca.duration(t))]
+            if cands:
+                best = max(cands, key=lambda t: (bool(armonia.info(t).get("cues")), os.path.getsize(t)))
+                out.append((src, best))
+        return out
+
+    def mik_recover(self, apply=False):
+        """Pone la copia ya analizada con Mixed In Key en el lugar de la que no lo está (mismo nombre y
+        carpeta, así tus programas de DJ no cambian) y aparta la otra en _duplicados. Se puede deshacer."""
+        def run():
+            self._progress("Buscando copias ya analizadas con Mixed In Key…")
+            pairs = self._mik_twins()
+            if not apply:
+                return {"count": len(pairs), "pairs": [{"file": a, "copy": b} for a, b in pairs[:300]]}
+            if not pairs:
+                return {"count": 0, "done": 0}
+            import unificar
+            from plataforma import safe_move
+            dest = Path(self._cfg["dest_root"])
+            moves, done, errors = [], 0, []
+            if not self._files.acquire(timeout=600):
+                raise unificar.UnifyError("Hay otra tarea moviendo archivos. Vuelve a intentar en un momento.")
+            try:
+                for n, (cur, twin) in enumerate(pairs, 1):
+                    self._progress(f"Recuperando {n}/{len(pairs)}: {Path(cur).name}", n / len(pairs))
+                    try:
+                        rel = Path(cur).parent.relative_to(dest)
+                    except ValueError:
+                        rel = Path(Path(cur).parent.name)
+                    park = unificar._unique(dest / "_duplicados" / rel / Path(cur).name)
+                    park.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        safe_move(cur, str(park))
+                        try:
+                            safe_move(twin, cur)
+                        except Exception:
+                            safe_move(str(park), cur)  # nunca queda el lugar vacío
+                            raise
+                        moves += [(cur, str(park)), (twin, cur)]
+                        done += 1
+                    except Exception as e:
+                        errors.append(f"{Path(cur).name}: {e}")
+                        config.log(f"recuperar copia analizada {cur}: {e!r}")
+                op = historial.record("relocate", f"Recuperar {done} copia(s) analizada(s) con Mixed In Key", moves)
+            finally:
+                self._files.release()
+            analysis = self._build_analysis(light=True)
+            return {"count": len(pairs), "done": done, "errors": errors, "op_id": op, "analysis": analysis}
+        return self._task(run, "mik_recover", "Recuperar copias analizadas")
+
     def mik_send(self, paths):
         """Manda esas canciones a Mixed In Key para que las analice. Después BrainOrder nota solo cuáles
         ya quedaron analizadas (Mixed In Key escribe la key y la energía en el archivo)."""
