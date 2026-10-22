@@ -146,12 +146,14 @@ def scan(cfg, analysis=None, rb=None, progress=None):
             })
 
         def score(x):
-            return (-x["rb_cues"], -x["rb_playlists"], -x["in_rb"], -bool(x["mik"]), -len(x["used_by"]),
+            return (-x["rb_cues"], -bool(x["mik"]), -x["rb_playlists"], -x["in_rb"], -len(x["used_by"]),
                     reglas.quality(x["path"], rules), -(x["bitrate"] or 0), -x["in_dest"], -x["size"])
         files_info.sort(key=score)
         k = files_info[0]
         if k["rb_cues"]:
             why = "tiene cues en Rekordbox"
+        elif k["mik"] and not all(x["mik"] for x in files_info[1:]):
+            why = "está analizada con Mixed In Key"
         elif k["rb_playlists"]:
             why = f"está en {k['rb_playlists']} playlist(s) de Rekordbox"
         elif k["in_rb"]:
