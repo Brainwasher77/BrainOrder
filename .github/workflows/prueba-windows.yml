@@ -1,0 +1,48 @@
+# Prueba el instalador de Windows publicado: lo instala sin preguntas, abre BrainOrder y muestra el registro.
+name: Prueba Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/prueba-windows.yml]
+
+jobs:
+  probar:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Descargar e instalar
+        shell: pwsh
+        run: |
+          $v = (Get-Content version.json | ConvertFrom-Json).version
+          gh release download "v$v" -p "*Windows.exe" -D inst
+          $exe = (Get-ChildItem inst\*.exe).FullName
+          Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=inst\setup.log' -Wait
+          Get-Content inst\setup.log -Tail 15
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\BrainOrder" | Select-Object Name
+      - name: Abrir BrainOrder (como el acceso directo)
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\BrainOrder"
+          $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\BrainOrder.lnk")
+          "Acceso directo: $($lnk.TargetPath) $($lnk.Arguments) en $($lnk.WorkingDirectory)"
+          Start-Process $lnk.TargetPath -ArgumentList $lnk.Arguments -WorkingDirectory $lnk.WorkingDirectory
+          Start-Sleep 60
+          "--- procesos"
+          Get-Process | Where-Object { $_.Name -match 'python|msedgewebview' } | Select-Object Name, Id, MainWindowTitle | Format-Table | Out-String
+          "--- registro de BrainOrder"
+          Get-Content "$env:APPDATA\BrainOrder\brainorder.log" -ErrorAction SilentlyContinue
+          "--- carpeta de datos"
+          Get-ChildItem "$env:APPDATA\BrainOrder" -ErrorAction SilentlyContinue | Select-Object Name
+      - name: Mismo arranque con python.exe (errores visibles)
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\BrainOrder"
+          $p = Start-Process "$app\python\python.exe" -ArgumentList "`"$app\app\arranque.py`"","--seed" -WorkingDirectory $app -RedirectStandardOutput out.txt -RedirectStandardError err.txt -PassThru
+          Start-Sleep 45
+          "--- salida"; Get-Content out.txt; "--- errores"; Get-Content err.txt
+          "--- sigue abierto: $(-not $p.HasExited)"
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
