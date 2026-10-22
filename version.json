@@ -1,5 +1,5 @@
 {
-  "version": "2.18.2",
-  "build": 48,
-  "notes": "Nuevo: botón «Buscar actualizaciones» en Ajustes. «by @BRAINWASHERDJ» va debajo del logo."
+  "version": "2.18.3",
+  "build": 49,
+  "notes": "Arreglado: las canciones que descargas con los links de BrainOrder ya se reconocen aunque Deezer escriba el nombre distinto que Spotify: se emparejan por su ISRC. También reconoce canciones que ya tenías con otro nombre."
 }

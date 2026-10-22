@@ -27,10 +27,30 @@ VERSIONY = {"remix", "rmx", "mix", "edit", "live", "en", "vivo", "acoustic", "ac
 UNKNOWN_ARTISTS = {"", "desconocido", "unknown", "unknown artist", "artista desconocido", "various artists", "va"}
 
 
-def norm(s: str) -> str:
+# Deezer, Beatport, etc. escriben distinto que Spotify: apóstrofos curvos, letras sin forma ASCII…
+_APOS = str.maketrans({"\u2019": "'", "\u2018": "'", "`": "'", "\u00b4": "'", "\u02bc": "'", "\u2032": "'"})
+_TRANSLIT = str.maketrans({"ı": "i", "İ": "I", "ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D",
+                           "ß": "ss", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE", "þ": "th", "ð": "d"})
+_ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10"}
+
+
+def _norm_v1(s: str) -> str:
+    """Normalización anterior a la 2.18.3 (para claves guardadas con ella, como «usar esta versión»)."""
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
     s = s.replace("&", " and ").replace("$", "s")
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def norm(s: str) -> str:
+    s = (s or "").translate(_APOS).translate(_TRANSLIT)
+    s = re.sub(r"(\w)'(\w)", r"\1\2", s)          # Can't / Can’t -> cant · MC's -> MCs
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+    s = s.replace("&", " and ").replace("$", "s")
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = re.sub(r"\bpt\b", "part", s)                 # Pt. I == Part 1
+    s = re.sub(r"\b(part|vol|chapter|chap)\s+(i{1,3}|iv|vi{0,3}|ix|x)\b",
+               lambda m: f"{m.group(1)} {_ROMAN[m.group(2)]}", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -119,6 +139,49 @@ def duration(path: str):
     return d
 
 
+def file_isrc(path: str):
+    """ISRC guardado en las etiquetas del archivo (Deezer, Beatport, tiendas lo traen). Cacheado como la duración."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = f"{st.st_size}:{int(st.st_mtime)}"
+    ck = "isrc:" + path
+    c = _DUR.get(ck)
+    if c and c[0] == key:
+        return c[1]
+    v = None
+    if mutagen:
+        try:
+            t = None
+            if path.lower().endswith(".mp3"):
+                try:  # solo las etiquetas: más rápido y funciona aunque el audio venga dañado
+                    from mutagen.id3 import ID3
+                    t = ID3(path)
+                except Exception:
+                    t = None
+            if t is None:
+                m = mutagen.File(path)
+                t = m.tags if m is not None else None
+            if t is not None:
+                if hasattr(t, "getall"):  # MP3 / AIFF / WAV (ID3)
+                    f = t.getall("TSRC")
+                    v = str(f[0].text[0]) if f and f[0].text else None
+                else:  # M4A, FLAC, OGG
+                    x = t.get("isrc") or t.get("ISRC") or t.get("----:com.apple.iTunes:ISRC")
+                    if x:
+                        x = x[0]
+                        v = x.decode("utf-8", "ignore") if isinstance(x, (bytes, bytearray)) else str(x)
+        except Exception:
+            v = None
+    v = re.sub(r"[^A-Z0-9]", "", (v or "").upper()) or None
+    if v and len(v) != 12:
+        v = None
+    _DUR[ck] = [key, v]
+    _DUR_DIRTY[0] = True
+    return v
+
+
 _RULES = [dict(reglas.DEFAULTS)]
 
 
@@ -176,13 +239,28 @@ def resolve_folder(dest_root: Path, playlist_name: str, _cache={}) -> Path:
     return best
 
 
+_AND = re.compile(r"\b(y|e|x|und|et|vs|feat|ft|featuring|with|con)\b")
+
+
+def _artist_forms(s):
+    """'alexis y fido' -> {'alexis and fido', 'alexisandfido'}: 'y', '&', 'x'… cuentan igual y sin espacios."""
+    a = re.sub(r"\s+", " ", _AND.sub("and", s)).strip()
+    return a, a.replace(" ", "")
+
+
 def artist_ok(sp_artists, file_artist_norm: str) -> bool:
     if file_artist_norm in UNKNOWN_ARTISTS:
         return False
+    fa, fa_ns = _artist_forms(file_artist_norm)
     for a in sp_artists:
         an = norm(a)
-        if len(an) >= 2 and (an in file_artist_norm or file_artist_norm in an):
+        if len(an) < 2:
+            continue
+        if an in file_artist_norm or file_artist_norm in an:
             return True
+        aa, aa_ns = _artist_forms(an)
+        if aa in fa or fa in aa or (len(aa_ns) >= 4 and (aa_ns in fa_ns or fa_ns in aa_ns)):
+            return True  # «Alexis y Fido» = «Alexis & Fido» · «Audio Jack» = «Audiojack»
     return False
 
 
@@ -402,7 +480,36 @@ def analyze(playlists, cfg, progress=None):
     by_stem = {}
     if manual:
         for f in files:
-            by_stem.setdefault(norm(Path(f.path).stem), []).append(f)
+            st = Path(f.path).stem
+            for k in {norm(st), _norm_v1(st)}:  # claves guardadas con la normalización de antes
+                by_stem.setdefault(k, []).append(f)
+    # ISRC: el código de la grabación es el mismo en Spotify y en Deezer aunque el nombre del archivo
+    # venga escrito distinto. Las descargas siempre se leen; el resto de tu música, solo si hace falta.
+    isrc_idx, isrc_rest = {}, [None]
+    inbox_pre = str(inbox) + os.sep
+    for f in files:
+        if f.path.startswith(inbox_pre):
+            c = file_isrc(f.path)
+            if c:
+                isrc_idx.setdefault(c, []).append(f)
+
+    def by_isrc(code, claimed):
+        code = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+        if not code:
+            return []
+        if code not in isrc_idx and isrc_rest[0] is None:
+            # una canción sin archivo por nombre: se leen (una vez, con caché) los ISRC del resto
+            rest = {}
+            if progress:
+                progress("Revisando códigos ISRC de tu música…", 0.4)
+            for g in files:
+                if not g.path.startswith(inbox_pre) and g.path not in claimed:
+                    c2 = file_isrc(g.path)
+                    if c2:
+                        rest.setdefault(c2, []).append(g)
+            isrc_rest[0] = rest
+        return list(isrc_idx.get(code, [])) + list((isrc_rest[0] or {}).get(code, []))
+    claimed = set()
     inbox_s = str(inbox) + os.sep
     dest_s = str(dest_root) + os.sep
 
@@ -431,6 +538,13 @@ def analyze(playlists, cfg, progress=None):
             matches = idx.find(t)
             for k in manual.get(t["id"]) or []:
                 matches += [f for f in by_stem.get(k, []) if f not in matches]
+            if t.get("isrc"):
+                if matches:  # ya tiene archivo por nombre: solo se suman descargas con su mismo ISRC
+                    isrc_hits = isrc_idx.get(re.sub(r"[^A-Z0-9]", "", t["isrc"].upper()), [])
+                else:
+                    isrc_hits = by_isrc(t["isrc"], claimed)
+                matches += [f for f in isrc_hits if f not in matches]
+            claimed.update(f.path for f in matches)
             ex = extras(t["name"])
             rank = lambda f, ex=ex: (f.extras != ex, not f.path.startswith(dest_s)) + _rank(f)
             hdir = home[hk(t)]
