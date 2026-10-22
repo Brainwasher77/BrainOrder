@@ -1460,7 +1460,7 @@ function globalStats0(){
   return {songs:songs.size, owned, inbox:vals.filter(v=>v==='inbox').length, missing:vals.filter(v=>v==='missing').length,
           files:files.size, saved:refs-files.size, pct: songs.size?Math.round(owned/songs.size*100):100};
 }
-function mikStats(){ return memo('mik', () => { const seen=new Set(); let owned=0, mik=0;
+function mikStats(){ return memo('mikstats', () => { const seen=new Set(); let owned=0, mik=0;
   for(const r of statRows()) if(r.source && !seen.has(r.source)){ seen.add(r.source); owned++; if(r.mik) mik++; }
   return {owned, mik, pct: owned? Math.round(mik/owned*100) : 0}; }); }
 function statsView(){

@@ -442,6 +442,14 @@ def _rank(f: LocalFile):
     return (q, size)
 
 
+def _is_mik(path):
+    import armonia
+    try:
+        return bool(armonia.info(path).get("mik"))
+    except Exception:
+        return False
+
+
 def _harm(src):
     """Key / energía / BPM del archivo (Mixed In Key u otro programa)."""
     if src is None:
@@ -546,7 +554,9 @@ def analyze(playlists, cfg, progress=None):
                 matches += [f for f in isrc_hits if f not in matches]
             claimed.update(f.path for f in matches)
             ex = extras(t["name"])
-            rank = lambda f, ex=ex: (f.extras != ex, not f.path.startswith(dest_s)) + _rank(f)
+            # entre varias copias de la misma canción: la analizada con Mixed In Key primero (MIK no
+            # vuelve a escribir en otra copia de algo que ya tiene en su colección)
+            rank = lambda f, ex=ex: (f.extras != ex, not _is_mik(f.path), not f.path.startswith(dest_s)) + _rank(f)
             hdir = home[hk(t)]
             in_inbox = [m for m in matches if m.path.startswith(inbox_s)]
             owned = [m for m in matches if m not in in_inbox]
