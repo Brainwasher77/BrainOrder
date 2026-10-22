@@ -164,6 +164,7 @@ def mac_branding(name="BrainOrder", icon=None):
             try:  # en la práctica es un diccionario modificable (truco que usan rumps y py2app)
                 d["CFBundleName"] = name
                 d["CFBundleDisplayName"] = name
+                d["NSHumanReadableCopyright"] = "© @BRAINWASHERDJ. Todos los derechos reservados."  # «Acerca de BrainOrder»
             except Exception:
                 pass
         NSProcessInfo.processInfo().setProcessName_(name)

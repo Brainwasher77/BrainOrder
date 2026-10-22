@@ -14,6 +14,11 @@ CONFIG_FILE = SUPPORT_DIR / "config.json"
 TOKEN_FILE = SUPPORT_DIR / "token.json"
 LOG_FILE = SUPPORT_DIR / "brainorder.log"
 
+# Autor y titular de BrainOrder (sale en la app, informes, playlists e instaladores)
+AUTHOR = "@BRAINWASHERDJ"
+CREDIT = f"BrainOrder by {AUTHOR}"
+COPYRIGHT = f"© {datetime.now().year} {AUTHOR}. Todos los derechos reservados."
+
 AUDIO_EXT = {".mp3", ".m4a", ".aif", ".aiff", ".wav", ".flac", ".alac", ".ogg", ".aac", ".mp4"}
 
 DEFAULTS = {

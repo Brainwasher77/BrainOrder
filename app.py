@@ -1684,10 +1684,39 @@ class Api:
                 k = f"{prog}:{ref}"
                 n = len(v["paths"])
                 if n and self._dj_counts.get(k) == n and f"d:{k}" not in self._told():
-                    ready.append({"kind": "dj", "program": prog, "label": DJ.LABELS[prog], "ref": ref,
-                                  "name": v["name"], "count": n})
+                    nov = self._dj_novelty(v["name"], v["paths"])
+                    if not nov["new"]:
+                        # todo lo de esa playlist ya está en BrainOrder: no hay nada nuevo que preguntar
+                        self._told().add(f"d:{k}")
+                        config.log(f"{DJ.LABELS[prog]}: «{v['name']}» no trae música nueva ({len(nov['have'])} ya estaban)")
+                    else:
+                        ready.append({"kind": "dj", "program": prog, "label": DJ.LABELS[prog], "ref": ref,
+                                      "name": v["name"], "count": n, **self._nov_summary(nov)})
                 self._dj_counts[k] = n
         self._announce(ready)
+
+    def _dj_novelty(self, name, paths, lib=None):
+        import novedades
+        return novedades.novelty(self._cfg, self._analysis() or [], name, paths, lib)
+
+    @staticmethod
+    def _nov_files(nov):
+        """Canciones de la playlist: las nuevas + tu archivo de siempre en lugar de cada repetida."""
+        out, seen = [], set()
+        for f in list(nov["new"]) + [h["existing"] for h in nov["have"] if h["why"] != "repetida_en_la_playlist"]:
+            k = os.path.normcase(os.path.normpath(f))
+            if k not in seen:
+                seen.add(k)
+                out.append(f)
+        return out
+
+    @staticmethod
+    def _nov_summary(nov):
+        why = {}
+        for h in nov["have"]:
+            why[h["why"]] = why.get(h["why"], 0) + 1
+        return {"new_count": len(nov["new"]), "have_count": len(nov["have"]), "have_why": why,
+                "missing": nov["missing"], "existing": nov["existing"]}
 
     def folders(self):
         """Carpetas sin playlist, playlists nuevas de tus programas de DJ y lo que ya importaste."""
@@ -1698,10 +1727,17 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
         dj = []
+        import novedades
+        lib = novedades.Biblioteca(self._analysis() or [])
         for prog, lists in (getattr(self, "_dj_last", None) or {}).items():
             for ref, v in CN.dj_new(prog, lists, self._imported_dj_keys()).items():
+                try:
+                    extra = self._nov_summary(self._dj_novelty(v["name"], v["paths"], lib))
+                except Exception as e:
+                    config.log(f"novedades de «{v['name']}»: {e!r}")
+                    extra = {}
                 dj.append({"kind": "dj", "program": prog, "label": DJ.LABELS[prog], "ref": ref, "name": v["name"],
-                           "count": len(v["paths"]), "new": True})
+                           "count": len(v["paths"]), "new": True, **extra})
         sp = self._sp()
         imported = [{**e, "label": DJ.LABELS.get(e.get("program"), "")} for e in self._cfg.get("folder_playlists") or []]
         import cola_spotify
@@ -1754,12 +1790,65 @@ class Api:
             pl = (lists or {}).get(str(ref))
             if not pl:
                 raise unificar.UnifyError(f"No encontré esa playlist en {DJ.LABELS.get(program, program)}.")
-            files = [f for f in pl["paths"]]
+            nov = self._dj_novelty(pl["name"], pl["paths"])
+            summary = self._nov_summary(nov)
+            if nov["existing"]:
+                # ya hay una playlist de BrainOrder con ese nombre: nunca se crea otra, se le suma lo nuevo
+                out = self._dj_add_to_existing(nov, opts)
+                out["result"].update(summary)
+                CN.dj_mark(program, ref)
+                return out
+            # la playlist queda completa, pero lo que ya tenías se usa desde tu archivo de siempre:
+            # solo la música nueva se pasa a tu carpeta de playlists (nada se copia dos veces)
+            files = self._nov_files(nov)
+            if not files:
+                CN.dj_mark(program, ref)
+                return {"analysis": self._analysis() or [], "pid": None, "index": None,
+                        "result": {"name": pl["name"], "files": 0, "nothing_new": True, **summary}}
             entry = {"name": pl["name"], "program": program, "ref": str(ref)}
             out = self._import_playlist(pl["name"], files, {**opts, "origin": program}, entry, FC.dj_pid(program, ref))
+            out["result"].update(summary)
             CN.dj_mark(program, ref)
             return out
         return self._task(run, f"djimport:{program}:{ref}", "Importar playlist")
+
+    def _dj_add_to_existing(self, nov, opts):
+        """La playlist de Rekordbox se llama igual que una de BrainOrder: se le suman solo las canciones nuevas."""
+        from fuentes import carpetas as FC
+        ex = nov["existing"]
+        pid, name, src = ex["id"], ex["name"], ex.get("source") or fuentes.source_of(ex["id"])
+        files = self._nov_files(nov)
+        res = {"name": name, "files": len(nov["new"]), "merged_into": name}
+        if not files:
+            res["nothing_new"] = True
+            return {"analysis": self._analysis() or [], "result": res, "pid": pid,
+                    "index": next((i for i, a in enumerate(self._analysis() or []) if a["id"] == pid), None)}
+        self._set_stage(0, 40)
+        if opts.get("move", True):
+            files, res["move"] = self._move_to_root(name, files)
+        self._set_stage(40, 85)
+        if src == "spotify":
+            if opts.get("spotify", True):
+                res["spotify"] = self._spotify_do({"kind": "merge_add", "pid": pid, "name": name, "uris": [],
+                                                   "paths": files, "queries": []})
+        elif src == FC.KEY:
+            FC.remember(pid, files)
+            meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == pid), None)
+            if meta:
+                tracks = FC.tracks(self._cfg, meta, self._progress)
+
+                def put(data):
+                    cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                    if cur is not None:
+                        cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
+                self._update_sp(put)
+        else:
+            res["platform_note"] = "Esa playlist es de otra plataforma: las canciones quedan en su carpeta; en la plataforma agrégalas tú."
+        self._set_stage(85, 100)
+        analysis = self._build_analysis(light=True)
+        self._progress(f"«{name}»: {len(nov['new'])} canción(es) nueva(s) sumada(s).", 1)
+        idx = next((i for i, a in enumerate(analysis) if a["id"] == pid), None)
+        return {"analysis": analysis, "result": res, "pid": pid, "index": idx}
 
     def _move_to_root(self, name, files, src_folder=None):
         """Pasa los archivos de la playlist importada a su carpeta dentro de tu carpeta de playlists
@@ -1826,7 +1915,7 @@ class Api:
             return pid, existing.get("url"), uris, unresolved, True
         if progress:
             progress("Creando la playlist en Spotify…", 1)
-        created = sp.create_playlist(name, description="Importada con BrainOrder")
+        created = sp.create_playlist(name, description=f"Importada con {config.CREDIT}")
         if uris:
             sp.add_items(created["id"], uris)
         return created["id"], (created.get("external_urls") or {}).get("spotify"), uris, unresolved, False
@@ -3376,7 +3465,8 @@ def main():
     icon = HERE / "icon.png"
     plataforma.mac_branding("BrainOrder", icon)  # «BrainOrder» junto a la manzana, no «Python»
     api = Api()
-    win = webview.create_window("BrainOrder", str(HERE / "ui.html"), js_api=api,
+    config.log(f"{config.CREDIT} · {config.COPYRIGHT}")
+    win = webview.create_window(f"BrainOrder · by {config.AUTHOR}", str(HERE / "ui.html"), js_api=api,
                                 width=1280, height=820, min_size=(900, 600),
                                 background_color="#0d0e12")
     api._window = win

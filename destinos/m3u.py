@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from config import log, safe_name
+from config import CREDIT, log, safe_name
 
 KEY = "m3u"
 LABEL = "Playlists M3U"
@@ -34,7 +34,7 @@ def sync(analysis, cfg, progress=None):
     for i, pl in enumerate(analysis, 1):
         if progress:
             progress(f"M3U {i}/{len(analysis)}: {pl['name']}", i / max(1, len(analysis)))
-        lines, seen = ["#EXTM3U", f"#PLAYLIST:{pl['name']}"], set()
+        lines, seen = ["#EXTM3U", f"#PLAYLIST:{pl['name']}", f"# {CREDIT}"], set()
         for r in pl["tracks"]:
             if r["status"] in ("ok", "elsewhere") and r.get("source") and r["source"] not in seen:
                 seen.add(r["source"])

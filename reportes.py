@@ -2,7 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from config import log
+from config import CREDIT, log
 
 TXT_NAME = "_FALTAN EN ESTA CARPETA.txt"
 
@@ -65,6 +65,7 @@ def write_reports(analysis, cfg):
                     if dz.get("url"):
                         L.append(f"        Deezer:  {dz['url']}" + ("" if dz.get("found") else "  (búsqueda)"))
                 L.append("")
+            L.append(f"— {CREDIT}")
             body = "\n".join(L)
             try:  # si solo cambiaría la fecha, no se reescribe (cientos de carpetas en cada análisis)
                 old = txt.read_text("utf-8").split("\n")

@@ -19,7 +19,13 @@ AppId={{6F0B7C1E-3B7A-4C55-9E3B-B0A1D0E2F0C7}
 AppName=BrainOrder
 AppVersion={#APPVER}
 AppVerName=BrainOrder {#APPVER}
-AppPublisher=Brainwasher77
+AppPublisher=@BRAINWASHERDJ
+AppCopyright=© @BRAINWASHERDJ. Todos los derechos reservados.
+VersionInfoCompany=@BRAINWASHERDJ
+VersionInfoCopyright=© @BRAINWASHERDJ. Todos los derechos reservados.
+VersionInfoDescription=BrainOrder by @BRAINWASHERDJ
+VersionInfoProductName=BrainOrder
+VersionInfoVersion={#APPVER}
 AppPublisherURL=https://github.com/Brainwasher77/BrainOrder
 DefaultDirName={localappdata}\Programs\BrainOrder
 DefaultGroupName=BrainOrder
@@ -39,6 +45,10 @@ CloseApplications=yes
 
 [Languages]
 Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
+
+[Messages]
+; marca del autor abajo a la izquierda en todas las pantallas del instalador
+BeveledLabel=BrainOrder by @BRAINWASHERDJ
 
 [Files]
 Source: "{#BOSRC}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs

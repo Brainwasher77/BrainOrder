@@ -5,6 +5,20 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from config import AUTHOR, COPYRIGHT, CREDIT
+
+
+def _sign(wb, ws):
+    """Marca de agua del autor: propiedades del archivo, encabezado y pie al imprimir."""
+    wb.properties.creator = AUTHOR
+    wb.properties.lastModifiedBy = AUTHOR
+    wb.properties.company = AUTHOR
+    wb.properties.description = COPYRIGHT
+    ws.oddHeader.right.text = CREDIT
+    ws.oddHeader.right.color = "999999"
+    ws.oddFooter.center.text = f"{CREDIT} · {COPYRIGHT}"
+    ws.oddFooter.center.color = "999999"
+
 HEAD_FILL = PatternFill("solid", fgColor="1C1F27")
 HEAD_FONT = Font(bold=True, color="C8F53C", size=11)
 TITLE_FONT = Font(bold=True, size=15)
@@ -47,7 +61,7 @@ def build(analysis, path):
 
     ws["A1"] = "BrainOrder — Canciones por descargar"
     ws["A1"].font = TITLE_FONT
-    ws["A2"] = f"{len(rows)} canciones · generado {datetime.now():%Y-%m-%d %H:%M}"
+    ws["A2"] = f"{len(rows)} canciones · generado {datetime.now():%Y-%m-%d %H:%M} · {CREDIT}"
     ws["A2"].font = SUB_FONT
 
     headers = ["#", "Canción", "Artista", "Spotify", "Deezer", "Carpeta destino", "Playlists"]
@@ -89,6 +103,7 @@ def build(analysis, path):
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
+    _sign(wb, ws)
     wb.save(path)
     return len(rows)
 
@@ -127,7 +142,7 @@ def build_playlist(pl, path):
     ws.title = "Informe"
     ws["A1"] = f"{'♥ ' if pl.get('liked') else ''}{pl['name']}"
     ws["A1"].font = TITLE_FONT
-    ws["A2"] = f"Informe BrainOrder · {datetime.now():%Y-%m-%d %H:%M} · carpeta: {_short(pl['folder'])}"
+    ws["A2"] = f"Informe {CREDIT} · {datetime.now():%Y-%m-%d %H:%M} · carpeta: {_short(pl['folder'])}"
     ws["A2"].font = SUB_FONT
 
     # Resumen
@@ -196,5 +211,6 @@ def build_playlist(pl, path):
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
+    _sign(wb, ws)
     wb.save(path)
     return {"total": total, "missing": cnt["missing"], "have": have}
