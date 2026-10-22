@@ -47,6 +47,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>BrainOrder</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSHumanReadableCopyright</key><string>© @BRAINWASHERDJ. Todos los derechos reservados.</string>
+  <key>CFBundleGetInfoString</key><string>BrainOrder $VER by @BRAINWASHERDJ</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

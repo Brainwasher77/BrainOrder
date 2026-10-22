@@ -2,7 +2,9 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>BrainOrder</title>
+<title>BrainOrder · by @BRAINWASHERDJ</title>
+<meta name="author" content="@BRAINWASHERDJ">
+<meta name="copyright" content="© @BRAINWASHERDJ. Todos los derechos reservados.">
 <style>
 :root{
   --bg:#0d0e12; --panel:#15171d; --panel2:#1c1f27; --line:#2a2e39; --text:#e9ebf0; --mute:#8b91a1;
@@ -27,6 +29,11 @@ header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:
 header *{-webkit-app-region:no-drag}
 .logo{font-weight:800;letter-spacing:-.02em;font-size:18px;margin-right:6px}
 .logo span{color:var(--acid)}
+.by{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--mute);margin:3px 0 0 -2px;align-self:flex-end;padding-bottom:3px}
+/* marca de agua del autor: tenue, detrás de todo y sin estorbar clics */
+.wm{position:fixed;right:18px;bottom:12px;font-weight:800;letter-spacing:.12em;font-size:13px;color:var(--text);opacity:.07;pointer-events:none;user-select:none;z-index:0;white-space:nowrap}
+.wm.big{right:50%;bottom:50%;transform:translate(50%,50%) rotate(-18deg);font-size:64px;opacity:.025}
+.credit{margin:14px 10px 6px;font-size:11px;color:var(--mute);opacity:.75;line-height:1.5}
 .conn{display:flex;align-items:center;gap:6px;color:var(--mute);font-size:12.5px;margin-right:auto}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--miss);flex:none}
 .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
@@ -255,7 +262,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 <body>
 <div class="app">
   <header>
-    <div class="logo">Brain<span>Order</span></div>
+    <div class="logo">Brain<span>Order</span></div><div class="by" title="BrainOrder es de @BRAINWASHERDJ">by @BRAINWASHERDJ</div>
     <div class="conn"><div class="dot" id="dot"></div><span id="connTxt">Sin conectar</span><a id="spqTag" class="lnk" style="display:none;font-size:inherit;color:var(--org)" onclick="spqModal()" title="Ver y cancelar lo que espera para Spotify"></a></div>
     <button class="ghost" id="btnConn" onclick="connect()">Conectar Spotify</button>
     <button onclick="openSettings()">Ajustes</button>
@@ -286,11 +293,13 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <button class="ghost ib" id="plReload" onclick="loadPlaylists()" title="Recargar la lista de playlists de Spotify (rápido, sin canciones)"></button></h4>
       <div style="padding:0 10px 6px"><select class="plsort" id="plSort" title="Ordenar tus playlists" onchange="setPlSort(this.value)"></select></div>
       <div class="nav" id="plNav"></div>
+      <div class="credit">BrainOrder by <b>@BRAINWASHERDJ</b><br>© @BRAINWASHERDJ · Todos los derechos reservados</div>
     </aside>
     <main id="main"></main>
   </div>
 </div>
 
+<div class="wm big" aria-hidden="true">@BRAINWASHERDJ</div><div class="wm" aria-hidden="true">BrainOrder by @BRAINWASHERDJ</div>
 <div class="modal-bg" id="mbg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 <div id="pvBar"><button class="pvp ib" id="pvPlay" onclick="pvToggle()" title="Reproducir / pausar (barra espaciadora)"></button>
@@ -443,33 +452,48 @@ function fdPlatformOptions(sp){
     ['ninguna', '💻 Ninguna', 'Solo en BrainOrder y tus programas de DJ.', ''],
   ];
 }
+// qué trae de nuevo una playlist de tu programa de DJ (lo que ya está en BrainOrder no se duplica)
+function novTxt(f){
+  if(f.new_count === undefined) return '';
+  const w = f.have_why || {}, parts = [];
+  if(w.ya_en_brainorder) parts.push(`${w.ya_en_brainorder} ya están en tus playlists`);
+  if(w.copia) parts.push(`${w.copia} son copias exactas de archivos que ya tienes`);
+  if(w.misma_cancion) parts.push(`${w.misma_cancion} son la misma canción que ya tienes`);
+  if(w.repetida_en_la_playlist) parts.push(`${w.repetida_en_la_playlist} están repetidas en la propia playlist`);
+  return `<div class="box" style="margin:6px 0 10px">🆕 <b>${f.new_count}</b> ${f.new_count===1?'canción nueva':'canciones nuevas'}`
+    + (f.have_count ? `<br>♻️ <b>${f.have_count}</b> ya las tienes (${parts.join(', ')}): no se copian otra vez, se usa tu archivo de siempre.` : '')
+    + (f.missing ? `<br><span style="color:var(--org)">⚠️ ${f.missing} no están en el disco (Rekordbox las tiene pero el archivo no existe).</span>` : '')
+    + `</div>`;
+}
 async function fdAsk(f, rest){
   if(!FD.data) await fdLoad();
   const sp = (FD.data && FD.data.spotify) || {};
   const opts = fdPlatformOptions(sp), def = opts[0][3] ? 'ninguna' : 'spotify';
   const dj = f.kind === 'dj', n = f.count ?? 0;
-  const what = dj ? `Playlist ${f.new===false?'de':'nueva en'} ${esc(f.label)}: «${esc(f.name)}»` : `Carpeta nueva: «${esc(f.name)}»`;
-  const desc = dj ? `Tiene <b>${n}</b> ${n===1?'canción':'canciones'}. ¿La importo como playlist de BrainOrder?`
+  const ex = dj && f.existing;
+  const what = dj ? (ex ? `Música nueva en «${esc(f.name)}» de ${esc(f.label)}` : `Playlist ${f.new===false?'de':'nueva en'} ${esc(f.label)}: «${esc(f.name)}»`) : `Carpeta nueva: «${esc(f.name)}»`;
+  const desc = dj ? (ex ? `Ya tienes la playlist <b>«${esc(f.existing.name)}»</b> en BrainOrder, así que no creo otra: ¿le sumo la música nueva?`
+                        : `Tiene <b>${n}</b> ${n===1?'canción':'canciones'}. ¿Importo su música nueva como playlist de BrainOrder?`) + novTxt(f)
     : (n ? `Tiene <b>${n}</b> ${n===1?'canción':'canciones'} y todavía no es una playlist. ¿La importo como playlist?`
          : `Está vacía. Si la importo, la playlist se llena sola con lo que vayas poniendo en la carpeta.`);
   FD.cur = f;
   modal(`<h3>${dj?'🎛️':'📁'} ${what}</h3>
     <p>${desc}</p>
     ${dj ? '' : `<div class="art" style="margin:-4px 0 10px">${esc(short(f.path))}</div>`}
-    <div style="font-weight:650;margin:8px 0 6px">¿También en qué plataforma?</div>
+    ${ex ? (f.existing.source==='spotify' ? `<label class="opt" style="display:flex;gap:10px;align-items:center;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="fdSp" checked> Sumarlas también en Spotify (solo las que falten)</label>` : '') : `<div style="font-weight:650;margin:8px 0 6px">¿También en qué plataforma?</div>
     ${opts.map(([v,t,d,dis])=>`<label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:${dis?'not-allowed':'pointer'};opacity:${dis?.5:1}">
       <input type="radio" name="fdp" value="${v}" ${v===def?'checked':''} ${dis?'disabled':''} style="margin-top:3px">
-      <span><b>${t}</b><br><span class="art">${esc(d)}${v==='spotify'&&!n&&!dj?' Se crea vacía: lo que agregues después a la carpeta no pasa solo a Spotify.':''}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}
+      <span><b>${t}</b><br><span class="art">${esc(d)}${v==='spotify'&&!n&&!dj?' Se crea vacía: lo que agregues después a la carpeta no pasa solo a Spotify.':''}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}`}
     ${fdCanMove(f) ? `<div style="font-weight:650;margin:12px 0 6px">¿Paso sus archivos a tu carpeta de playlists?</div>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
-      <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/${esc(f.name)}</code></b><br>
-      <span class="art">Quedan junto a tus otras playlists. ${dj?'Las que ya son de otra de tus playlists se quedan en su carpeta. ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
+      <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/${esc(ex ? f.existing.name : f.name)}</code></b><br>
+      <span class="art">${ex?'Solo las nuevas; ':''}Quedan junto a tus otras playlists. ${dj?'Las que ya son de otra de tus playlists se quedan en su carpeta. ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
       <input type="radio" name="fdm" value="0" style="margin-top:3px"><span><b>No, dejarlos donde están</b></span></label>` : ''}
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="fdDj" ${n?'checked':''}> Pasarla ya a ${dj?'mis otros programas de DJ':'mis programas de DJ (Rekordbox, Traktor…)'}</label>
     ${rest && rest.length ? `<div class="art" style="margin-top:8px">Hay ${rest.length} más por decidir: las ves en «Playlists nuevas».</div>` : ''}
     <div class="actions"><button class="ghost" onclick="fdNever()">No preguntar por esta</button>
-      <button onclick="closeModal()">Ahora no</button><button class="primary" onclick="fdImport()">Importar</button></div>`);
+      <button onclick="closeModal()">Ahora no</button><button class="primary" onclick="fdImport()">${ex?'Sumar lo nuevo':'Importar'}</button></div>`);
 }
 function fdCanMove(f){
   if(f.kind === 'dj') return !!(f.count ?? 0);
@@ -510,17 +534,24 @@ async function fdImport(){
   closeModal();
   toast(plat==='spotify' && !(S.spPause && S.spPause*1000 > Date.now()) ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
   const mv = document.querySelector('input[name=fdm]:checked');
-  const o = {spotify: plat==='spotify', csv: plat==='otra', move: !!(mv && mv.value==='1')};
+  const o = {spotify: f.existing ? !!($('fdSp') && $('fdSp').checked) : plat==='spotify', csv: !f.existing && plat==='otra', move: !!(mv && mv.value==='1')};
   const r = f.kind === 'dj' ? await api().dj_import(f.program, f.ref, o) : await api().folder_import(f.path, o);
   if(!r.ok){ taskErr(r); fdLoad(); return; }
   await applyAnalysis(r); fdLoad();
-  const x = r.result; let msg = `✅ «${esc(x.name)}» ahora es una playlist (${x.files} ${x.files===1?'canción':'canciones'}).`;
+  const x = r.result;
+  if(x.nothing_new){ render(); toast(`Nada nuevo en «${esc(x.name)}»: todas sus canciones ya están en BrainOrder. No se copió ni se creó nada.`); return; }
+  let msg = x.merged_into ? `✅ ${x.files} ${x.files===1?'canción nueva sumada':'canciones nuevas sumadas'} a tu playlist «${esc(x.merged_into)}» (no se creó otra).`
+                          : `✅ «${esc(x.name)}» ahora es una playlist (${x.files} ${x.files===1?'canción':'canciones'}).`;
+  if(x.have_count) msg += `<br>♻️ ${x.have_count} ya las tenías: se usó tu archivo de siempre (nada duplicado).`;
+  if(x.platform_note) msg += `<br>${esc(x.platform_note)}`;
+  if(x.spotify && x.spotify.state==='queued') msg += `<br>⏳ Spotify está en pausa: se suman allá solas en cuanto lo permita.`;
+  else if(x.spotify && x.spotify.state==='ok') msg += `<br>Spotify: ${x.spotify.added||0} agregadas.`;
   if(x.move){ msg += `<br>📁 ${x.move.moved} archivo${x.move.moved!==1?'s':''} pasado${x.move.moved!==1?'s':''} a <code>${esc(short(x.move.dest))}</code>` + (x.move.already?` (${x.move.already} ya estaban ahí)`:'') + '.';
     if(x.move.skipped && x.move.skipped.length) msg += `<br><span style="color:var(--org)">${x.move.skipped.length} no se movieron: ${x.move.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
     if(x.move.op_id) msg += undoLink({op_id: x.move.op_id}); loadHist(); }
   if(x.queued) msg += `<br>⏳ Spotify está en pausa: la paso a Spotify sola en cuanto lo permita${x.queued.until?` (desde las ${new Date(x.queued.until*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})})`:''}. Mientras tanto ya funciona aquí y en tus programas de DJ.`;
   if(x.spotify_reused) msg += `<br>Ya tenías «${esc(x.name)}» en Spotify: usé esa misma playlist (no creé otra).`;
-  if(x.spotify) msg += `<br>Spotify: ${x.spotify.found} canciones${x.spotify_reused?' (solo se agregaron las que faltaban)':' agregadas'}.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
+  if(x.spotify && x.spotify.found !== undefined) msg += `<br>Spotify: ${x.spotify.found} canciones${x.spotify_reused?' (solo se agregaron las que faltaban)':' agregadas'}.` + (x.spotify.unresolved.length ? `<br><span style="color:var(--org)">No encontré ${x.spotify.unresolved.length}: ${x.spotify.unresolved.slice(0,4).map(esc).join(', ')}${x.spotify.unresolved.length>4?'…':''}</span>` : '');
   if(x.csv) msg += `<br>📄 Archivo listo: <code>${esc(base(x.csv))}</code>. Súbelo en <a class="lnk" onclick="openUrl('https://www.tunemymusic.com/transfer/file-to-deezer')">TuneMyMusic</a> o <a class="lnk" onclick="openUrl('https://soundiiz.com')">Soundiiz</a> y elige tu plataforma.`;
   if(r.index !== null && r.index !== undefined){ S.view = 'pl:' + r.index; }
   render(); toast(msg);
@@ -584,8 +615,8 @@ function foldersView(){
   const cnt = n => `${n} ${n===1?'canción':'canciones'}`;
   const nueva = f => f.new ? ' <span class="bdg" style="color:var(--org);border-color:var(--org)">nueva</span>' : '';
   const djRows = (d.dj||[]).map((f,i) => `<tr><td><div><b>${esc(f.name)}</b>${nueva(f)}</div><div class="art">🎛️ Playlist de ${esc(f.label)}</div></td>
-      <td class="mono" style="color:var(--mute)">${cnt(f.count)}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="primary" onclick="fdOpen('dj',${i})">Importar…</button>
+      <td class="mono" style="color:var(--mute)">${cnt(f.count)}${f.new_count!==undefined?`<div class="art">${f.new_count} nuevas${f.existing?` · ya existe en BrainOrder`:''}</div>`:''}</td>
+      <td style="text-align:right;white-space:nowrap"><button class="primary" onclick="fdOpen('dj',${i})">${f.existing?'Sumar lo nuevo…':'Importar…'}</button>
       <button class="ghost" onclick="fdHide('dj',${i})" title="Que no aparezca más aquí">Ocultar</button></td></tr>`).join('');
   const fRows = d.folders.map((f,i) => `<tr><td><div><b>${esc(f.name)}</b>${nueva(f)}</div>
       <div class="art path" onclick="reveal(${jsq(f.path)})">📁 ${esc(short(f.path))}</div></td>
@@ -1894,7 +1925,8 @@ function wizRender(){
     <div class="box">🎛️ Programas de DJ: <b>${dj.join(', ')||'ninguno'}</b> (carpeta «${esc(w.folder_name)}»)</div>
     <div class="box">📂 Música organizada en <code>${esc(short(w.dest_root))}</code><br>⬇ Descargas en <code>${esc(short(w.inbox))}</code><br>🔎 Además busca en ${w.roots.size} carpeta${w.roots.size!==1?'s':''}.</div>
     ${w.spotify&&!CID_RE.test(w.client_id)?'<div class="box warn">Sin Client ID no puedo leer tus playlists de Spotify: puedes ponerlo después en Ajustes.</div>':''}
-    <p class="hint">Al terminar: ${w.spotify&&CID_RE.test(w.client_id)&&!w.connected?'autorizas Spotify en el navegador, luego ':''}traigo tus playlists y le das <b>🔄 Analizar</b> a la que quieras.</p>`; }
+    <p class="hint">Al terminar: ${w.spotify&&CID_RE.test(w.client_id)&&!w.connected?'autorizas Spotify en el navegador, luego ':''}traigo tus playlists y le das <b>🔄 Analizar</b> a la que quieras.</p>
+    <p class="hint" style="opacity:.7">BrainOrder by <b>@BRAINWASHERDJ</b> · © @BRAINWASHERDJ, todos los derechos reservados.</p>`; }
   const err = wizCheck(id);
   modal(`<div class="wiz">${bar}${body}
     <div class="actions">${w.step>0?'<button onclick="wizGo(-1)">Atrás</button>':(S.settings.setup_done?'<button onclick="closeModal()">Cerrar</button>':'')}
@@ -2283,7 +2315,6 @@ async function analyze(){
   await applyAnalysis(r); S.foreign = r.foreign || {};
   render();
   toast(`Análisis listo: faltan <b>${missingUnique().length}</b> canciones y hay <b>${orgCount()}</b> por organizar.` + warnHtml(r), !!(r.warnings||[]).length);
-  askForeign(r.ask_foreign || []);
 }
 let orgPid = null;
 async function loadPlaylists(){
@@ -2293,7 +2324,6 @@ async function loadPlaylists(){
   await applyAnalysis(r); S.foreign = r.foreign || {}; render();
   const pend = r.analysis.filter(p=>p.pending && !p.ignored).length, ch = r.analysis.filter(changed).length;
   toast(`${r.analysis.length} playlists.` + (pend?` <b>${pend}</b> sin analizar.`:'') + (ch?` <b>${ch}</b> cambiaron en Spotify (●).`:'') + ' Elige una y dale <b>🔄 Analizar</b>.' + warnHtml(r), !!(r.warnings||[]).length);
-  askForeign(r.ask_foreign || []);
 }
 async function analyzePlaylist(pid){
   if(running('analyze:'+pid)) return;
@@ -2447,7 +2477,7 @@ function openUrl(u){ api().open_url(u); }
 
 function openSettings(){
   const s = S.settings;
-  modal(`<h3 style="display:flex;align-items:center;gap:8px">Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')}</span>
+  modal(`<h3 style="display:flex;align-items:center;gap:8px">Ajustes <span class="art" style="font-weight:400;font-size:12px">versión ${esc((S.version||{}).version||'?')} · by @BRAINWASHERDJ</span>
       <button class="ghost" style="margin-left:auto;font-size:12.5px" onclick="closeModal();openWizard()">🧭 Asistente de configuración</button></h3>
     <div class="box"><b>App de Spotify:</b> en <code>developer.spotify.com/dashboard</code> crea una app (Web API), agrega como Redirect URI
       <code>${esc(s.redirect_uri)}</code> y pega aquí su Client ID. No necesitas el Client Secret.</div>
@@ -2507,10 +2537,9 @@ window.addEventListener('pywebviewready', async () => {
   try{ api().start_watch(); }catch(e){}
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
-  const pend = Object.entries(S.foreign).filter(([,f]) => (f.choice||'preguntar')==='preguntar').map(([id])=>id);
   S.settings.setup_done = !!st.setup_done;
   if(!st.setup_done){ openWizard(); return; }
-  if(pend.length) askForeign(pend);
+  // las playlists de otros ya no salen en una ventana al abrir: quedan en su sección «Playlists de otros»
 });
 $('mbg').addEventListener('click', e => { if(e.target.id==='mbg') closeModal(); });
 </script>

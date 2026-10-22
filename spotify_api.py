@@ -331,7 +331,7 @@ class Spotify:
                                    f"si sigue, tu app de desarrollador no tiene permiso de escritura. Detalle: {detail}")
             raise SpotifyError(f"Error {e.code} en {method} {url.split('?')[0]}: {detail}")
 
-    def create_playlist(self, name, public=False, description="Creada desde Rekordbox con BrainOrder"):
+    def create_playlist(self, name, public=False, description="Creada desde Rekordbox con BrainOrder by @BRAINWASHERDJ"):
         return self.send("POST", "/me/playlists", {"name": name, "public": public, "description": description})
 
     def rename_playlist(self, pid, name):

@@ -1,5 +1,7 @@
 # BrainOrder
 
+**BrainOrder by @BRAINWASHERDJ** · © 2026 @BRAINWASHERDJ. Todos los derechos reservados ([LICENSE](LICENSE)).
+
 App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playlists (Spotify, Deezer, Apple Music, SoundCloud, Tidal…) con tu música descargada y con tus programas de DJ (Rekordbox, Traktor, Serato, Engine DJ y cualquiera que lea M3U).
 
 - Compara tus playlists de Spotify (y tus Me gusta) con los archivos de tu computador y te dice qué te falta y a qué carpeta va.
@@ -89,6 +91,8 @@ BrainOrder te pregunta si quieres importar como playlist:
 - **Una carpeta nueva** que creas en tu carpeta de playlists o en cualquiera de tus carpetas de música (Ajustes), aunque esté vacía. Espera a que termines de copiar.
 - **Una playlist nueva** que creas en Rekordbox, Engine DJ o Serato (al momento) o en Traktor (cuando lo cierras, que es cuando Traktor guarda), en cuanto tiene canciones.
 
+**Antes de preguntarte, revisa qué es nuevo de verdad** (en playlists de Rekordbox y tus otros programas): canción por canción mira si el archivo ya es de una de tus playlists de BrainOrder, si es una **copia exacta** de uno que ya tienes o si es **la misma canción** (artista + título + versión + duración). Solo te pregunta cuando hay **música nueva**, y te dice cuántas son nuevas y cuántas ya tienes. Lo que ya tienes **no se copia otra vez**: la playlist usa tu archivo de siempre (y la copia no se borra ni se mueve; si quieres limpiarla, usa *Duplicados*). Si ya existe una playlist de BrainOrder con **el mismo nombre** (aunque cambien tildes, emojis o mayúsculas), **no se crea otra**: el botón dice **Sumar lo nuevo** y solo agrega las canciones nuevas a esa playlist (también en Spotify si es de Spotify).
+
 Al importar eliges la plataforma:
 - **Spotify**: crea la playlist buscando cada canción (por ISRC o artista + título) y te dice cuáles no encontró.
 - **Deezer, Apple Music, Tidal, SoundCloud u otra**: esas plataformas no dejan que una app personal cree playlists; BrainOrder deja un `… (para importar).csv` en `_Informes` para subirlo en TuneMyMusic o Soundiiz.
@@ -176,7 +180,7 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 - Para no llegar al límite: «Analizar todo» solo vuelve a leer las playlists que cambiaron en Spotify (y Me gusta solo si cambió), y las consultas van espaciadas.
 
 ## Limitaciones
-- Spotify no deja que apps personales lean canciones de playlists de otras personas. BrainOrder te pregunta si quieres integrarlas; para hacerlo, cópialas en Spotify a una playlist tuya (Seleccionar todo → Añadir a playlist → Nueva playlist).
+- Spotify no deja que apps personales lean canciones de playlists de otras personas. Quedan en la sección **Playlists de otros** (BrainOrder ya no te las pregunta en una ventana al abrir): ahí eliges si las integras; para hacerlo, cópialas en Spotify a una playlist tuya (Seleccionar todo → Añadir a playlist → Nueva playlist).
 - Las pistas nuevas entran a Rekordbox sin analizar: al abrirlo, selecciónalas y analízalas (BPM, waveform).
 
 ## Estructura
@@ -196,3 +200,9 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 | `deezer.py` | Links de Deezer (ISRC o búsqueda) |
 | `reportes.py`, `excel.py` | `.txt` por carpeta e informes Excel |
 | `plataforma.py` | Diferencias entre macOS y Windows |
+| `novedades.py` | Qué es nuevo en una playlist de tu programa de DJ (sin duplicar archivos ni playlists) |
+
+---
+
+## Autor y derechos
+**BrainOrder es de @BRAINWASHERDJ.** © 2026 @BRAINWASHERDJ. Todos los derechos reservados: ver [LICENSE](LICENSE). La firma *BrainOrder by @BRAINWASHERDJ* aparece en la app, en los informes (Excel y `.txt`), en las listas M3U, en la descripción de las playlists que BrainOrder crea en Spotify y en los instaladores. BrainOrder nunca escribe nada dentro de tus archivos de música.
