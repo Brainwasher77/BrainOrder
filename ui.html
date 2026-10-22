@@ -228,7 +228,12 @@ button.xl{border-color:rgba(52,211,153,.45);color:#34d399}
 button.xl:hover{background:rgba(52,211,153,.1);border-color:#34d399}
 #pvBar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:19;display:none;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:8px 12px;box-shadow:0 10px 30px rgba(0,0,0,.45);width:min(760px,calc(100vw - 32px))}
 #pvBar.on{display:flex}
-body.pv-on #main{padding-bottom:90px} body.pv-on .toast{bottom:84px}
+/* con el reproductor abierto, nada queda debajo de él: --pvh es su alto real (lo mide JS) */
+body.pv-on #main{padding-bottom:calc(var(--pvh,64px) + 26px)} body.pv-on .toast{bottom:calc(var(--pvh,64px) + 24px)}
+body.pv-on .modal-bg{padding-bottom:calc(var(--pvh,64px) + 28px)}
+body.pv-on .modal{max-height:calc(100vh - var(--pvh,64px) - 68px)}
+.toast{max-height:calc(100vh - 36px);overflow:auto}
+body.pv-on .toast{max-height:calc(100vh - var(--pvh,64px) - 48px)}
 #pvBar .pvt{flex:1;min-width:0}
 #pvBar .pvt b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
 #pvBar .pvt span{font-size:11.5px;color:var(--mute)}
@@ -684,6 +689,9 @@ function pvToggle(){ const au = $('pvAudio'); if(!au.src) return; au.paused ? au
 function pvJump(d){ const au = $('pvAudio'); if(au.duration) au.currentTime = Math.max(0, Math.min(au.duration - 1, au.currentTime + d)); }
 function pvPct(f){ const au = $('pvAudio'); if(au.duration) au.currentTime = au.duration * f; }
 function pvSeekTo(v){ const au = $('pvAudio'); if(au.duration) au.currentTime = au.duration * v / 1000; }
+// el alto del reproductor cambia (título largo, pantalla angosta): los avisos se ajustan a él
+(function(){ const bar = document.getElementById('pvBar'); if(!bar || !window.ResizeObserver) return;
+  new ResizeObserver(() => { if(bar.offsetHeight) document.body.style.setProperty('--pvh', bar.offsetHeight + 'px'); }).observe(bar); })();
 function pvClose(){ const au = $('pvAudio'); au.pause(); au.removeAttribute('src'); au.load(); PV.key = null; $('pvBar').classList.remove('on'); document.body.classList.remove('pv-on'); pvMark(); }
 function pvMark(){
   const au = $('pvAudio'), playing = au && !au.paused;

@@ -1,5 +1,5 @@
 {
-  "version": "2.18.3",
-  "build": 49,
-  "notes": "Arreglado: las canciones que descargas con los links de BrainOrder ya se reconocen aunque Deezer escriba el nombre distinto que Spotify: se emparejan por su ISRC. También reconoce canciones que ya tenías con otro nombre."
+  "version": "2.18.4",
+  "build": 50,
+  "notes": "Arreglado: con el reproductor abierto, los avisos y ventanas ya no quedan tapados: se ajustan a su tamaño y terminan encima de él."
 }
