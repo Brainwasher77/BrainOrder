@@ -1,5 +1,6 @@
 """Todo lo que cambia entre macOS y Windows, en un solo lugar."""
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,14 +41,22 @@ def rekordbox_dir() -> Path:
 
 
 # ---------------- rutas tal como las guarda Rekordbox ----------------
+def _squash(s: str) -> str:
+    """Barras repetidas -> una. Rekordbox a veces guarda «//Users/...»: es el mismo archivo que «/Users/...»,
+    y sin igualarlas BrainOrder no encontraba la pista al mover el archivo (quedaba «perdida»).
+    En Windows se respeta el «//servidor/carpeta» del comienzo (rutas de red)."""
+    lead = "//" if IS_WIN and s.startswith("//") else ""
+    return lead + re.sub(r"/{2,}", "/", s[len(lead):])
+
+
 def rb_path(p) -> str:
     """Rekordbox guarda rutas con '/', también en Windows (C:/Users/...)."""
-    return str(p).replace("\\", "/")
+    return _squash(str(p).replace("\\", "/"))
 
 
 def native(p) -> str:
     """Ruta de Rekordbox -> ruta del sistema (con '\\' en Windows)."""
-    return os.path.normpath(p) if IS_WIN else str(p)
+    return os.path.normpath(p) if IS_WIN else _squash(str(p))
 
 
 # ---------------- abrir cosas ----------------
@@ -207,6 +216,22 @@ def refresh_launcher(log=print):
 
 
 # ---------------- mover archivos sin riesgo ----------------
+def _move_link(src, dst):
+    """Un acceso directo (symlink) se mueve como acceso directo, apuntando al MISMO archivo de antes.
+    Moverlo tal cual rompía los relativos («../otra carpeta/x.mp3» deja de existir desde la carpeta nueva),
+    y entre discos se copiaba el archivo de verdad y se borraba el acceso: la canción quedaba duplicada."""
+    target = os.readlink(src)
+    real = target if os.path.isabs(target) else os.path.normpath(os.path.join(os.path.dirname(src), target))
+    new_target = real if os.path.isabs(target) else os.path.relpath(real, os.path.dirname(dst))
+    os.symlink(new_target, dst)
+    try:
+        os.unlink(src)
+    except OSError:
+        os.unlink(dst)
+        raise
+    return dst
+
+
 def safe_move(src, dst):
     """Mueve un archivo sin que nunca quede una copia a medias.
 
@@ -220,6 +245,8 @@ def safe_move(src, dst):
     src, dst = str(src), str(dst)
     if os.path.lexists(dst):
         raise FileExistsError(errno.EEXIST, "Ya existe un archivo con ese nombre en el destino", dst)
+    if os.path.islink(src):
+        return _move_link(src, dst)
     try:
         os.rename(src, dst)  # en Windows os.rename no pisa; en Mac ya comprobamos que no existe
         return dst

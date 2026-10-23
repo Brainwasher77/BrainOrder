@@ -7,6 +7,9 @@ Trabajos (SUPPORT/spotify_cola.json):
         mientras tanto vive en BrainOrder como playlist importada sin plataforma.
     {"id", "kind": "add", "name", "path", "pid", "files": [...], "created"}
         agregar a la playlist de Spotify las canciones nuevas de una carpeta vinculada.
+    {"id", "kind": "merge_add", "pid", "name", "uris", "paths", "queries", "local_tracks"}
+        canciones de una playlist fusionada que faltan en la de Spotify. Mientras esperan, local_tracks
+        se muestran en BrainOrder como parte de esa playlist (no desaparecen).
 """
 import json
 import threading
@@ -36,6 +39,23 @@ def add(job):
     with _LOCK:
         jobs = load()
         job = {"id": uuid.uuid4().hex[:10], "created": datetime.now().isoformat(timespec="seconds"), "tries": 0, **job}
+        if job["kind"] == "merge_add":
+            # varias fusiones hacia la misma playlist mientras Spotify está en pausa: se SUMAN (antes la
+            # segunda reemplazaba a la primera y las canciones de la primera nunca llegaban a Spotify)
+            prev = next((j for j in jobs if j.get("kind") == "merge_add" and j.get("pid") == job.get("pid")), None)
+            if prev is not None:
+                for k in ("uris", "paths", "queries", "local_tracks"):
+                    seen = [json.dumps(x, sort_keys=True) for x in prev.get(k) or []]
+                    for x in job.get(k) or []:
+                        if json.dumps(x, sort_keys=True) not in seen:
+                            prev.setdefault(k, []).append(x)
+                            seen.append(json.dumps(x, sort_keys=True))
+                prev["name"] = job.get("name") or prev.get("name")
+                _save(jobs)
+                return prev
+            jobs.append(job)
+            _save(jobs)
+            return job
         # el mismo trabajo dos veces no: se reemplaza por el más nuevo
         same = (lambda j: j.get("kind") == job["kind"] and j.get("name") == job.get("name")
                 and (j.get("entry") or {}) == (job.get("entry") or {}) and j.get("path") == job.get("path"))
@@ -62,3 +82,15 @@ def summary():
     return [{"id": j["id"], "kind": j["kind"], "name": j.get("name"), "created": j.get("created"),
              "error": j.get("error"), "count": len(j.get("files") or []) + len(j.get("uris") or []) + len(j.get("paths") or [])
              + len(j.get("queries") or [])} for j in load()]
+
+
+def pending_tracks(pid):
+    """Canciones fusionadas en esa playlist que todavía no llegaron a Spotify (para mostrarlas igual)."""
+    out, seen = [], set()
+    for j in load():
+        if j.get("kind") == "merge_add" and j.get("pid") == pid:
+            for t in j.get("local_tracks") or []:
+                if t.get("id") and t["id"] not in seen:
+                    seen.add(t["id"])
+                    out.append(t)
+    return out
