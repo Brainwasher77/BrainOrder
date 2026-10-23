@@ -128,6 +128,34 @@ def recent_backup(minutes=60):
     return bool(newest) and (datetime.now() - newest).total_seconds() < minutes * 60
 
 
+def content_by_path(db, path):
+    """La pista de la colección con esa ruta, aunque Rekordbox la haya guardado con barras de más
+    («//Users/...»). Sin esto BrainOrder no la encontraba: al mover el archivo no corregía la ruta (y la
+    canción quedaba perdida) y al sincronizar la agregaba otra vez."""
+    want = rb_path(path)
+    c = db.get_content(FolderPath=want).first()
+    if c is not None or not want.startswith("/"):
+        return c
+    c = db.get_content(FolderPath="/" + want).first()
+    if c is not None:
+        return c
+    try:  # último recurso: cualquier variante con barras repetidas
+        from pyrekordbox.masterdb import models as M
+    except ImportError:  # pyrekordbox 0.4
+        from pyrekordbox.db6 import tables as M
+    name = want.rsplit("/", 1)[-1]
+    import os as _os
+    same = (lambda a, b: a.lower() == b.lower()) if _os.name == "nt" else (lambda a, b: a == b)
+    for x in db.query(M.DjmdContent).filter(M.DjmdContent.FileNameL == name):
+        if x.FolderPath and same(rb_path(x.FolderPath), want):
+            return x
+    if _os.name == "nt":  # Windows: el nombre del archivo pudo cambiar solo de mayúsculas
+        for x in db.query(M.DjmdContent).filter(M.DjmdContent.FileNameL.ilike(name)):
+            if x.FolderPath and same(rb_path(x.FolderPath), want):
+                return x
+    return None
+
+
 def _find_child(db, parent_id, name, attribute):
     for p in db.get_playlist(ParentID=parent_id, Name=name):
         if (p.Attribute or 0) == attribute:
@@ -201,7 +229,7 @@ def sync(analysis, cfg, progress=None):
             for song in list(playlist.Songs):
                 db.remove_from_playlist(playlist, song)
             for r in desired:
-                content = db.get_content(FolderPath=rb_path(r["source"])).first()
+                content = content_by_path(db, r["source"])
                 if content is None:
                     try:
                         content = db.add_content(

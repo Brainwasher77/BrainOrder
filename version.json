@@ -1,5 +1,5 @@
 {
-  "version": "2.19.1",
-  "build": 54,
-  "notes": "Sin Mixed In Key: botón Ocultar para sacar de la lista las que no quieres analizar. Arreglado: los accesos directos rotos ya no cuentan como canciones que tienes, y los WAV/AIFF analizados con un bloque interno raro ya se leen bien."
+  "version": "2.19.2",
+  "build": 55,
+  "notes": "Arreglado: al fusionar con Spotify en pausa las canciones ya no desaparecen (se ven en la otra playlist y varias fusiones se suman en la cola). Arreglado: las pistas que Rekordbox guarda con «//» se corrigen al mover archivos (antes quedaban perdidas). Los accesos directos se mueven sin romperse."
 }

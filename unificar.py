@@ -32,6 +32,36 @@ class UnifyError(Exception):
 
 
 # ---------------------------------------------------------------- Rekordbox (lectura)
+def _pkey(p):
+    """Clave para comparar una ruta de BrainOrder con una de Rekordbox: mismas barras y, en Windows,
+    sin distinguir mayúsculas (C:/Users/Frank y c:\\users\\frank son el mismo archivo)."""
+    return os.path.normcase(native(str(p)))
+
+
+class RbSet(set):
+    """Rutas de la librería de Rekordbox; «ruta in rb» compara con _pkey."""
+    def __init__(self, items=()):
+        super().__init__(_pkey(x) for x in items)
+
+    def __contains__(self, p):
+        return super().__contains__(_pkey(p))
+
+
+class RbIndex(dict):
+    """{ruta: info} de Rekordbox; get / in comparan con _pkey."""
+    def __init__(self, items=()):
+        super().__init__((_pkey(k), v) for k, v in dict(items).items())
+
+    def __contains__(self, p):
+        return super().__contains__(_pkey(p))
+
+    def get(self, p, default=None):
+        return super().get(_pkey(p), default)
+
+    def __getitem__(self, p):
+        return super().__getitem__(_pkey(p))
+
+
 def rb_paths(progress=None):
     """Rutas de las pistas de tu librería de Rekordbox (solo lectura, rápido: una consulta directa).
     Sirve para saber si hay que corregir rutas allá al mover archivos. None si no se puede leer."""
@@ -43,14 +73,14 @@ def rb_paths(progress=None):
             progress("Revisando tu librería de Rekordbox…")
         con = rekordbox_sync.connect_ro()
         try:
-            return {native(r[0]) for r in con.execute(
-                "SELECT FolderPath FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0 AND FolderPath IS NOT NULL")}
+            return RbSet(r[0] for r in con.execute(
+                "SELECT FolderPath FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0 AND FolderPath IS NOT NULL"))
         finally:
             con.close()
     except Exception as e:
         log(f"Rekordbox: lectura rápida falló ({e!r}); uso la completa")
         idx = rb_index(progress)
-        return set(idx) if idx is not None else None
+        return RbSet(idx) if idx is not None else None
 
 
 def rb_index(progress=None):
@@ -81,7 +111,7 @@ def rb_index(progress=None):
         for c in db.get_content():
             if c.FolderPath:
                 out[native(c.FolderPath)] = {"id": c.ID, "playlists": pls.get(c.ID, 0), "cues": cues.get(c.ID, 0)}
-        return out
+        return RbIndex(out)
     finally:
         try:
             db.close()
@@ -418,7 +448,7 @@ def _rb_apply(path_change, dup_of, retired):
     stats = {"paths": 0, "repointed": 0}
     try:
         def content(path):
-            return db.get_content(FolderPath=rb_path(path)).first()
+            return rekordbox_sync.content_by_path(db, path)
 
         pending_anlz = []
 

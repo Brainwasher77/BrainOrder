@@ -961,9 +961,22 @@ class Api:
             if entry["id"] == "liked":
                 entry.update(self._liked_meta(sp))
                 return sp.liked(self._progress)
-            return sp.playlist_tracks(entry["id"], self._progress, entry.get("total"))
+            return self._with_pending(entry["id"], sp.playlist_tracks(entry["id"], self._progress, entry.get("total")))
         m = fuentes.SOURCES[src]
         return m.tracks(self._cfg, entry, self._progress)
+
+    @staticmethod
+    def _with_pending(pid, tracks):
+        """Suma las canciones de una fusión que Spotify todavía no recibió (cola en pausa), para que no
+        parezca que se borraron. Cuando la cola las pasa a Spotify, ya vienen en la lectura normal."""
+        import cola_spotify
+        if tracks is None:
+            return tracks
+        extra = cola_spotify.pending_tracks(pid)
+        if not extra:
+            return tracks
+        have = {t.get("id") for t in tracks}
+        return list(tracks) + [t for t in extra if t.get("id") not in have]
 
     def analyze_playlist(self, pid):
         """Lee de Spotify SOLO esta playlist y la cruza con tus archivos."""
@@ -1016,6 +1029,7 @@ class Api:
                 playlists = [{**p, "source": "spotify"} for p in sp.my_playlists(self._progress, cached)]
                 for p in playlists:
                     p["analyzed_snapshot"] = p.get("snapshot")
+                    p["tracks"] = self._with_pending(p["id"], p.get("tracks"))
                     if p.get("error"):
                         warnings.append(f"Spotify «{p['name']}»: {p.pop('error')} (se mantiene lo último que leí)")
                 if self._cfg.get("include_liked"):
@@ -2009,7 +2023,7 @@ class Api:
                     break  # otra vez en pausa: lo que falta sigue en la cola
                 except SpotifyError as e:
                     tries = int(job.get("tries") or 0) + 1
-                    if tries >= 3:
+                    if tries >= 3 and job["kind"] != "merge_add":  # una fusión se reintenta siempre: si no, se pierde
                         Q.remove(job["id"])
                         failed.append({"name": job["name"], "error": str(e)})
                     else:
@@ -2235,7 +2249,8 @@ class Api:
             return {}
         if k == "merge_add":
             pid = job["pid"]
-            have = {"spotify:track:" + t["id"] for t in self._read_tracks({"id": pid, "name": job["name"], "source": "spotify"})}
+            # lectura directa de Spotify (sin sumar lo pendiente de la cola: eso es justo lo que falta agregar)
+            have = {"spotify:track:" + t["id"] for t in sp.playlist_tracks(pid)}
             uris, unresolved, cache = [], 0, {}
             analysis = self._analysis() or []
             for u in job.get("uris") or []:
@@ -2258,7 +2273,7 @@ class Api:
                     unresolved += 1
             if uris:
                 sp.add_items(pid, uris)
-            tracks = self._read_tracks({"id": pid, "name": job["name"], "source": "spotify"})
+            tracks = sp.playlist_tracks(pid)
 
             def put(data):
                 cur = next((x for x in data["playlists"] if x["id"] == pid), None)
@@ -2268,8 +2283,10 @@ class Api:
             return {"added": len(uris), "unresolved": unresolved}
         raise SpotifyError(f"Trabajo desconocido: {k}")
 
-    def _forget_playlist(self, pid, pl, src, entry, res):
-        """Saca la playlist de BrainOrder y de su plataforma (si se puede)."""
+    def _forget_playlist(self, pid, pl, src, entry, res, into=None):
+        """Saca la playlist de BrainOrder y de su plataforma (si se puede).
+        into=(pid, nombre): se fusionó en esa playlist de Spotify; lo que estaba pendiente de agregarle
+        a esta en Spotify pasa a la otra en vez de perderse."""
         import carpetas_nuevas as CN
         import cola_spotify
         from fuentes import carpetas as FC
@@ -2298,7 +2315,11 @@ class Api:
             deleted.add(pid)
             res["platform_untouched"] = fuentes.SOURCES[src].LABEL if src in fuentes.SOURCES else src
         for j in cola_spotify.load():  # pendientes de esa playlist en la cola: ya no
-            if j.get("local_pid") == pid or (j.get("pid") == pid and j["kind"] != "delete"):
+            if into and j.get("kind") == "merge_add" and j.get("pid") == pid:
+                cola_spotify.remove(j["id"])
+                cola_spotify.add({**{k: v for k, v in j.items() if k not in ("id", "created", "tries", "error")},
+                                  "pid": into[0], "name": into[1]})
+            elif j.get("local_pid") == pid or (j.get("pid") == pid and j["kind"] != "delete"):
                 cola_spotify.remove(j["id"])
         self._cfg["deleted_playlists"] = sorted(deleted)
         names = dict(self._cfg.get("playlist_names") or {})
@@ -2492,7 +2513,14 @@ class Api:
             b_ids = {r["id"] for r in B["tracks"]}
             todo = [r for r in A["tracks"] if r["id"] not in b_ids]
             if sb == "spotify":
-                job = {"kind": "merge_add", "pid": dst_pid, "name": B["name"], "uris": [], "paths": [], "queries": []}
+                cache = self._load_sp()
+                raw_a = next((x.get("tracks") for x in (cache["playlists"] + list(cache.get("foreign_ok") or []))
+                              if x["id"] == src_pid), None) or []
+                raw_b = next((x.get("tracks") for x in cache["playlists"] if x["id"] == dst_pid), None) or []
+                have_b = {t.get("id") for t in raw_b}
+                local = [t for t in raw_a if t.get("id") and t["id"] not in have_b]
+                job = {"kind": "merge_add", "pid": dst_pid, "name": B["name"], "uris": [], "paths": [], "queries": [],
+                       "local_tracks": local}
                 for r in todo:
                     if self._SP_ID.fullmatch(r.get("id") or ""):
                         job["uris"].append("spotify:track:" + r["id"])
@@ -2503,13 +2531,21 @@ class Api:
                                                "isrc": r.get("isrc") or ""})
                 res["spotify"] = self._spotify_do(job)
                 res["count"] = len(todo)
+                if res["spotify"].get("state") == "queued" and local:
+                    # Spotify en pausa: mientras tanto se ven en la playlist destino (con sus archivos)
+                    def put(data, local=local):
+                        cur = next((x for x in data["playlists"] if x["id"] == dst_pid), None)
+                        if cur is not None and cur.get("tracks") is not None:
+                            ids = {t.get("id") for t in cur["tracks"]}
+                            cur["tracks"] = cur["tracks"] + [t for t in local if t.get("id") not in ids]
+                    self._update_sp(put)
             else:
                 paths = [changes.get(r["source"], r["source"]) for r in todo if r.get("source")]
                 FC.remember(dst_pid, paths)
                 res["count"], res["no_file"] = len(paths), len(todo) - len(paths)
             self._set_stage(80, 95)
             res["dj"], res["dj_warnings"] = self._dj_edit({}, [A["name"]])
-            self._forget_playlist(src_pid, A, sa, ea, res)
+            self._forget_playlist(src_pid, A, sa, ea, res, into=(dst_pid, B["name"]) if sb == "spotify" else None)
             if b_folder_pl:  # la playlist de carpeta se relee con sus canciones nuevas
                 meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == dst_pid), None)
                 if meta:

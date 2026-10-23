@@ -326,6 +326,15 @@ def walk_audio(root, excluder=None):
             yield p
 
 
+def _inside_any(path, roots):
+    p = os.path.normcase(os.path.realpath(path))
+    for r in roots:
+        r = os.path.normcase(os.path.realpath(str(r)))
+        if p == r or p.startswith(r.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
 def scan(roots, progress=None, excluder=None):
     files = []
     seen = set()
@@ -342,6 +351,8 @@ def scan(roots, progress=None, excluder=None):
             if key in seen:
                 continue
             seen.add(key)
+            if os.path.islink(key) and _inside_any(os.path.realpath(key), roots):
+                continue  # acceso directo a un archivo que ya se cuenta: no es otra copia de la canción
             p = Path(key)
             a, t = parse_file(p)
             files.append(LocalFile(p, a, t))
