@@ -150,6 +150,15 @@ Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras u
 - **Deshacer en Rekordbox**: la deja como está en su plataforma.
 Mientras no decidas, Organizar no toca esas playlists. Para escribir en Spotify hay que **reconectar Spotify** una vez (permiso de editar playlists). Deezer y los archivos exportados solo se pueden leer.
 
+## Perdidas en Rekordbox
+Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca (por ejemplo, porque se movieron a otra carpeta). Para cada una BrainOrder mira si hay **otra copia en tu colección**:
+- **Copia exacta**: el mismo archivo (mismo tamaño) en otra carpeta.
+- **Misma canción**: mismo ISRC, o mismo título y artista con la misma duración (±4 s).
+- **Otra versión**: mismo título y artista pero otra duración (puede ser otro mix: decides tú).
+- **Sin copia**: no está en ninguna otra parte; no la borres.
+
+**Reemplazar por su copia** cambia cada perdida marcada por su copia dentro de **todas sus playlists**, en la misma posición (si la copia ya estaba en esa playlist, la perdida solo se quita). Rekordbox tiene que estar cerrado; antes se respalda la librería y se puede deshacer en Historial. No se mueve ni se borra ningún archivo de música. Después, en Rekordbox, abre el gestor de archivos perdidos (menú Archivo) y elimina las perdidas: ya no están en ninguna playlist, así que no pierdes nada. Las canciones de un disco externo desconectado no cuentan como perdidas.
+
 ## Duplicados
 Busca archivos repetidos en **toda** tu música: copias idénticas (aunque tengan otro nombre) y la misma canción en otro formato o calidad. Sugiere cuál conservar (cues o playlists en Rekordbox, Mixed In Key, uso en tus playlists, calidad) y tú eliges. Lo apartado va a `_duplicados`, se corrigen las rutas en tus programas de DJ y se puede deshacer en Historial.
 
@@ -206,6 +215,7 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 | `deezer.py` | Links de Deezer (ISRC o búsqueda) |
 | `reportes.py`, `excel.py` | `.txt` por carpeta e informes Excel |
 | `plataforma.py` | Diferencias entre macOS y Windows |
+| `rb_perdidas.py` | Canciones perdidas en Rekordbox y su copia en la colección |
 | `novedades.py` | Qué es nuevo en una playlist de tu programa de DJ (sin duplicar archivos ni playlists) |
 
 ---

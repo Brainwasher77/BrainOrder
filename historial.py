@@ -51,6 +51,34 @@ def record(kind, label, moves, extra=None):
     return op["id"]
 
 
+def record_rb(kind, label, changes, sample=None, extra=None):
+    """Operación que solo cambia la librería de Rekordbox (sin mover archivos). changes: lista para deshacer."""
+    if not changes:
+        return None
+    op = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}", "time": datetime.now().isoformat(timespec="seconds"),
+          "kind": kind, "label": label, "moves": [], "rb": changes, "sample": list(sample or [])[:3], "undone": None,
+          **(extra or {})}
+    with _LOCK:
+        _save(op)
+        ops = sorted(DIR.glob("*.json"))
+        for old in ops[:-KEEP]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    return op["id"]
+
+
+def mark_undone(op_id, info=None):
+    op = get(op_id)
+    if op:
+        op["undone"] = datetime.now().isoformat(timespec="seconds")
+        if info:
+            op["undo_info"] = info
+        with _LOCK:
+            _save(op)
+
+
 def get(op_id):
     try:
         return json.loads(_path(op_id).read_text("utf-8"))
@@ -66,6 +94,11 @@ def list_ops(limit=30):
         try:
             op = json.loads(f.read_text("utf-8"))
         except Exception:
+            continue
+        if op.get("rb") is not None:  # solo cambios en Rekordbox
+            n = len(op["rb"])
+            out.append({k: op.get(k) for k in ("id", "time", "kind", "label", "undone")} |
+                       {"count": n, "ready": n, "rb": True, "sample": op.get("sample") or []})
             continue
         moves = op.get("moves") or []
         # cuántos se podrían devolver ahora mismo

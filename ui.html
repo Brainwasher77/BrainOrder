@@ -291,6 +291,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
         <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
+        <a data-v="rblost" onclick="show('rblost')"><div class="row"><span class="name">Perdidas en Rekordbox</span><span class="cnt mono" id="nLost">–</span></div></a>
         <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="folders" onclick="show('folders')"><div class="row"><span class="name">Playlists nuevas</span><span class="cnt mono" id="nFolders">–</span></div></a>
@@ -1243,6 +1244,7 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  if($('nLost')) $('nLost').innerHTML = LO.data ? (LO.data.items.length ? `<span style="color:var(--org)">${LO.data.items.length}</span>` : '0') : '–';
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
   { const n = mikRows().length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
@@ -1287,6 +1289,7 @@ function renderMain(){
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
+  if(S.view==='rblost'){ m.innerHTML = lostView(); lostSum(); return; }
   if(S.view==='mik' && S.analysis){ m.innerHTML = mikView(); mikSum(); return; }
   if(S.view==='cmp' && S.analysis){ m.innerHTML = cmpView(); return; }
   if(!anySource() && !S.analysis){
@@ -1759,7 +1762,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -2076,6 +2079,85 @@ function rbView(){
     + `<div class="rbar"><span class="art" style="flex:1">Al buscar en Spotify se usa la canción de tus playlists, el ISRC del archivo o artista + título (con la misma duración). Lo que no encuentre te lo digo.</span>
         <button class="primary" ${running('rb_apply')?'disabled':''} onclick="rbApply()">${running('rb_apply')?'Aplicando…':'Aplicar'}</button></div>` + keepBox;
 }
+// ---------- canciones perdidas en Rekordbox ----------
+// LO.data: {items:[{id,path,title,artist,len,cues,pls,pids,kind,copy}], total, offline, summary, in_playlists}
+let LO = {data:null, err:null, loading:false, sel:new Set(), kind:'', q:''};
+const LOST_KIND = {exacta:['Copia exacta','var(--ok)','El mismo archivo (mismo tamaño) está en otra carpeta de tu colección.'],
+  misma:['Misma canción','var(--ok)','Mismo ISRC, o mismo título y artista con la misma duración.'],
+  version:['Otra versión','var(--org)','Mismo título y artista pero otra duración: puede ser otro mix. Decide tú.'],
+  sin:['Sin copia','var(--miss)','No está en ninguna otra parte de tu colección. No la borres: búscala o vuelve a descargarla.']};
+async function lostLoad(){
+  if(LO.loading) return; LO.loading = true; LO.err = null; if(S.view==='rblost') renderMain();
+  try{ const r = await api().rb_lost();
+    if(r.ok){ LO.data = r; LO.sel = new Set(r.items.filter(x => x.pids.length && x.copy && (x.kind==='exacta' || x.kind==='misma')).map(x => x.id)); }
+    else { LO.err = r.error; } }
+  catch(e){ LO.err = String(e); }
+  LO.loading = false; render();
+}
+function lostVisible(){
+  const q = (LO.q||'').toLowerCase();
+  return (LO.data ? LO.data.items : []).filter(x => (!LO.kind || x.kind===LO.kind) && (!q || (x.title+' '+x.artist+' '+x.pls.join(' ')).toLowerCase().includes(q)));
+}
+function lostView(){
+  const head = `<div class="vhead"><h2>🎛️ Perdidas en Rekordbox</h2>
+    <span class="sub">Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca. Para cada una miro si hay <b>otra copia</b> en tu colección y la pongo en su lugar dentro de tus playlists, así puedes eliminar las perdidas sin que ninguna playlist pierda canciones.</span>
+    <div class="sp"><button onclick="lostLoad()" ${LO.loading?'disabled':''}>⟳ Revisar</button></div></div>`;
+  if(!LO.data) return head + `<div class="empty"><p>${LO.err ? esc(LO.err) : 'Leyendo tu colección de Rekordbox…'}</p></div>`;
+  const d = LO.data, sm = d.summary, all = d.items;
+  if(!all.length) return head + `<div class="empty"><h3>No hay canciones perdidas 🎉</h3><p>Todas las canciones de tu colección (${d.total}) tienen su archivo.</p></div>`;
+  const rows = lostVisible(), withCopy = sm.exacta + sm.misma;
+  const tb = rows.slice(0, 500).map(x => { const k = LOST_KIND[x.kind], can = !!(x.copy && x.pids.length);
+    return `<tr><td style="width:30px">${can ? `<input type="checkbox" data-i="${esc(x.id)}" ${LO.sel.has(x.id)?'checked':''} onchange="this.checked?LO.sel.add(this.dataset.i):LO.sel.delete(this.dataset.i);lostSum()">` : ''}</td>
+      <td><div>${esc(x.title)}</div><div class="art">${esc(x.artist)}${x.len?` · ${pvFmt(x.len)}`:''}${x.cues?` · ${x.cues} cues`:''}</div>
+        <div class="art path" title="${esc(x.path)}" style="color:var(--mute)">✗ ${esc(x.path)}</div></td>
+      <td><span class="chip" style="cursor:default;color:${k[1]}" title="${esc(k[2])}">${k[0]}</span></td>
+      <td>${x.pls.slice(0,3).map(n=>`<span class="chip" style="cursor:default">♫ ${esc(n)}</span>`).join('')}${x.pls.length>3?`<span class="art">+${x.pls.length-3}</span>`:''}${!x.pls.length?'<span class="art">ninguna</span>':''}</td>
+      <td>${x.copy ? `<div class="art path" onclick="reveal(${jsq(x.copy.path)})" title="${esc(x.copy.path)}">✓ ${esc(base(x.copy.path))}</div>
+        <div class="art">${x.copy.len?pvFmt(x.copy.len):''}${x.copy.cues?` · ${x.copy.cues} cues`:''}${x.copy.cues < x.cues ? ` <span style="color:var(--org)">(menos cues)</span>`:''}</div>` : '<span class="art">—</span>'}</td></tr>`; }).join('');
+  const sinL = all.filter(x => x.kind==='sin' || x.kind==='version');
+  return head + `<div class="cards" style="grid-template-columns:repeat(4,1fr)">
+      <div class="card"><div class="k">Perdidas</div><div class="v" style="color:var(--org)">${all.length}</div></div>
+      <div class="card"><div class="k">Con copia en la colección</div><div class="v" style="color:var(--ok)">${withCopy}</div></div>
+      <div class="card"><div class="k">Dentro de playlists</div><div class="v">${d.in_playlists}</div></div>
+      <div class="card"><div class="k">Sin copia / otra versión</div><div class="v" style="color:${sm.sin?'var(--miss)':'var(--text)'}">${sm.sin} / ${sm.version}</div></div></div>
+    ${d.offline ? `<div class="art" style="margin:-4px 0 10px">${d.offline} canción(es) están en un disco que no está conectado: no cuentan como perdidas.</div>` : ''}
+    <div class="box" style="margin-bottom:10px"><b>Cómo va:</b> 1) <b>Reemplazar</b> cambia cada perdida marcada por su copia en todas sus playlists (misma posición; si la copia ya estaba en esa playlist, la perdida solo se quita). Antes respaldo la librería y se puede deshacer en Historial.
+      2) Después, en Rekordbox abre el <b>gestor de archivos perdidos</b> (menú <b>Archivo</b>; en inglés «Missing File Manager»), selecciónalas y <b>Eliminar</b>. Ya no estarán en ninguna playlist, así que no pierdes nada.
+      ${sinL.length ? `<br><span style="color:var(--org)">Al eliminar en Rekordbox <b>no</b> selecciones estas ${sinL.length}: ${sinL.slice(0,6).map(x=>esc(x.artist+' – '+x.title)).join(' · ')}${sinL.length>6?' …':''}</span>` : ''}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select onchange="LO.kind=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit">
+        <option value="">Todas (${all.length})</option>${Object.keys(LOST_KIND).map(k=>`<option value="${k}" ${LO.kind===k?'selected':''}>${LOST_KIND[k][0]} (${sm[k]})</option>`).join('')}</select>
+      <input placeholder="Buscar…" value="${esc(LO.q)}" oninput="LO.q=this.value; clearTimeout(LO.t); LO.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
+      <button class="ghost" onclick="lostAll(true)">Marcar las de la lista</button><button class="ghost" onclick="lostAll(false)">Ninguna</button>
+      <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reemplazar por su copia</button></div>
+    ${rows.length ? `<table><tr><th></th><th>Perdida</th><th>¿Tiene copia?</th><th>Playlists</th><th>Copia que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro, también las que no se ven.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function lostSum(){
+  const n = LO.sel.size, b = $('loGo');
+  if(b){ b.disabled = !n || running('rb_lost_replace'); b.textContent = running('rb_lost_replace') ? 'Reemplazando…' : n ? `Reemplazar ${n} por su copia` : 'Reemplazar por su copia'; }
+}
+function lostAll(on){ lostVisible().forEach(x => { if(x.copy && x.pids.length){ on ? LO.sel.add(x.id) : LO.sel.delete(x.id); } }); renderMain(); }
+function lostAsk(){
+  const n = LO.sel.size; if(!n) return;
+  const items = LO.data.items.filter(x => LO.sel.has(x.id)), ver = items.filter(x => x.kind==='version').length;
+  const pls = new Set(items.flatMap(x => x.pls));
+  modal(`<h3>Reemplazar ${n} ${n===1?'perdida':'perdidas'} por su copia</h3>
+    <p>En <b>${pls.size}</b> playlist${pls.size!==1?'s':''} de Rekordbox, cada perdida pasa a ser la copia que sí tienes, en la misma posición. Las perdidas quedan fuera de toda playlist para que las elimines tranquilo en Rekordbox.</p>
+    ${ver ? `<div class="box warn">${ver} ${ver===1?'es':'son'} <b>otra versión</b> (otra duración). Revisa que sea la que quieres en esas playlists.</div>` : ''}
+    <div class="box">Rekordbox tiene que estar cerrado. Respaldo la librería antes y se puede deshacer en Historial. No se mueve ni se borra ningún archivo de música.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="lostGo()">Reemplazar ${n}</button></div>`);
+}
+async function lostGo(){
+  closeModal(); const ids = [...LO.sel];
+  setTimeout(()=>{ if(S.view==='rblost') renderMain(); }, 150);
+  const r = await api().rb_lost_replace(ids);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  const st = r.stats || {};
+  loadHist();
+  toast(`✅ <b>${st.tracks||0}</b> ${st.tracks===1?'perdida reemplazada':'perdidas reemplazadas'} por su copia (${st.repointed||0} en playlists${st.removed?`, ${st.removed} quitadas porque la copia ya estaba`:''}).
+    <br>Ahora en Rekordbox: <b>Archivo → gestor de archivos perdidos</b> y elimínalas.` + undoLink(r));
+  LO.data = null; lostLoad();
+}
 function c0src(c){ return c.type==='created' && !c.source ? 'nueva' : (SRC_NAME[c.source]||c.source||''); }
 async function rbApply(){
   setTimeout(()=>{ if(S.view==='rbchg') render(); }, 120);
@@ -2192,7 +2274,7 @@ async function dupApply(){
 }
 
 // ---------- historial y deshacer ----------
-const KIND = {organize:'⬇ Organizar', relocate:'📂 Reorganizar', unify:'🧹 Unificar'};
+const KIND = {organize:'⬇ Organizar', relocate:'📂 Reorganizar', unify:'🧹 Unificar', rb_lost:'🎛️ Perdidas en Rekordbox'};
 async function loadHist(){ try{ const r = await api().history(); S.hist = r.ops||[]; if(S.view==='hist') render(); else paintNav(); }catch(e){} }
 function paintNav(){ const el=$('nHist'); if(el) el.textContent = (S.hist||[]).filter(o=>!o.undone).length || '–'; }
 function histView(){
@@ -2204,15 +2286,17 @@ function histView(){
       return `<div class="cx" style="${o.undone?'opacity:.55':''}"><div class="cxh"><b>${esc(KIND[o.kind]||o.kind)}</b>
         <span class="tag">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
         ${o.undone?'<span class="art">deshecho</span>':`<button ${o.ready&&!busyK?'':'disabled'} onclick="askUndo(${jsq(o.id)})">${busyK?'Deshaciendo…':'↩ Deshacer'}</button>`}</div>
-        <div>${esc(o.label)} · <b>${o.count}</b> archivo${o.count!==1?'s':''}${!o.undone&&o.ready<o.count?` <span class="art">(${o.ready} se pueden devolver; los demás cambiaron desde entonces)</span>`:''}</div>
+        <div>${esc(o.label)} · <b>${o.count}</b> ${o.rb?(o.count!==1?'cambios en playlists':'cambio en playlist'):('archivo'+(o.count!==1?'s':''))}${!o.undone&&o.ready<o.count?` <span class="art">(${o.ready} se pueden devolver; los demás cambiaron desde entonces)</span>`:''}</div>
         <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.sample.map(esc).join(' · ')}${o.count>o.sample.length?' …':''}</div></div>`; }).join('')
       : '<div class="hint">Todavía no has movido archivos con BrainOrder.</div>'}</div>`;
 }
 function askUndo(id){
   const o = (S.hist||[]).find(x=>x.id===id); if(!o) return;
   modal(`<h3>Deshacer «${esc(o.label)}»</h3>
-    <p>Se devuelven <b>${o.ready}</b> archivo${o.ready!==1?'s':''} a donde estaban y se corrigen sus rutas en tus programas de DJ (con respaldo).</p>
-    <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que BrainOrder creó se quedan; solo cambian las rutas.</div>
+    ${o.rb ? `<p>Cada playlist vuelve a tener la entrada perdida en lugar de su copia, en la misma posición (con respaldo).</p>
+    <div class="box">Rekordbox tiene que estar cerrado. Si ya eliminaste alguna perdida de la colección en Rekordbox, esa no se puede devolver y se salta.</div>`
+    : `<p>Se devuelven <b>${o.ready}</b> archivo${o.ready!==1?'s':''} a donde estaban y se corrigen sus rutas en tus programas de DJ (con respaldo).</p>
+    <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que BrainOrder creó se quedan; solo cambian las rutas.</div>`}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();undoOp(${jsq(id)})">Deshacer</button></div>`);
 }
 async function undoOp(id){
@@ -2223,7 +2307,8 @@ async function undoOp(id){
   await applyAnalysis(r);
   try{ const st = await api().get_state(S.rev ?? null); S.inboxCount = st.inbox_count || 0; }catch(e){}
   render();
-  let msg = `↩ <b>${r.restored}</b> archivo${r.restored!==1?'s':''} devuelto${r.restored!==1?'s':''} a su lugar.`;
+  let msg = r.rb_only ? `↩ <b>${r.restored}</b> entrada${r.restored!==1?'s':''} de playlist devuelta${r.restored!==1?'s':''} en Rekordbox.` : `↩ <b>${r.restored}</b> archivo${r.restored!==1?'s':''} devuelto${r.restored!==1?'s':''} a su lugar.`;
+  if(r.rb_only) LO.data = null;
   if(r.skipped.length) msg += `<br><span style="color:var(--org)">${r.skipped.length} se saltaron: ${r.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}${r.skipped.length>2?'…':''}</span>`;
   if(r.rekordbox) msg += `<br>Rekordbox: ${r.rekordbox.paths} rutas corregidas.`;
   for(const [k,v] of Object.entries(r.dj||{})) msg += `<br>${esc(DJ_LABEL[k]||k)}: ${v.refs} referencias corregidas.`;

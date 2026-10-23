@@ -1,5 +1,5 @@
 {
-  "version": "2.18.6",
-  "build": 52,
-  "notes": "Arreglado: «Con Mixed In Key» en Estadísticas mostraba «undefined». Si tienes varias copias de una canción, BrainOrder usa la que ya analizó Mixed In Key."
+  "version": "2.19.0",
+  "build": 53,
+  "notes": "Nuevo: «Perdidas en Rekordbox». Te dice qué canciones perdidas tienen otra copia en tu colección y las reemplaza por esa copia en todas sus playlists (con respaldo y deshacer), para que puedas eliminarlas en Rekordbox sin vaciar ninguna playlist."
 }
