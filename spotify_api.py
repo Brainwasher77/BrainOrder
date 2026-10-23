@@ -59,7 +59,9 @@ def _hora(epoch):
 def _pause_error(until):
     mins = max(1, round((until - time.time()) / 60))
     when = f"{mins} min" if mins < 90 else f"{mins // 60} h {mins % 60:02d} min"
-    return SpotifyPaused(f"Spotify puso a tu app en pausa por exceso de consultas hasta las {_hora(until)} (faltan {when}). "
+    why = ("Tu app de Spotify agotó su cuota (en modo desarrollo Spotify limita cuántas consultas hace al día cada cuenta de desarrollador)"
+           if pause_reason() == "quota" else "Spotify puso a tu app en pausa por exceso de consultas")
+    return SpotifyPaused(f"{why} hasta las {_hora(until)} (faltan {when}). "
                          "Mientras tanto BrainOrder usa lo último que leyó de Spotify; Deezer, archivos y todo lo demás siguen funcionando.")
 
 
@@ -102,20 +104,55 @@ def _urlopen(req, timeout=30, tries=3):
             raise SpotifyError(f"No pude conectar con Spotify. Revisa tu conexión a internet. ({e})")
 
 
+def _body(e):
+    """Cuerpo de la respuesta de error (se lee una sola vez y se guarda)."""
+    if not hasattr(e, "_bo_body"):
+        try:
+            e._bo_body = e.read().decode(errors="ignore")
+        except Exception:
+            e._bo_body = ""
+    return e._bo_body
+
+
+def pause_reason():
+    try:
+        return json.loads(PAUSE_FILE.read_text("utf-8")).get("reason") or ""
+    except Exception:
+        return ""
+
+
 def _retry_after(e):
     try:
         secs = int(e.headers.get("Retry-After", "2"))
     except (TypeError, ValueError):
         secs = 2
+    # desde julio de 2026 Spotify distingue la CUOTA de las apps en modo desarrollo (por cuenta de
+    # desarrollador, se recupera con el tiempo) del límite normal de velocidad
+    quota = "QUOTA_EXCEEDED" in _body(e)
+    if quota:
+        secs = max(secs, 600)
     if secs > 30:
         until = time.time() + secs
         try:
-            PAUSE_FILE.write_text(json.dumps({"until": until}), "utf-8")
+            PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PAUSE_FILE.write_text(json.dumps({"until": until, "reason": "quota" if quota else "rate"}), "utf-8")
         except OSError:
             pass
-        log(f"Spotify: pausa por exceso de consultas ({secs} s, hasta {_hora(until)})")
+        log(f"Spotify: {'cuota de la app agotada' if quota else 'pausa por exceso de consultas'} ({secs} s, hasta {_hora(until)})")
         raise _pause_error(until)
     time.sleep(secs + 1)
+
+
+def _forbidden(detail):
+    """Explica un 403 de Spotify en palabras."""
+    d = (detail or "").lower()
+    if "premium" in d:
+        return ("Spotify exige que la cuenta dueña de tu app de desarrollador tenga Premium activo "
+                "(norma de febrero de 2026). Si Premium se venció, la app deja de funcionar hasta renovarlo.")
+    if "not registered" in d or "user may not be registered" in d or "developer dashboard" in d:
+        return ("Tu cuenta de Spotify no está en la lista de usuarios de tu app. En developer.spotify.com/dashboard → "
+                "tu app → User Management, agrega el correo de tu cuenta de Spotify.")
+    return None
 
 
 class Spotify:
@@ -278,7 +315,10 @@ class Spotify:
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
                 return self.get(path_or_url, params, _retry - 1)
-            raise SpotifyError(f"Error {e.code} en {url.split('?')[0]}: {e.read().decode(errors='ignore')[:200]}")
+            detail = _body(e)
+            if e.code == 403 and _forbidden(detail):
+                raise SpotifyError(_forbidden(detail))
+            raise SpotifyError(f"Error {e.code} en {url.split('?')[0]}: {detail[:200]}")
 
     def paged(self, path, params, on_page=None):
         data = self.get(path, params)
@@ -297,6 +337,44 @@ class Spotify:
 
     def me(self):
         return self.get("/me")
+
+    def diagnose(self, force=False):
+        """Una sola consulta a Spotify para saber exactamente qué pasa. -> {state, msg, ...}"""
+        if not self.client_id:
+            return {"state": "no_client", "msg": "Falta el Client ID de tu app de Spotify (Ajustes)."}
+        if not self.connected:
+            return {"state": "no_login", "msg": "No has conectado tu cuenta de Spotify: toca «Conectar Spotify»."}
+        until = paused_until()
+        if until and not force:
+            return {"state": "paused", "reason": pause_reason(), "until": until, "msg": str(_pause_error(until))}
+        if force:
+            try:
+                PAUSE_FILE.unlink()
+            except OSError:
+                pass
+        try:
+            access = self._access()
+        except SpotifyError as e:
+            return {"state": "token", "msg": str(e)}
+        req = urllib.request.Request(API + "/me", headers={"Authorization": f"Bearer {access}"})
+        try:
+            with _urlopen(req, timeout=20) as r:
+                me = json.loads(r.read())
+            return {"state": "ok", "user": me.get("display_name") or me.get("id"),
+                    "msg": f"Spotify responde bien: conectado como {me.get('display_name') or me.get('id')}."}
+        except urllib.error.HTTPError as e:
+            body = _body(e)
+            if e.code == 429:
+                try:
+                    _retry_after(e)
+                    return {"state": "rate", "msg": "Spotify pidió esperar unos segundos. Vuelve a probar."}
+                except SpotifyPaused as p:
+                    return {"state": "paused", "reason": pause_reason(), "until": paused_until(), "msg": str(p)}
+            if e.code == 403:
+                return {"state": "forbidden", "msg": _forbidden(body) or f"Spotify no deja usar tu app (403): {body[:200]}"}
+            return {"state": "error", "msg": f"Spotify respondió {e.code}: {body[:200]}"}
+        except SpotifyError as e:
+            return {"state": "network", "msg": str(e)}
 
     # ---------- escribir (Rekordbox -> Spotify) ----------
     @property
@@ -325,7 +403,9 @@ class Spotify:
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
                 return self.send(method, path, body, _retry - 1)
-            detail = e.read().decode(errors="ignore")[:200]
+            detail = _body(e)[:200]
+            if e.code == 403 and _forbidden(detail):
+                raise SpotifyError(_forbidden(detail))
             if e.code == 403:
                 raise SpotifyError("Spotify no dejó modificar (403). Reconecta Spotify para dar permiso de edición; "
                                    f"si sigue, tu app de desarrollador no tiene permiso de escritura. Detalle: {detail}")
@@ -474,7 +554,10 @@ class Spotify:
         return tracks
 
     def try_foreign(self, pid):
-        """Intenta leer una playlist ajena. Devuelve lista de tracks o None si Spotify no lo permite."""
+        """Intenta leer una playlist ajena. Devuelve lista de tracks o None si Spotify no lo permite.
+        Desde febrero de 2026 Spotify ya no da las canciones de playlists que no son tuyas: no se pregunta
+        (cada intento gastaba consultas de la cuota)."""
+        return None
         try:
             tracks = []
             for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"}):

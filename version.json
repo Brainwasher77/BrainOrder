@@ -1,5 +1,5 @@
 {
-  "version": "2.19.2",
-  "build": 55,
-  "notes": "Arreglado: al fusionar con Spotify en pausa las canciones ya no desaparecen (se ven en la otra playlist y varias fusiones se suman en la cola). Arreglado: las pistas que Rekordbox guarda con «//» se corrigen al mover archivos (antes quedaban perdidas). Los accesos directos se mueven sin romperse."
+  "version": "2.18.7",
+  "build": 53,
+  "notes": "Nuevo: Conexiones → «Probar Spotify» dice exactamente por qué Spotify no carga (cuota agotada, pausa, Premium, usuario no registrado o sesión vencida) y deja reintentar. Gasta menos consultas: ya no intenta leer playlists de otros."
 }

@@ -674,6 +674,16 @@ class Api:
         return res
 
     # ---------- Spotify ----------
+    def spotify_check(self, force=False):
+        """Diagnóstico de Spotify: una sola consulta y el motivo exacto si algo falla.
+        force=True: quita la pausa guardada y vuelve a preguntarle a Spotify."""
+        try:
+            r = self._sp().diagnose(bool(force))
+        except Exception as e:
+            r = {"state": "error", "msg": str(e)}
+        config.log(f"Diagnóstico de Spotify: {r.get('state')} — {r.get('msg')}")
+        return {"ok": True, **r, "paused": spotify_api.paused_until()}
+
     def connect(self):
         def run():
             me = self._sp().login()
