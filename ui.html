@@ -1673,6 +1673,26 @@ async function checkUpdates(){
   }catch(e){}
 }
 // botón de Ajustes: revisa ya mismo si hay versión nueva (y la baja para instalarla al reiniciar)
+// diagnóstico de Spotify: qué responde exactamente y qué hacer
+async function spCheck(force){
+  toast(force ? 'Volviendo a preguntarle a Spotify…' : 'Probando Spotify…');
+  const r = await api().spotify_check(!!force);
+  const hora = r.until ? new Date(r.until*1000).toLocaleString('es',{weekday:'short',hour:'2-digit',minute:'2-digit'}) : '';
+  const que = {
+    ok: '✅ Spotify funciona. Dale <b>Analizar todo</b> (solo relee las playlists que cambiaron).',
+    paused: r.reason==='quota'
+      ? `Tu app de desarrollador gastó las consultas que Spotify le permite (en modo desarrollo la cuota es por cuenta de desarrollador). Se recupera sola${hora?` hacia ${esc(hora)}`:''}. Mientras tanto BrainOrder trabaja con lo último que leyó.<br><br>Para no tener que esperar: exporta tus playlists a CSV con <a class="lnk" onclick="openUrl('https://exportify.net')">Exportify</a> o TuneMyMusic y ponlas en <b>Conexiones → Archivos exportados</b>.`
+      : `Spotify pidió no consultar${hora?` hasta ${esc(hora)}`:''}. Si ya pasó mucho rato, toca <b>Reintentar ahora</b>.`,
+    forbidden: 'Arréglalo en developer.spotify.com/dashboard y vuelve a probar.',
+    token: 'Toca <b>Conectar Spotify</b> para entrar de nuevo.',
+    no_login: '', no_client: '', network: '', error: 'Mándame este mensaje tal cual y lo reviso.'
+  }[r.state] || '';
+  modal(`<h3>🩺 Spotify: ${r.state==='ok'?'funciona':'no está respondiendo'}</h3>
+    <div class="box">${esc(r.msg||'')}</div>${que?`<p style="margin-top:10px">${que}</p>`:''}
+    <div class="actions">${r.state==='paused'?'<button onclick="closeModal();spCheck(true)">Reintentar ahora</button>':''}
+      ${['token','no_login'].includes(r.state)?'<button onclick="closeModal();connect()">Conectar Spotify</button>':''}
+      <button class="primary" onclick="closeModal()">Listo</button></div>`);
+}
 async function checkUpdatesNow(){
   const b = $('btnUpd'); if(b){ b.disabled = true; b.textContent = '⏳ Buscando…'; }
   let r = null;
@@ -1812,7 +1832,7 @@ function connView(){
   <section><h3>🎧 Fuentes de playlists</h3>
     <div class="cx"><div class="cxh"><b>Spotify</b><span class="tag ${S.connected?'ok':''}">${S.connected?'conectado':'sin conectar'}</span>${tog(c.spotify.enabled,"CX.spotify.enabled=this.checked;cxDirty()")}</div>
       <div class="hint">Tus playlists y Me gusta. Necesita el Client ID de tu app de desarrollador (Ajustes).
-        <div style="margin-top:8px"><button onclick="connect()">${S.connected?'Desconectar':'Conectar Spotify'}</button> <button class="ghost" onclick="openSettings()">Ajustes de Spotify</button></div></div></div>
+        <div style="margin-top:8px"><button onclick="connect()">${S.connected?'Desconectar':'Conectar Spotify'}</button> <button class="ghost" onclick="openSettings()">Ajustes de Spotify</button> <button class="ghost" onclick="spCheck()">🩺 Probar Spotify</button></div></div></div>
 
     <div class="cx"><div class="cxh"><b>Deezer</b><span class="tag">sin login</span>${tog(c.deezer.enabled,"CX.deezer.enabled=this.checked;cxDirty();render()")}</div>
       ${c.deezer.enabled?`<label class="f">Tu perfil (link o número) — trae tus playlists públicas</label>
