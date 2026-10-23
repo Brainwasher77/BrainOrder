@@ -319,6 +319,8 @@ def walk_audio(root, excluder=None):
             if fn.startswith(".") or os.path.splitext(fn)[1].lower() not in AUDIO_EXT:
                 continue
             p = os.path.join(dirpath, fn)
+            if not os.path.isfile(p):
+                continue  # acceso directo roto: el archivo ya no existe
             if excluder and excluder.file_excluded(p, duration):
                 continue
             yield p
