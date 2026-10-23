@@ -1283,6 +1283,8 @@ class Api:
                 raise unificar.UnifyError("No encontré esa operación en el historial.")
             if op.get("undone"):
                 raise unificar.UnifyError("Esa operación ya se deshizo.")
+            if op.get("rb") is not None:
+                return self._undo_rb(op)
             todo, skipped = historial.plan_undo(op)
             if not todo:
                 return {"restored": 0, "skipped": skipped, "analysis": None}
@@ -1320,6 +1322,37 @@ class Api:
             return {"restored": len(done), "skipped": skipped, "rekordbox": rb_stats, "dj": dj,
                     "warnings": warnings, "analysis": analysis}
         return self._task(run, f"undo:{op_id}", f"Deshacer «{label}»", files=True)
+
+    def _undo_rb(self, op):
+        """Deshace una operación que solo cambió la librería de Rekordbox."""
+        import rb_perdidas
+        if rekordbox_sync.rekordbox_running():
+            raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a deshacer.")
+        try:
+            from pyrekordbox import MasterDatabase as DB
+        except ImportError:  # pragma: no cover
+            from pyrekordbox import Rekordbox6Database as DB
+        bk = rekordbox_sync.backup().name
+        db = DB(path=rekordbox_sync.RB_DIR / "master.db")
+        try:
+            done, skipped = rb_perdidas.revert(db, op["rb"], self._progress)
+            db.commit()
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise rekordbox_sync.RekordboxError(f"No pude deshacer en Rekordbox (no se guardó nada): {e}")
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+        historial.mark_undone(op["id"], {"done": done, "skipped": skipped, "backup": bk})
+        self._progress("Listo.", 1)
+        skip = [{"file": f"{skipped} entrada(s) de playlist", "why": "cambiaron en Rekordbox desde entonces"}] if skipped else []
+        return {"restored": done, "skipped": skip, "rekordbox": None, "dj": {}, "warnings": [], "analysis": None,
+                "rb_only": True}
 
     # ---------- reorganizar por playlist ----------
     def relocate(self, pid, moves, keep, remember=True):
@@ -3309,6 +3342,98 @@ class Api:
         self._cfg["rb_keep"] = [p for p in self._cfg.get("rb_keep") or [] if p != pid]
         config.save(self._cfg)
         return {"ok": True, "keep": self._cfg["rb_keep"]}
+
+    # ---------- canciones perdidas en Rekordbox ----------
+    def _rb_lost_scan(self):
+        import rb_perdidas
+        path = rekordbox_sync.RB_DIR / "master.db"
+        if not path.exists():
+            raise rekordbox_sync.RekordboxError("No encontré la librería de Rekordbox en este computador.")
+        try:
+            con = rekordbox_sync.connect_ro()
+        except Exception as e:
+            config.log(f"Perdidas: lectura directa falló ({e!r}); uso una copia")
+            con = None
+        if con is not None:
+            try:
+                return rb_perdidas.scan(con)
+            finally:
+                con.close()
+        import shutil
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="brainorder-lost-"))
+        try:
+            for suf in ("", "-wal", "-shm"):
+                f = path.with_name("master.db" + suf)
+                if f.exists():
+                    shutil.copy2(f, tmp / ("master.db" + suf))
+            con = rekordbox_sync.connect_ro(tmp / "master.db")
+            try:
+                return rb_perdidas.scan(con)
+            finally:
+                con.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def rb_lost(self):
+        """Canciones perdidas en Rekordbox y, para cada una, si hay otra copia en la colección."""
+        def run():
+            import rb_perdidas
+            self._progress("Buscando canciones perdidas en Rekordbox…")
+            res = self._rb_lost_scan()
+            res["summary"] = rb_perdidas.summary(res["items"])
+            res["in_playlists"] = sum(1 for x in res["items"] if x["pids"])
+            res["rekordbox_running"] = rekordbox_sync.rekordbox_running()
+            self._progress("Listo.", 1)
+            return res
+        return self._task(run, "rb_lost", "Revisar perdidas en Rekordbox")
+
+    def rb_lost_replace(self, ids):
+        """Cambia cada perdida (ids) por su copia dentro de sus playlists. Rekordbox cerrado y con respaldo.
+        Las perdidas quedan fuera de toda playlist; borrarlas de la colección se hace en Rekordbox."""
+        ids = {str(i) for i in ids or []}
+
+        def run():
+            import rb_cambios
+            import rb_perdidas
+            if not ids:
+                return {"stats": {"tracks": 0, "repointed": 0, "removed": 0}}
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para reemplazar las perdidas.")
+            self._progress("Revisando otra vez la colección…")
+            items = [x for x in self._rb_lost_scan()["items"] if x["id"] in ids and x["copy"] and x["pids"]]
+            if not items:
+                return {"stats": {"tracks": 0, "repointed": 0, "removed": 0}}
+            try:
+                from pyrekordbox import MasterDatabase as DB
+            except ImportError:  # pragma: no cover
+                from pyrekordbox import Rekordbox6Database as DB
+            self._progress("Respaldando la librería de Rekordbox…")
+            bk = rekordbox_sync.backup().name
+            db = DB(path=rekordbox_sync.RB_DIR / "master.db")
+            try:
+                stats, changes, moved = rb_perdidas.replace(db, [(x["id"], x["copy"]["id"]) for x in items], self._progress)
+                db.commit()
+            except Exception as e:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise rekordbox_sync.RekordboxError(f"No pude reemplazar las perdidas (queda el respaldo {bk}): {e}")
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            if moved:
+                rb_cambios.follow(moved=moved)  # que no salga como cambio hecho a mano en Rekordbox
+            stats["backup"] = bk
+            rb_perdidas.log_result(stats, bk)
+            op = historial.record_rb("rb_lost", f"Reemplazar {stats['tracks']} perdida(s) de Rekordbox por su copia",
+                                     changes, [Path(x["path"]).name for x in items[:3]], {"backup": bk})
+            self._progress("Listo.", 1)
+            return {"stats": stats, "op_id": op}
+        return self._task(run, "rb_lost_replace", "Reemplazar perdidas en Rekordbox", files=True)
 
     # ---------- utilidades de UI ----------
     def reveal(self, path):
