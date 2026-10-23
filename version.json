@@ -1,5 +1,5 @@
 {
-  "version": "2.18.7",
-  "build": 53,
+  "version": "2.19.3",
+  "build": 56,
   "notes": "Nuevo: Conexiones → «Probar Spotify» dice exactamente por qué Spotify no carga (cuota agotada, pausa, Premium, usuario no registrado o sesión vencida) y deja reintentar. Gasta menos consultas: ya no intenta leer playlists de otros."
 }
