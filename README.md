@@ -130,6 +130,10 @@ Sección del menú con las canciones que tienes y que Mixed In Key todavía no a
 
 **Canciones que en Mixed In Key salen analizadas pero aquí no:** BrainOrder sabe que una canción está analizada porque Mixed In Key escribe la key y la energía dentro del archivo. Si Mixed In Key ya tenía esa canción en su colección (otra copia), la muestra como analizada pero no vuelve a escribir en el archivo nuevo. Cuando la copia analizada quedó en `_duplicados`, el botón **Recuperar** la pone en el lugar de la otra (mismo nombre y carpeta; se puede deshacer). Para las demás, quítalas de la colección de Mixed In Key y vuelve a mandarlas. **Unificar repetidos** y **Duplicados** conservan siempre la copia analizada con Mixed In Key (salvo que otra tenga cues en Rekordbox). Si tienes varias copias de una canción, BrainOrder usa la analizada con Mixed In Key.
 
+**Ocultar:** marca canciones que no quieres analizar y dale **🙈 Ocultar**: salen de la lista y del contador (no se toca ningún archivo). **Ver ocultas** las muestra y **Mostrar otra vez** las devuelve.
+
+BrainOrder no cuenta los accesos directos rotos (alias que apuntan a un archivo que ya no existe): esas canciones salen en «Faltan por descargar», no como si las tuvieras. Los WAV y AIFF con un bloque interno raro (por ejemplo un LIST vacío) se leen igual, así no salen como sin analizar si Mixed In Key ya los analizó.
+
 ## Mixed In Key → tus programas de DJ (automático)
 Lo que analizó Mixed In Key pasa a **Rekordbox, Traktor, Serato y Engine DJ** (los que tengas activos en Conexiones):
 - **Key** en la columna Key de cada programa (MIK siempre gana sobre la que tuviera).

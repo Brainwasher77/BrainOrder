@@ -715,13 +715,15 @@ document.addEventListener('keydown', e => {  // barra espaciadora: pausa / sigue
 // ---------- canciones sin analizar en Mixed In Key ----------
 let MK = {sel:new Set(), pl:'', q:'', app:undefined};
 // tus archivos (uno por canción) que todavía no tienen key/energía de Mixed In Key
-function mikRows(){
-  return memo('mik', () => {
+// show=true: las que ocultaste. La lista y el contador del menú usan las visibles.
+function mikRows(show){
+  show = show === undefined ? !!MK.showHidden : !!show;
+  return memo('mik' + (show ? 'H' : '') + ':' + (S.mikHiddenV||0), () => {
     const by = new Map();
     for(const pl of S.analysis||[]){
       if(pl.pending || pl.ignored) continue;
       for(const r of pl.tracks){
-        if(!r.source || r.mik) continue;
+        if(!r.source || r.mik || !!(S.mikHidden && S.mikHidden.has(r.source)) !== show) continue;
         let x = by.get(r.source);
         if(!x){ x = {source:r.source, id:r.id, name:r.name, artists:r.artists||[], key:r.key, bpm:r.bpm, status:r.status, pls:[]}; by.set(r.source, x); }
         if(!x.pls.includes(pl.name)) x.pls.push(pl.name);
@@ -761,7 +763,12 @@ function mikView(){
   const pls = [...new Set(all.flatMap(x => x.pls))].sort((a,b)=>a.localeCompare(b,'es'));
   const head = `<div class="vhead"><h2>🎹 Sin Mixed In Key</h2>
     <span class="sub">Canciones que tienes (un archivo por canción) y que Mixed In Key todavía no ha analizado: sin su key, energía ni hot cues. Márcalas y mándalas a Mixed In Key; cuando las analice, salen solas de aquí.</span></div>`;
-  if(!all.length) return head + `<div class="empty"><h3>Todo analizado con Mixed In Key 🎉</h3><p>Las canciones de tus playlists ya tienen su key y energía.</p></div>`;
+  const nHid = mikRows(true).length;
+  const hidLink = MK.showHidden ? `<a class="lnk" onclick="mikShowHidden(false)">← Volver a la lista</a>`
+    : nHid ? `<a class="lnk" onclick="mikShowHidden(true)">Ver ocultas (${nHid})</a>` : '';
+  if(!all.length) return head + (MK.showHidden
+    ? `<div class="empty"><h3>No hay canciones ocultas</h3><p>${hidLink}</p></div>`
+    : `<div class="empty"><h3>Todo analizado con Mixed In Key 🎉</h3><p>Las canciones de tus playlists ya tienen su key y energía.${nHid?` Ocultaste ${nHid} que no quieres analizar. ${hidLink}`:''}</p></div>`);
   const appMsg = MK.app === undefined ? '' : MK.app
     ? `<span class="art">Se abren en <b>${esc(MK.app)}</b> y quedan en su lista para analizar. <a class="lnk" onclick="mikChoose()">Cambiar</a></span>`
     : `<span style="color:var(--org)">No encontré Mixed In Key en este computador: te muestro los archivos en ${IS_WIN_UI()?'el Explorador':'Finder'} para que los arrastres.</span> <button onclick="mikChoose()">Buscar Mixed In Key…</button>`;
@@ -780,16 +787,29 @@ function mikView(){
       <input placeholder="Buscar…" value="${esc(MK.q)}" oninput="MK.q=this.value; clearTimeout(MK.t); MK.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
       <button class="ghost" onclick="mikAll(true)">Marcar las de la lista</button><button class="ghost" onclick="mikAll(false)">Ninguna</button>
       <button class="ghost" onclick="mikRefresh()" title="Volver a mirar cuáles ya analizó Mixed In Key">↻ Revisar</button>
+      <button id="mkHide" class="ghost" onclick="mikHide(${MK.showHidden?'false':'true'})" title="${MK.showHidden?'Vuelven a la lista de Sin Mixed In Key':'Salen de esta lista y del contador. No se toca ningún archivo.'}">${MK.showHidden?'👁 Mostrar otra vez':'🙈 Ocultar'}</button>
       <button id="mkGo" style="background:#b48cff;border-color:#b48cff;color:#111;font-weight:650" onclick="mikSend()">🎹 Mandar a Mixed In Key</button></div>
+    ${hidLink || MK.showHidden ? `<div style="margin:-2px 0 8px">${MK.showHidden?'<b>Ocultas</b>: no cuentan en «Sin Mixed In Key». ':''}${hidLink}</div>` : ''}
     <div style="margin:-2px 0 10px">${appMsg}${MK.watching?` <span class="art">· Esperando a que Mixed In Key termine ${MK.watching} canción(es)…</span>`:''}</div>
     ${MK.twins ? `<div class="box" style="display:flex;gap:12px;align-items:center;margin-bottom:10px"><span style="flex:1">♻️ <b>${MK.twins}</b> ${MK.twins===1?'tiene':'tienen'} otra copia <b>ya analizada</b> con Mixed In Key, apartada en <code>_duplicados</code>. Recupérala${MK.twins===1?'':'s'} y no tienes que volver a analizar.</span><button class="primary" onclick="mikRecover()">Recuperar ${MK.twins}</button></div>` : ''}
     <div class="art" style="margin:-4px 0 10px">¿En Mixed In Key ya salen analizadas y aquí no? Mixed In Key reconoce canciones que ya tenía en su colección y no vuelve a escribir sus datos en el archivo. Hay que obligarlo a analizarlas de nuevo: en Mixed In Key quítalas de su colección y vuelve a mandarlas desde aquí. Al escribir sus datos en el archivo, salen solas de esta lista.</div>
     ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Playlists</th><th>Key / BPM</th><th>Archivo</th></tr>${tb}</table>${rows.length>600?`<div class="art">Mostrando 600 de ${rows.length}: filtra por playlist o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
 }
 function mikSum(){
-  const n = MK.sel.size, el = $('mkSel'), b = $('mkGo');
+  const n = MK.sel.size, el = $('mkSel'), b = $('mkGo'), h = $('mkHide');
   if(el) el.textContent = n;
+  if(h){ h.disabled = !n; h.textContent = (MK.showHidden ? '👁 Mostrar otra vez' : '🙈 Ocultar') + (n ? ` ${n}` : ''); }
   if(b){ b.disabled = !n; b.textContent = n ? `🎹 Mandar ${n} a Mixed In Key` : '🎹 Mandar a Mixed In Key'; }
+}
+function mikShowHidden(on){ MK.showHidden = !!on; MK.sel = new Set(); renderMain(); }
+async function mikHide(hide){
+  const paths = [...MK.sel]; if(!paths.length) return;
+  const r = await api().mik_hide(paths, hide);
+  if(!r.ok){ toast(esc(r.error||'No se pudo.'), true); return; }
+  S.mikHidden = new Set(r.hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1; MK.sel = new Set();
+  render();
+  toast(hide ? `🙈 ${paths.length} ${paths.length===1?'canción oculta':'canciones ocultas'} de «Sin Mixed In Key». No se tocó ningún archivo. <a class="lnk" onclick="mikShowHidden(true)">Ver ocultas</a>`
+             : `👁 ${paths.length} ${paths.length===1?'canción volvió':'canciones volvieron'} a la lista.`);
 }
 function mikAll(on){ const rows = mikVisible().slice(0, 600); rows.forEach(x => on ? MK.sel.add(x.source) : MK.sel.delete(x.source)); renderMain(); }
 async function mikSend(){
@@ -1247,7 +1267,7 @@ function renderCore(){
   if($('nLost')) $('nLost').innerHTML = LO.data ? (LO.data.items.length ? `<span style="color:var(--org)">${LO.data.items.length}</span>` : '0') : '–';
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
-  { const n = mikRows().length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
+  { const n = mikRows(false).length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
   $('nHist').textContent = (S.hist||[]).filter(o=>!o.undone).length || '–';
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
@@ -2651,7 +2671,7 @@ async function saveSettings(){
     library_roots:draftRoots, rekordbox_folder:$('sRb').value, include_liked:$('sLiked').checked, liked_name:$('sLikedName').value};
   const r = await api().save_settings(s);
   if(r && r.ok===false){ toast(esc(r.error), true); return; }
-  const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0;
+  const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();
   toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).` + folderRenMsg(r && r.folder_rename));
@@ -2659,7 +2679,7 @@ async function saveSettings(){
 
 window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
-  S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {};
+  S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {}; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);

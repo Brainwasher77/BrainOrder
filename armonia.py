@@ -24,7 +24,7 @@ _CACHE = {}
 _FILE = [None]
 _DIRTY = [False]
 _LOCK = threading.Lock()
-VERSION = 4  # subir si cambia la lógica, para releer
+VERSION = 5  # subir si cambia la lógica, para releer
 
 # ---------------------------------------------------------------- notación
 _NOTES = {"C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4, "E#": 5, "F": 5, "F#": 6, "GB": 6,
@@ -181,6 +181,38 @@ def _serato_has_cues(raw, depth=0):
     return bool(dec) and dec != raw and _serato_has_cues(dec, depth + 1)
 
 
+def _chunk_id3(path):
+    """Busca a mano el bloque «id3 » de un WAV (RIFF) o AIFF (FORM) y lo lee. Tolera bloques de tamaño 0
+    o mal cerrados que hacen que mutagen no encuentre las etiquetas. -> ID3 o None."""
+    import io
+    import struct
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            head = f.read(12)
+            if head[:4] not in (b"RIFF", b"FORM"):
+                return None
+            fmt = ">I" if head[:4] == b"FORM" else "<I"
+            pos = 12
+            while pos + 8 <= size:
+                f.seek(pos)
+                h = f.read(8)
+                if len(h) < 8:
+                    break
+                cid, n = h[:4], struct.unpack(fmt, h[4:])[0]
+                if cid in (b"id3 ", b"ID3 "):
+                    from mutagen.id3 import ID3
+                    t = ID3()
+                    t.load(io.BytesIO(f.read(n)))
+                    return t
+                if n > size:
+                    break  # bloque dañado: no se puede seguir
+                pos += 8 + n + (n & 1)
+    except Exception:
+        return None
+    return None
+
+
 def read_tags(path):
     """-> {'key','energy','bpm','mik','key_mik','cues','serato_cues'} sin caché.
 
@@ -197,6 +229,8 @@ def read_tags(path):
         t = f.tags if f is not None else None
     except Exception:
         t = None
+    if t is None and str(path).lower().endswith((".aif", ".aiff", ".wav")):
+        t = _chunk_id3(path)  # WAV/AIFF con un bloque raro (p. ej. LIST vacío): mutagen no llega a las etiquetas
     if t is None and str(path).lower().endswith((".mp3", ".aif", ".aiff", ".wav")):
         try:  # el audio no se pudo leer (archivo dañado o raro), pero las etiquetas sí
             from mutagen.id3 import ID3

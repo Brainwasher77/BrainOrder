@@ -300,6 +300,7 @@ class Api:
             "rekordbox_running": rekordbox_sync.rekordbox_running(),
             "home": str(Path.home()),
             "pinned": self._cfg.get("pinned_paths", []),
+            "mik_hidden": self._cfg.get("mik_hidden") or [],
             "inbox_count": self._inbox_count(),
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
@@ -3099,6 +3100,19 @@ class Api:
         app = self._mik_app()
         return {"ok": True, "app": app, "name": Path(app).stem if app else None,
                 "watching": len(getattr(self, "_mik_watch", {}) or {})}
+
+    def mik_hide(self, paths, hide=True):
+        """Ocultar (o volver a mostrar) canciones en «Sin Mixed In Key». No toca los archivos."""
+        cur = list(self._cfg.get("mik_hidden") or [])
+        paths = [p for p in dict.fromkeys(paths or []) if p]
+        if hide:
+            cur += [p for p in paths if p not in cur]
+        else:
+            drop = set(paths)
+            cur = [p for p in cur if p not in drop]
+        self._cfg["mik_hidden"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "hidden": cur}
 
     def _mik_twins(self):
         """Canciones sin datos de Mixed In Key cuya copia analizada quedó apartada en _duplicados
