@@ -3755,7 +3755,7 @@ class Api:
         return self._task(run, "trash_scan", "Buscar en la papelera")
 
     def _noplaylist_auto(self):
-        """Carpetas «sin playlist» que se detectan solas (como «_SIn Playlist» dentro de tus carpetas de música)."""
+        """Carpetas «sin playlist» que se detectan solas (como «_Sin Playlist» dentro de tus carpetas de música)."""
         import re as _re
         out = []
         for root in [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or []):
@@ -3765,6 +3765,69 @@ class Api:
                         out.append(str(d))
             except (OSError, TypeError):
                 pass
+        return out
+
+    NOPL_NAME = "_Sin Playlist"  # nombre de la carpeta de canciones sin playlist cuando la elige BrainOrder
+
+    def _noplaylist_names(self):
+        """Si no elegiste carpeta: la de canciones sin playlist se llama «_Sin Playlist». La que se detecta con otro
+        nombre (p. ej. «_SIn Playlist») se renombra (rutas de tus programas de DJ corregidas y en el Historial); si no
+        hay ninguna, se crea en tu carpeta de playlists. -> {renamed: [(antes, después)], pending: motivo o None}"""
+        out = {"renamed": [], "pending": None}
+        if self._cfg.get("noplaylist_dirs"):
+            return out
+        found = self._noplaylist_auto()
+        if not found:
+            root = Path(self._cfg.get("dest_root") or "")
+            if root.is_dir():
+                try:
+                    (root / self.NOPL_NAME).mkdir(exist_ok=True)
+                except OSError as e:
+                    config.log(f"crear {self.NOPL_NAME}: {e!r}")
+            return out
+        todo = [Path(d) for d in found if Path(d).name != self.NOPL_NAME]
+        if not todo:
+            return out
+        try:
+            self._dj_precheck()
+        except Exception as e:
+            out["pending"] = str(e)
+            return out
+        for old in todo:
+            new = old.parent / self.NOPL_NAME
+            label = f"Renombrar «{old.name}» a «{self.NOPL_NAME}»"
+            try:
+                if new.exists() and not plataforma.same_file(old, new):
+                    # ya hay otra «_Sin Playlist» al lado: lo de esta pasa a esa (nunca se pisa nada)
+                    if self._move_folder(old, new, label):
+                        out["renamed"].append((str(old), str(new)))
+                    continue
+                files = self._folder_files(old)
+                if not self._files.acquire(timeout=600):
+                    out["pending"] = "Hay otra tarea moviendo archivos. Vuelve a revisar en un momento."
+                    return out
+                try:
+                    tmp = old.with_name(old.name + ".renombrando-brainorder")
+                    os.rename(old, tmp)  # en dos pasos: así también cambia si solo cambian mayúsculas
+                    try:
+                        os.rename(tmp, new)
+                    except OSError:
+                        os.rename(tmp, old)
+                        raise
+                finally:
+                    self._files.release()
+                changes = {str(f): str(new / f.relative_to(old)) for f in files}
+                if changes:
+                    self._dj_fix(changes)
+                    historial.record("relocate", label, list(changes.items()))
+                    pinned = set(self._cfg.get("pinned_paths") or [])
+                    if pinned & set(changes):
+                        self._cfg["pinned_paths"] = sorted((pinned - set(changes)) | {changes[p] for p in pinned & set(changes)})
+                        config.save(self._cfg)
+                out["renamed"].append((str(old), str(new)))
+            except OSError as e:
+                config.log(f"{label}: {e!r}")
+                out["pending"] = f"No pude renombrar «{old.name}»: {e}"
         return out
 
     def _noplaylist_dirs(self):
@@ -3833,6 +3896,9 @@ class Api:
         Cada una con una playlist sugerida (donde más aparece ese artista)."""
         def run():
             import collections
+            names = self._noplaylist_names()
+            if names["renamed"]:
+                self._build_analysis(light=True)
             analysis = self._analysis() or []
             used = {os.path.normcase(r["source"]) for pl in analysis for r in pl.get("tracks") or [] if r.get("source")}
             ib = self.inbox_status() if hasattr(self, "inbox_status") else {}
@@ -3867,6 +3933,8 @@ class Api:
             self._progress("Listo.", 1)
             return {"rows": rows, "playlists": pls, "dest_root": self._cfg.get("dest_root"),
                     "dirs": self._noplaylist_dirs(), "auto": not self._cfg.get("noplaylist_dirs"),
+                    "renamed": names["renamed"], "rename_pending": names["pending"], "nopl_name": self.NOPL_NAME,
+                    "analysis": analysis if names["renamed"] else None,
                     "detected": self._noplaylist_auto(), "inbox": self._cfg.get("inbox"),
                     "spotify": {"connected": sp.connected, "can_write": sp.can_write, "paused": spotify_api.paused_until()}}
         return self._task(run, "noplaylist", "Canciones sin playlist")

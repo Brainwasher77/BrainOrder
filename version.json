@@ -1,5 +1,5 @@
 {
-  "version": "2.22.0",
-  "build": 62,
-  "notes": "Nuevo en «Sin playlist»: eliges de qué carpeta lee las canciones sin playlist (una o varias), puedes crear una playlist nueva ahí mismo (también en Spotify) y elegir la carpeta donde quedan sus canciones."
+  "version": "2.22.1",
+  "build": 63,
+  "notes": "La carpeta de canciones sin playlist se llama «_Sin Playlist» cuando la elige BrainOrder: si la tuya tenía otro nombre se renombra (corrigiendo tus programas de DJ) y si no tenías ninguna se crea."
 }
