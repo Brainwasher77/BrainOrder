@@ -241,7 +241,7 @@ def scan(con, exists=None, disk=None, moves=None, duration=None):
         if copy and kind != "version":
             action = "merge" if copy["in_collection"] else "relink"
         items.append({"id": m["id"], "path": native(m["path"]), "title": m["title"], "artist": m["artist"],
-                      "len": m["len"], "cues": m["cues"], "pls": [names[p] for p in m["pls"]], "pids": m["pls"],
+                      "len": m["len"], "size": m["size"], "cues": m["cues"], "pls": [names[p] for p in m["pls"]], "pids": m["pls"],
                       "state": m["state"], "kind": kind, "action": action, "copy": copy})
     items.sort(key=lambda x: (KINDS.index(x["kind"]), _strip(x["artist"]), _strip(x["title"])))
     return {"items": items, "total": len(tracks), "offline": offline}

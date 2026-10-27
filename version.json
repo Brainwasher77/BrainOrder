@@ -1,5 +1,5 @@
 {
-  "version": "2.20.0",
-  "build": 57,
-  "notes": "Perdidas en Rekordbox ahora repara de verdad: reconecta cada pista a su archivo o la une con su copia (conserva cues y playlists), y te avisa de las canciones que solo quedaron en _duplicados para devolverlas a su lugar. Arreglado: Unificar, Duplicados y Fusionar ya no apartan la única copia de una canción ni dejan pistas de Rekordbox apuntando a _duplicados."
+  "version": "2.20.1",
+  "build": 58,
+  "notes": "Nuevo: «🗑 Buscar en la papelera» (en Perdidas en Rekordbox y en Faltan por descargar). Encuentra en la papelera las canciones perdidas en Rekordbox o que te faltan y las devuelve a su lugar, con Deshacer."
 }

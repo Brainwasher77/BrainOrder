@@ -3546,6 +3546,96 @@ class Api:
             return {"moved": res["moved"], "skipped": res["skipped"], "op_id": res.get("op_id"), "analysis": analysis}
         return self._task(run, "dup_rescue", "Recuperar de _duplicados")  # _relocate_ops toma el turno de archivos
 
+    # ---------- buscar en la papelera ----------
+    def _trash_matches(self):
+        import papelera
+        self._progress("Revisando la papelera…")
+        trash = papelera.list_audio()
+        lost = []
+        if (rekordbox_sync.RB_DIR / "master.db").exists():
+            try:
+                lost = [x for x in self._rb_lost_scan(with_disk=False)["items"] if x["state"] == "lost"]
+            except Exception as e:
+                config.log(f"papelera: no pude leer Rekordbox: {e!r}")
+        missing, seen = [], set()
+        for pl in self._analysis() or []:
+            if pl.get("pending") or pl.get("ignored"):
+                continue
+            for r in pl.get("tracks") or []:
+                if r.get("status") != "missing" or not r.get("dest_dir"):
+                    continue
+                if r["id"] in seen:
+                    next(m for m in missing if m["id"] == r["id"])["playlists"].append(pl["name"])
+                    continue
+                seen.add(r["id"])
+                missing.append({**r, "playlists": [pl["name"]]})
+        self._progress("Comparando con lo que te falta…")
+        found = papelera.match(trash, lost, missing, biblioteca.duration)
+        biblioteca.save_durations()
+        return trash, found
+
+    def trash_scan(self):
+        """¿Hay en la papelera canciones perdidas en Rekordbox o que te faltan en tus playlists?"""
+        def run():
+            import papelera
+            try:
+                trash, found = self._trash_matches()
+            except papelera.TrashError as e:
+                return {"denied": True, "error_msg": str(e), "found": [], "total": 0}
+            self._progress("Listo.", 1)
+            return {"found": found, "total": len(trash)}
+        return self._task(run, "trash_scan", "Buscar en la papelera")
+
+    def trash_restore(self, paths):
+        """Saca de la papelera las elegidas y las pone donde van (la perdida de Rekordbox vuelve a su ruta:
+        conserva cues y playlists sin tocar la librería). Queda en el Historial."""
+        paths = set(paths or [])
+
+        def run():
+            import papelera
+            import rb_cambios
+            try:
+                _, found = self._trash_matches()
+            except papelera.TrashError as e:
+                raise unificar.UnifyError(str(e))
+            todo = [x for x in found if x["trash"] in paths]
+            if not todo:
+                return {"moved": 0, "skipped": []}
+            ops, wanted = [], {}
+            for x in todo:
+                dst = Path(x["target"])
+                if os.path.lexists(dst):
+                    dst = plataforma.free_name(dst)
+                ops.append((x["trash"], str(dst.parent), dst.name))
+                wanted[x["trash"]] = (x, str(dst))
+            if not self._files.acquire(timeout=600):
+                raise unificar.UnifyError("Hay otra tarea moviendo archivos. Vuelve a intentar en un momento.")
+            try:
+                res = organizador.relocate(ops, self._cfg, self._progress)
+                changes = res.get("changes") or {}
+                op = historial.record("relocate", f"Recuperar {len(changes)} canción(es) de la papelera",
+                                      list(changes.items())) if changes else None
+            finally:
+                self._files.release()
+            # perdidas de Rekordbox que no pudieron volver a su ruta exacta (había otro archivo): se reconectan
+            relink = {wanted[t][0]["target"]: new for t, new in changes.items()
+                      if wanted[t][0]["kind"] == "rb" and os.path.normcase(new) != os.path.normcase(wanted[t][0]["target"])}
+            rb_note = None
+            if relink:
+                if rekordbox_sync.rekordbox_running():
+                    rb_note = "Rekordbox está abierto: ciérralo y repara en «Perdidas en Rekordbox» (las encontrará solas)."
+                else:
+                    try:
+                        rekordbox_sync.backup()
+                        unificar._rb_apply(relink, {})
+                        rb_cambios.follow(moved=relink)
+                    except Exception as e:
+                        rb_note = f"Rekordbox: {e}"
+            analysis = self._build_analysis(light=True)
+            return {"moved": len(changes), "skipped": res.get("skipped") or [], "op_id": op, "rb_note": rb_note,
+                    "analysis": analysis}
+        return self._task(run, "trash_restore", "Recuperar de la papelera")
+
     def rb_lost_replace(self, ids, remove_ids=None):
         """Repara las perdidas elegidas (reconectar al archivo o unir con su copia) y, si lo pides, saca de la
         colección las que no tienen copia en ninguna parte. Rekordbox cerrado, con respaldo y Deshacer."""

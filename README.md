@@ -162,6 +162,8 @@ Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox
 
 Rekordbox tiene que estar cerrado; antes se respalda la librería y todo se puede deshacer en Historial (vuelve exactamente como estaba: rutas, cues, playlists y su orden). Las canciones de un disco externo desconectado no cuentan como perdidas.
 
+**Buscar en la papelera** (en Perdidas en Rekordbox y en Faltan por descargar): revisa la papelera (Mac: la tuya y la de cada disco externo; Windows: la Papelera de reciclaje de cada disco) y te muestra las canciones que están ahí y que son perdidas de Rekordbox o te faltan en tus playlists. **Recuperar** las saca de la papelera: las perdidas vuelven a su ruta (Rekordbox las encuentra con sus cues y playlists) y las que faltan van a la carpeta de su playlist. Queda en el Historial. En el Mac, macOS solo deja leer la papelera si BrainOrder tiene **Acceso total al disco** (Ajustes del Sistema → Privacidad y seguridad); si no, BrainOrder te lo dice.
+
 **Canciones que solo están en `_duplicados`:** si una canción no tiene otra copia en tu música, el aviso de arriba lo dice y **Recuperar** la devuelve a su lugar: donde la espera un acceso directo roto (así vuelve a funcionar), donde estaba antes (Historial), la carpeta de su playlist o `_Recuperadas`. Se corrige Rekordbox y se puede deshacer.
 
 ## Duplicados
@@ -232,6 +234,7 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 | `rb_perdidas.py` | Canciones perdidas en Rekordbox: dónde está cada una ahora |
 | `rb_coleccion.py` | Reconectar, unir y sacar pistas de la colección de Rekordbox, con Deshacer |
 | `rescate.py` | Canciones que solo quedaron en `_duplicados` |
+| `papelera.py` | Buscar en la papelera las canciones perdidas o que faltan |
 | `novedades.py` | Qué es nuevo en una playlist de tu programa de DJ (sin duplicar archivos ni playlists) |
 
 ---
