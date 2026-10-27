@@ -2490,12 +2490,12 @@ async function sgEditReset(){
 }
 
 // ---------- datos incompletos: artista desconocido, sin título, nombre sin «Artista - Título», sin género ----------
-let MD = {data:null, loading:false, sel:new Set(), ed:{}, f:'', q:''};
+let MD = {data:null, loading:false, sel:new Set(), ed:{}, f:'', q:'', web:{}};
 const MD_P = {'artista':'Artista desconocido','título':'Sin título','nombre':'Nombre sin «Artista - Título»','género':'Sin género'};
 async function mdLoad(){
   if(MD.loading) return; MD.loading = true; if(S.view==='meta') renderMain();
-  try{ const r = await api().meta_scan(); if(r.ok){ MD.data = r; MD.sel = new Set(); MD.ed = {};
-      const bad = /^(desconocido|unknown( artist)?|artista desconocido|unknown mobile|<unknown>)$/i;
+  try{ const r = await api().meta_scan(); if(r.ok){ MD.data = r; MD.sel = new Set(); MD.ed = {}; MD.web = {};
+      const bad = /^(desconocido|unknown( artist)?|artista desconocido|<unknown>)$/i;
       r.rows.forEach(x => { const ca = bad.test((x.cur.artist||'').trim()) ? '' : (x.cur.artist||'');
         MD.ed[x.path] = {artist:(x.prop||{}).artist ?? ca, title:(x.prop||{}).title ?? (x.cur.title||''), genre:x.cur.genre||'', rename:!!x.newname}; }); }
     else if(!r.cancelled) toast(esc(r.error), true); }catch(e){}
@@ -2521,7 +2521,7 @@ function mdView(){
         <div class="art">Ahora: ${esc(x.cur.artist||'—')} · ${esc(x.cur.title||'—')}${x.cur.genre?' · '+esc(x.cur.genre):''}</div></div></div></td>
       <td><input value="${esc(e.artist)}" placeholder="Artista" oninput="MD.ed[${jsq(x.path)}].artist=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px">
         <input value="${esc(e.title)}" placeholder="Título" oninput="MD.ed[${jsq(x.path)}].title=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px;margin-top:4px">
-        ${x.why?`<div class="art">💡 ${esc(x.why)}</div>`:'<div class="art" style="color:var(--org)">Sin propuesta: escríbelo o búscalo 🔎</div>'}</td>
+        ${mdWebBadge(x)}</td>
       <td><input value="${esc(e.genre)}" placeholder="Género" oninput="MD.ed[${jsq(x.path)}].genre=this.value;MD.sel.add(${jsq(x.path)})" style="${IN_ST};width:120px"></td>
       <td><label class="art" style="display:flex;gap:6px;align-items:flex-start"><input type="checkbox" ${e.rename?'checked':''} onchange="MD.ed[${jsq(x.path)}].rename=this.checked"><span id="mdNn${k}" style="overflow-wrap:anywhere">Renombrar a «${esc(nn)}»</span></label></td>
       <td><button class="ghost" title="Buscar en Spotify cómo se llama" onclick="mdSearch(${jsq(x.path)})">🔎</button></td></tr>`; }).join('');
@@ -2533,14 +2533,55 @@ function mdView(){
       <input placeholder="Buscar…" value="${esc(MD.q)}" oninput="MD.q=this.value; clearTimeout(MD.t); MD.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\\'Buscar…\\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="${IN_ST};flex:1;min-width:140px">
       <button class="ghost" onclick="mdMark('prop')">Marcar las que tienen propuesta</button><button class="ghost" onclick="mdMark('none')">Ninguna</button>
       <input id="mdG" placeholder="Género para las marcadas" style="${IN_ST};width:190px"><button class="ghost" onclick="mdGenre()">Aplicar</button>
+      ${running('meta_lookup') ? `<button class="ghost" onclick="api().meta_lookup_stop()">⏹ Parar la búsqueda</button>` : `<button class="ghost" onclick="mdWeb()" title="Busca artista, título y género en Deezer y Apple Music (gratis, sin gastar Spotify)">🌐 Buscar datos en internet</button>`}
       <button id="mdGo" class="primary" onclick="mdGo()">Arreglar</button></div>
     ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Artista y título</th><th>Género</th><th>Archivo</th><th></th></tr>${tb}</table>${rows.length>400?`<div class="art">Mostrando 400 de ${rows.length}: filtra o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function mdWebBadge(x){
+  const w = MD.web[x.path];
+  if(w){
+    if(w.best) return `<div class="art">🌐 ${esc(w.best.source)}: «${esc(w.best.artist)} - ${esc(w.best.title)}»${w.best.genre?' · '+esc(w.best.genre):''} <span style="color:var(--acid)">✅ dura igual</span></div>`;
+    if((w.cands||[]).length) return `<div class="art">🌐 <a class="lnk" onclick="mdSearch(${jsq(x.path)})">${w.cands.length} posible${w.cands.length===1?'':'s'} (no dura igual): elegir</a></div>`;
+    return `<div class="art" style="color:var(--org)">🌐 No la encontré en internet: escríbelo o búscalo 🔎</div>`;
+  }
+  return x.why ? `<div class="art">💡 ${esc(x.why)}</div>` : '<div class="art" style="color:var(--org)">Sin propuesta: dale «🌐 Buscar datos en internet» o 🔎</div>';
+}
+// llena con lo encontrado SOLO lo que falta (lo que ya está bien no se toca)
+function mdFill(x, c){
+  const e = MD.ed[x.path], p = x.problems, bad = /^(desconocido|unknown( artist)?|artista desconocido|<unknown>)?$/i;
+  if(!e || !c) return;
+  if(p.includes('artista') || (p.includes('nombre') && !x.prop) || bad.test((e.artist||'').trim())) e.artist = c.artist;
+  if(p.includes('título') || (p.includes('nombre') && !x.prop) || !(e.title||'').trim()) e.title = c.title_keep || c.title;
+  if(c.genre && (p.includes('género') || !(e.genre||'').trim())) e.genre = c.genre;
+  if(p.includes('nombre') || p.includes('artista')) e.rename = true;
+  MD.sel.add(x.path);
+}
+function mdWeb(){
+  const vis = mdVisible(), marked = vis.filter(x => MD.sel.has(x.path));
+  const list = (marked.length ? marked : vis).map(x => x.path);
+  if(!list.length) return;
+  MD._list = list;
+  const mins = Math.max(1, Math.round(list.length * 0.5 / 60));
+  modal(`<h3>🌐 Buscar datos en internet</h3>
+    <p>Busco ${list.length===1?'esta canción':`estas <b>${list.length}</b> canciones`}${marked.length?' (las marcadas)':' (las de la lista)'} en <b>Deezer</b> y, si no aparece, en <b>Apple Music</b>: artista, título y género. Es gratis y no gasta consultas de Spotify.</p>
+    <div class="box">Comparo cada resultado con la <b>duración</b> de tu archivo: si dura igual y el nombre se parece, lo pongo yo (✅, revísalo antes de Arreglar). Si no, te dejo las posibles para que elijas. Solo lleno lo que falta; lo que ya está bien no lo toco. Si tu archivo es un remix o un edit, le dejo eso en el título.</div>
+    <p class="art">Puede tardar unos ${mins} minuto${mins===1?'':'s'}. Lo que ya se buscó queda guardado. Puedes pararla cuando quieras.</p>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="closeModal();mdWebDo(MD._list)">Buscar</button></div>`);
+}
+async function mdWebDo(list){
+  setTimeout(()=>renderMain(), 120);
+  const r = await api().meta_lookup(list);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  const rows = MD.data ? MD.data.rows : [];
+  Object.entries(r.results||{}).forEach(([p, w]) => { MD.web[p] = w; const x = rows.find(y => y.path === p); if(x && w.best) mdFill(x, w.best); });
+  renderMain();
+  toast(`🌐 ${r.stopped?'Búsqueda parada. ':''}<b>${r.sure}</b> encontrada${r.sure===1?'':'s'} con seguridad (ya puestas, revísalas)${r.maybe?` · <b>${r.maybe}</b> con posibles para elegir`:''}${r.none?` · ${r.none} sin resultado`:''}.${(r.errors||[]).length?`<br>⚠️ ${esc(r.errors[0])}`:''}`);
 }
 function mdNn(k, path){ const x = MD.data.rows.find(r=>r.path===path), el = $('mdNn'+k); if(x && el) el.textContent = `Renombrar a «${mdNewName(x)}»`; mdSum(); }
 function mdMark(w){ if(w==='none') MD.sel = new Set(); else mdVisible().forEach(x => { if(x.prop) MD.sel.add(x.path); }); renderMain(); }
 function mdGenre(){ const g = ($('mdG')||{}).value.trim(); if(!g) return; if(!MD.sel.size){ toast('Marca primero las canciones.', true); return; } MD.sel.forEach(p => { if(MD.ed[p]) MD.ed[p].genre = g; }); renderMain(); }
 function mdItems(){
-  const bad = /^(desconocido|unknown( artist)?|artista desconocido|unknown mobile)$/i;
+  const bad = /^(desconocido|unknown( artist)?|artista desconocido)$/i;
   return (MD.data?MD.data.rows:[]).filter(x => MD.sel.has(x.path)).map(x => { const e = MD.ed[x.path], it = {path:x.path};
     if(e.artist.trim() && e.artist.trim() !== (x.cur.artist||'') && !bad.test(e.artist.trim())) it.artist = e.artist.trim();
     if(e.title.trim() && e.title.trim() !== (x.cur.title||'')) it.title = e.title.trim();
@@ -2567,17 +2608,20 @@ async function mdDo(){
   MD.data = null; mdLoad();
 }
 async function mdSearch(path, q){
-  modal(`<h3>🔎 Buscar en Spotify</h3><p class="art">Buscando…</p>`);
+  modal(`<h3>🔎 Buscar cómo se llama</h3><p class="art">Buscando en Deezer, Apple Music y Spotify…</p>`);
   const r = await api().meta_search(path, q||'');
-  if(!r.ok){ modal(`<h3>🔎 Buscar en Spotify</h3><div class="box warn">${esc(r.error)}</div><div class="actions"><button onclick="closeModal()">Cerrar</button></div>`); return; }
+  if(!r.ok){ modal(`<h3>🔎 Buscar cómo se llama</h3><div class="box warn">${esc(r.error)}</div><div class="actions"><button onclick="closeModal()">Cerrar</button></div>`); return; }
+  MD._hits = r.hits;
   const fmt = s => s ? `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}` : '';
-  modal(`<h3>🔎 Buscar en Spotify</h3>
+  modal(`<h3>🔎 Buscar cómo se llama</h3>
     <div style="display:flex;gap:6px"><input id="mdQ" value="${esc(r.query)}" style="${IN_ST};flex:1" onkeydown="if(event.key==='Enter')mdSearch(${jsq(path)}, this.value)"><button onclick="mdSearch(${jsq(path)}, $('mdQ').value)">Buscar</button></div>
-    <p class="art">${esc(base(path))}${r.secs?` · dura ${fmt(r.secs)}`:''}</p>
-    ${r.hits.length ? `<table>${r.hits.map((h,i)=>`<tr><td><b>${esc(h.title)}</b><div class="art">${esc(h.artist)}${h.album?' · '+esc(h.album):''}</div></td><td class="mono art">${fmt(h.secs)}${h.close?' ✅':''}</td><td><button class="primary" onclick='mdPick(${jsq(path)}, ${JSON.stringify(h).replace(/'/g,"&#39;")})'>Usar</button></td></tr>`).join('')}</table><p class="art">✅ = dura lo mismo que tu archivo.</p>` : '<p>No encontré nada. Cambia la búsqueda.</p>'}
+    <p class="art">${esc(base(path))}${r.secs?` · tu archivo dura ${fmt(r.secs)}`:''}</p>
+    ${r.note?`<p class="art">${esc(r.note)}</p>`:''}
+    ${r.hits.length ? `<div style="max-height:380px;overflow:auto"><table>${r.hits.map((h,i)=>`<tr><td><b>${esc(h.title_keep||h.title)}</b><div class="art">${esc(h.artist)}${h.album?' · '+esc(h.album):''}</div>${h.genre?`<div class="art">🏷️ ${esc(h.genre)}</div>`:''}</td><td class="art">${esc(h.source)}</td><td class="mono art">${fmt(h.secs)}${h.close?' ✅':''}</td><td><button class="primary" onclick="mdPick(${jsq(path)}, MD._hits[${i}])">Usar</button></td></tr>`).join('')}</table></div><p class="art">✅ = dura lo mismo que tu archivo (casi seguro es la misma grabación).</p>` : '<p>No encontré nada. Cambia la búsqueda (por ejemplo, solo el título).</p>'}
     <div class="actions"><button onclick="closeModal()">Cerrar</button></div>`);
 }
-function mdPick(path, h){ const e = MD.ed[path]; if(!e) return; e.artist = h.artist; e.title = h.title; e.rename = true; MD.sel.add(path); closeModal(); renderMain(); }
+function mdPick(path, h){ const e = MD.ed[path]; if(!e || !h) return; e.artist = h.artist; e.title = h.title_keep || h.title;
+  if(h.genre && !(e.genre||'').trim()) e.genre = h.genre; e.rename = true; MD.sel.add(path); closeModal(); renderMain(); }
 // ---------- papelera ----------
 let TR = {data:null, sel:new Set(), src:'trash'};
 async function trashScan(src){

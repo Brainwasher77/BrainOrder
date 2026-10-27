@@ -24,20 +24,23 @@ _last = [0.0]
 _GAP_LOCK = threading.Lock()
 
 
-def _get(url, tries=4):
+def _get(url, tries=4, lang=None):
     with _GAP_LOCK:  # varias tareas a la vez respetan juntas el límite de Deezer
         wait = _MIN_GAP - (time.time() - _last[0])
         if wait > 0:
             time.sleep(wait)
         _last[0] = time.time()
-    req = urllib.request.Request(url, headers={"User-Agent": "BrainOrder/1.0"})
+    headers = {"User-Agent": "BrainOrder/1.0"}
+    if lang:
+        headers["Accept-Language"] = lang  # p. ej. géneros en español («Música africana», «Películas/Juegos»)
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     if isinstance(data, dict) and (data.get("error") or {}).get("code") == 4:  # cuota excedida
         if tries <= 1:
             raise RuntimeError("Deezer: límite de consultas")
         time.sleep(5)
-        return _get(url, tries - 1)
+        return _get(url, tries - 1, lang)
     return data
 
 

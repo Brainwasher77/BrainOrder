@@ -1,5 +1,5 @@
 {
-  "version": "2.23.0",
-  "build": 64,
-  "notes": "Nuevo: «Sugerencias» de playlists por género, energía y BPM con tus propios criterios (sin mover archivos), y «Datos incompletos» para arreglar artista desconocido, títulos, géneros y nombres de archivo."
+  "version": "2.24.0",
+  "build": 65,
+  "notes": "Nuevo en «Datos incompletos»: 🌐 Buscar datos en internet (Deezer y Apple Music, gratis) para encontrar artista, título y género, comparando la duración con tu archivo."
 }
