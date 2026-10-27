@@ -3754,8 +3754,8 @@ class Api:
             return {"found": found, "total": len(trash)}
         return self._task(run, "trash_scan", "Buscar en la papelera")
 
-    def _noplaylist_dirs(self):
-        """Carpetas «sin playlist» de tu música (como «_SIn Playlist»): ahí están las que no son de ninguna."""
+    def _noplaylist_auto(self):
+        """Carpetas «sin playlist» que se detectan solas (como «_SIn Playlist» dentro de tus carpetas de música)."""
         import re as _re
         out = []
         for root in [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or []):
@@ -3766,6 +3766,67 @@ class Api:
             except (OSError, TypeError):
                 pass
         return out
+
+    def _noplaylist_dirs(self):
+        """Carpetas de donde «Sin playlist» lee las canciones que no son de ninguna playlist: las que elegiste
+        (Ajustes: noplaylist_dirs) o, si no elegiste, las que se detectan solas."""
+        mine = self._cfg.get("noplaylist_dirs")
+        if mine:
+            return [d for d in mine if os.path.isdir(d)]
+        return self._noplaylist_auto()
+
+    def _check_noplaylist_dir(self, folder):
+        """Una carpeta sirve para leer canciones sin playlist si existe y no es (ni contiene) una de tus carpetas
+        de música entera ni la de descargas (ya se lee aparte), ni es _duplicados ni la carpeta de una playlist."""
+        try:
+            f = Path(folder).expanduser()
+            if not f.is_absolute() or not f.is_dir():
+                raise ValueError
+            f = f.resolve()
+        except (OSError, ValueError, TypeError):
+            raise unificar.UnifyError("Esa carpeta no existe. Elige otra.")
+        bad = "Esa carpeta no sirve para «Sin playlist»"
+        if f == Path.home().resolve() or f.parent == f:
+            raise unificar.UnifyError(f"{bad}: es demasiado grande. Elige la carpeta donde guardas las que no tienen playlist.")
+        if "_duplicados" in f.parts:
+            raise unificar.UnifyError(f"{bad}: es de _duplicados (ahí van las repetidas; usa «Recuperar» en Perdidas).")
+        inbox = self._cfg.get("inbox")
+        for d in [self._cfg.get("dest_root"), inbox] + list(self._cfg.get("library_roots") or []):
+            if not d:
+                continue
+            try:
+                r = Path(d).resolve()
+            except OSError:
+                continue
+            if d == inbox and (f == r or r in f.parents):
+                raise unificar.UnifyError(f"{bad}: es tu carpeta de descargas, y esa ya se revisa siempre.")
+            if f == r or f in r.parents:
+                raise unificar.UnifyError(f"{bad}: es una de tus carpetas de música entera (o la contiene). Elige la carpeta de adentro donde están las que no tienen playlist.")
+        for p in self._analysis() or []:
+            pf = p.get("folder")
+            try:
+                if pf and Path(pf).resolve() == f:
+                    raise unificar.UnifyError(f"{bad}: es la carpeta de la playlist «{p['name']}».")
+            except OSError:
+                pass
+        return str(f)
+
+    def noplaylist_dirs_set(self, dirs=None):
+        """Eliges de qué carpetas lee «Sin playlist». dirs vacío o None = volver a detectarla sola."""
+        try:
+            clean = []
+            for d in dirs or []:
+                c = self._check_noplaylist_dir(d)
+                if os.path.normcase(c) not in {os.path.normcase(x) for x in clean}:
+                    clean.append(c)
+        except unificar.UnifyError as e:
+            return {"ok": False, "error": str(e)}
+        if clean:
+            self._cfg["noplaylist_dirs"] = clean
+        else:
+            self._cfg.pop("noplaylist_dirs", None)
+        config.save(self._cfg)
+        return {"ok": True, "dirs": self._noplaylist_dirs(), "auto": not clean, "detected": self._noplaylist_auto()}
 
     def noplaylist(self):
         """Canciones que no son de ninguna playlist: descargas sueltas y las de «_SIn Playlist».
@@ -3783,7 +3844,7 @@ class Api:
             rows = [{"path": f, "where": "descargas"} for f in inbox_files]
             for d in self._noplaylist_dirs():
                 for f in biblioteca.walk_audio(d):
-                    if os.path.normcase(f) not in used:
+                    if os.path.normcase(f) not in used and "_duplicados" not in Path(f).parts:
                         rows.append({"path": f, "where": Path(d).name})
             # sugerencia: la playlist donde más canciones tienes de ese artista
             by_artist = collections.defaultdict(collections.Counter)
@@ -3798,24 +3859,91 @@ class Api:
                 r["artist"], r["title"] = a, t
                 c = by_artist.get(biblioteca.norm(a)) if a else None
                 r["suggest"] = c.most_common(1)[0][0] if c else None
-            pls = sorted(({"id": p["id"], "name": p["name"], "source": p.get("source") or fuentes.source_of(p["id"])}
+            pls = sorted(({"id": p["id"], "name": p["name"], "source": p.get("source") or fuentes.source_of(p["id"]),
+                           "folder": p.get("folder")}
                           for p in analysis if not p.get("pending") and not p.get("ignored") and p["id"] != "liked"),
                          key=lambda x: x["name"].lower())
+            sp = self._sp()
             self._progress("Listo.", 1)
-            return {"rows": rows, "playlists": pls}
+            return {"rows": rows, "playlists": pls, "dest_root": self._cfg.get("dest_root"),
+                    "dirs": self._noplaylist_dirs(), "auto": not self._cfg.get("noplaylist_dirs"),
+                    "detected": self._noplaylist_auto(), "inbox": self._cfg.get("inbox"),
+                    "spotify": {"connected": sp.connected, "can_write": sp.can_write, "paused": spotify_api.paused_until()}}
         return self._task(run, "noplaylist", "Canciones sin playlist")
 
-    def assign_downloads(self, items):
+    def _new_playlist_name(self, name, analysis):
+        """Nombre válido para una playlist nueva. -> (nombre, pid si ya tienes una que se llama así)"""
+        import re as _re
+        name = " ".join(str(name or "").split())
+        if not name:
+            raise unificar.UnifyError("Escribe el nombre de la playlist nueva.")
+        if len(name) > 100:
+            raise unificar.UnifyError("El nombre de la playlist es muy largo (máximo 100 letras).")
+        flat = _re.sub(r"[^a-z]", "", name.lower())
+        if flat in ("sinplaylist", "sinplaylists", "noplaylist", "duplicados", "recuperadas") or not config.safe_name(name).strip(" ._"):
+            raise unificar.UnifyError(f"«{name}» no sirve como nombre de playlist. Usa otro.")
+        same = next((p for p in analysis if p["name"].strip().lower() == name.lower() and not p.get("pending")
+                     and p["id"] != "liked"), None)
+        return name, (same["id"] if same else None)
+
+    def _new_playlist_folder(self, folder, analysis):
+        """Carpeta que elegiste para una playlist nueva. No puede ser tu carpeta de playlists entera (ni una que la
+        contenga), la de descargas, _SIn Playlist, _duplicados ni la carpeta de otra playlist."""
+        from fuentes import carpetas as FC
+        try:
+            f = Path(folder).expanduser()
+            if not f.is_absolute():
+                raise ValueError
+            f = f.resolve()
+        except (OSError, ValueError, TypeError):
+            raise unificar.UnifyError("Esa carpeta no es válida. Elige otra.")
+        if f.exists() and not f.is_dir():
+            raise unificar.UnifyError("Eso es un archivo, no una carpeta. Elige otra.")
+        bad = "Esa carpeta no sirve para una playlist"
+        special = [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or [])
+        for d in special:
+            if not d:
+                continue
+            try:
+                r = Path(d).resolve()
+            except OSError:
+                continue
+            if f == r or f in r.parents:
+                raise unificar.UnifyError(f"{bad}: es {'tu carpeta de descargas' if d == self._cfg.get('inbox') else 'una de tus carpetas de música entera'} (o la contiene). Elige o crea una carpeta adentro.")
+            if d == self._cfg.get("inbox") and r in f.parents:
+                raise unificar.UnifyError(f"{bad}: está dentro de tu carpeta de descargas.")
+        if f == Path.home().resolve() or f.parent == f or "_duplicados" in f.parts:
+            raise unificar.UnifyError(f"{bad}. Elige o crea una carpeta para ella.")
+        for d in self._noplaylist_dirs():
+            r = Path(d).resolve()
+            if f == r or r in f.parents:
+                raise unificar.UnifyError(f"{bad}: es la de canciones sin playlist.")
+        for p in analysis:
+            try:
+                pf = p.get("folder") or self._pl_ctx(p["id"], analysis)[3]
+            except Exception:
+                pf = p.get("folder")
+            if pf and os.path.normcase(str(Path(pf).resolve())) == os.path.normcase(str(f)):
+                raise unificar.UnifyError(f"Esa carpeta ya es de la playlist «{p['name']}»: elígela en la lista en vez de crear una nueva.")
+        return f
+
+    def assign_downloads(self, items, new=None):
         """Descargas que no son de ninguna playlist: las llevas a la que elijas.
-        items: [{src, pid}]. Cada archivo va a la carpeta de esa playlist y la canción se agrega a la playlist:
+        items: [{src, pid}] o [{src, new: «nombre», spotify: bool, folder: carpeta}] para una playlist que se crea
+        aquí mismo (folder: dónde quedan sus canciones; sin folder, <carpeta de playlists>/<nombre>)
+        (spotify: también en Spotify; si está en pausa, queda pendiente). new: {spotify} = valor por defecto.
+        Cada archivo va a la carpeta de esa playlist y la canción se agrega a la playlist:
         en Spotify (o a la cola si está en pausa: mientras tanto ya se ve en BrainOrder), en una playlist de
         carpeta queda como suya. Queda en el Historial."""
+        new = new or {}
+
         def run():
+            import carpetas_nuevas as CN
             import cola_spotify
             from fuentes import carpetas as FC
             analysis = self._analysis() or []
             allowed = [Path(self._cfg["inbox"]).resolve()] + [Path(d).resolve() for d in self._noplaylist_dirs()]
-            by_pid = {}
+            by_pid, by_new, new_names, new_sp, new_dirs = {}, {}, {}, set(), {}
             for it in items or []:
                 src, pid = it.get("src"), it.get("pid")
                 try:
@@ -3823,11 +3951,41 @@ class Api:
                     ok_src = bool(rs) and rs.is_file() and any(a in rs.parents for a in allowed)
                 except OSError:
                     ok_src = False
-                if ok_src and pid:
+                if not ok_src:
+                    continue
+                if not pid and it.get("new"):
+                    name, same = self._new_playlist_name(it["new"], analysis)
+                    if same:  # ya tienes una que se llama así: va a esa (nunca dos con el mismo nombre)
+                        pid = same
+                    else:
+                        key = name.lower()
+                        if key not in new_names and it.get("folder"):
+                            new_dirs[key] = self._new_playlist_folder(it["folder"], analysis)
+                        new_names.setdefault(key, name)
+                        by_new.setdefault(key, []).append(src)
+                        if it.get("spotify", new.get("spotify")):
+                            new_sp.add(key)
+                        continue
+                if pid:
                     by_pid.setdefault(pid, []).append(src)
-            if not by_pid:
+            if not by_pid and not by_new:
                 return {"moved": 0, "playlists": []}
+            created = {}
+            if by_new:
+                if new_sp & set(by_new):
+                    sp = self._sp()
+                    if not sp.connected:
+                        raise SpotifyError("Spotify no está conectado. Conéctalo o crea la playlist solo en BrainOrder.")
+                    if not sp.can_write:
+                        raise SpotifyError("Para crear playlists en Spotify reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
+                root = Path(self._cfg["dest_root"])
+                for key, name in new_names.items():
+                    folder = new_dirs.get(key) or root / config.safe_name(name)
+                    folder.mkdir(parents=True, exist_ok=True)
+                    created[key] = folder
             ops, ctx = [], {}
+            for key, srcs in by_new.items():
+                ops += [(s_, str(created[key])) for s_ in srcs]
             for pid, srcs in by_pid.items():
                 pl, src_kind, entry, folder = self._pl_ctx(pid, analysis)
                 folder = folder or pl.get("folder")
@@ -3837,7 +3995,42 @@ class Api:
                 ops += [(s_, folder) for s_ in srcs]
             res = self._relocate_ops(ops, f"Llevar {len(ops)} canción(es) a sus playlists")
             changes = res.get("changes") or {}
-            out = []
+            out, new_pids = [], []
+            for key, srcs in by_new.items():
+                name, folder = new_names[key], created[key]
+                moved = [changes[s_] for s_ in srcs if s_ in changes]
+                if not moved and not FC.audio_files(folder):
+                    try:
+                        folder.rmdir()  # no se movió nada: no queda una carpeta vacía
+                    except OSError:
+                        pass
+                    continue
+                self._progress(f"Creando la playlist «{name}»…", 0.6)
+                entry = {"name": name, "path": str(folder)}
+                note, want_sp = None, key in new_sp
+                try:
+                    r = self._import_playlist(name, FC.audio_files(folder), {"spotify": want_sp},
+                                              entry, FC.pid_for(folder))
+                except Exception as e:
+                    if isinstance(e, SpotifyPaused) or not want_sp:
+                        raise
+                    # los archivos ya están en su carpeta: la playlist queda igual, solo en BrainOrder
+                    config.log(f"playlist nueva «{name}» en Spotify: {e!r}")
+                    note = ("no encontré en Spotify ninguna de sus canciones" if "ninguna canción" in str(e)
+                            else str(e) if isinstance(e, SpotifyError) else "no se pudo crear en Spotify")
+                    r = self._import_playlist(name, FC.audio_files(folder), {}, entry, FC.pid_for(folder))
+                CN.mark(folder, known=True, imported=True)  # no aparece en «Playlists nuevas»
+                rr = r.get("result") or {}
+                info = {"name": name, "count": len(moved), "created": True}
+                if note:
+                    info["spotify_error"] = note
+                if rr.get("spotify"):
+                    info.update(spotify="ok", added=rr["spotify"].get("found", 0),
+                                unresolved=len(rr["spotify"].get("unresolved") or []))
+                elif rr.get("queued"):
+                    info["spotify"] = "queued"
+                out.append(info)
+                new_pids.append(r.get("pid"))
             for pid, srcs in by_pid.items():
                 pl, src_kind, entry, folder = ctx[pid]
                 moved = [changes[s_] for s_ in srcs if s_ in changes]
@@ -3876,7 +4069,8 @@ class Api:
                 out.append(info)
             analysis = self._build_analysis(light=True)
             return {"moved": len(changes), "skipped": res.get("skipped") or [], "playlists": out,
-                    "op_id": res.get("op_id"), "analysis": analysis, "queue": len(cola_spotify.load())}
+                    "op_id": res.get("op_id"), "analysis": analysis, "queue": len(cola_spotify.load()),
+                    "new_pids": new_pids}
         return self._task(run, "assign_downloads", "Llevar descargas a una playlist")
 
     def outside_scan(self):

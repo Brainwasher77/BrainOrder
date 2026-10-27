@@ -1,5 +1,5 @@
 {
-  "version": "2.21.0",
-  "build": 61,
-  "notes": "Nuevo: sección «Sin playlist» para elegir a qué playlist llevar las descargas sueltas y las de _SIn Playlist. Los pendientes de Spotify se hacen antes de leer tus playlists, sin repetir búsquedas ni releer playlists enteras, y te dice por qué no avanzan."
+  "version": "2.22.0",
+  "build": 62,
+  "notes": "Nuevo en «Sin playlist»: eliges de qué carpeta lee las canciones sin playlist (una o varias), puedes crear una playlist nueva ahí mismo (también en Spotify) y elegir la carpeta donde quedan sus canciones."
 }
