@@ -18,7 +18,7 @@ from pathlib import Path
 
 VERSION = 1
 FIELDS = ("artist", "title", "genre", "album")
-BAD_ARTISTS = {"", "desconocido", "unknown", "unknown artist", "artista desconocido", "unknown mobile", "<unknown>",
+BAD_ARTISTS = {"", "desconocido", "unknown", "unknown artist", "artista desconocido", "<unknown>",
                "[unknown]", "sin artista", "no artist", "artist", "track", "various", "n/a", "na", "none", "null",
                "unknown artist(s)", "artista", "interprete desconocido", "intérprete desconocido"}
 BAD_TITLES = {"", "track", "untitled", "sin titulo", "sin título", "unknown", "desconocido", "audio", "pista"}

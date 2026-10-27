@@ -140,6 +140,8 @@ class Api:
         armonia.load(config.SUPPORT_DIR / "armonia.json")
         import etiquetas
         etiquetas.load(config.SUPPORT_DIR / "etiquetas.json")
+        import buscar_datos
+        buscar_datos.load(config.SUPPORT_DIR / "busqueda_datos.json")
         # Multitarea segura:
         #  _state: cachés de Spotify y análisis. Se toma solo en tramos cortos (leer/cruzar/escribir),
         #          así varias tareas avanzan a la vez y nunca se pisan los resultados.
@@ -4426,31 +4428,78 @@ class Api:
         return self._task(run, "meta_scan", "Datos incompletos")
 
     def meta_search(self, path, query=""):
-        """Busca en Spotify cómo se llama de verdad una canción (para elegir). -> {hits: [...]}"""
+        """Busca cómo se llama de verdad una canción para elegir: Deezer y Apple Music (gratis) y, si está
+        conectado y sin pausa, también Spotify. -> {hits: [{artist, title, title_keep, album, genre, secs, close,
+        source}], query, secs}"""
+        import buscar_datos
+        import etiquetas
+        tags = etiquetas.read(path) if path and os.path.isfile(path) else {}
+        q = re.sub(r"\s+", " ", str(query or "")).strip() or buscar_datos.query_for(path, tags)
+        r = buscar_datos.lookup(path, tags, query=q)
+        buscar_datos.save()
+        hits = [{k: c.get(k) for k in ("artist", "title", "title_keep", "album", "genre", "secs", "close", "source", "sure")}
+                for c in r.get("cands") or []]
+        secs = r.get("secs")
+        note = None
         sp = self._sp()
-        if not sp.connected:
-            return {"ok": False, "error": "Conecta Spotify para buscar."}
-        if spotify_api.paused_until():
-            return {"ok": False, "error": "Spotify está en pausa por exceso de consultas: intenta más tarde."}
-        q = re.sub(r"\s+", " ", str(query or "")).strip()
-        if not q:
+        if sp.connected and not spotify_api.paused_until():
+            try:
+                file_title = buscar_datos._file_title(path, tags) if tags else ""
+                for h in sp.search_track(title=q)[:5]:
+                    hs = round((h.get("duration_ms") or 0) / 1000)
+                    hits.append({"artist": ", ".join(h["artists"]), "title": h["name"],
+                                 "title_keep": buscar_datos.keep_version(file_title, h["name"]),
+                                 "album": h.get("album") or "", "genre": "", "secs": hs, "source": "Spotify",
+                                 "close": bool(secs and hs and abs(secs - hs) <= buscar_datos.TOL)})
+            except SpotifyPaused:
+                note = "Spotify está en pausa: solo resultados de Deezer y Apple Music."
+            except SpotifyError as e:
+                note = f"Spotify: {e}"
+        elif not sp.connected:
+            note = "Spotify no está conectado: resultados de Deezer y Apple Music."
+        hits.sort(key=lambda h: (bool(h.get("close")), bool(h.get("sure"))), reverse=True)
+        if not hits and r.get("error"):
+            return {"ok": False, "error": "No pude buscar en internet: " + r["error"]}
+        return {"ok": True, "hits": hits[:10], "query": q, "secs": secs, "note": note}
+
+    def meta_lookup(self, paths):
+        """Busca en internet (Deezer y Apple Music, gratis y sin gastar consultas de Spotify) el artista, el
+        título y el género de las canciones elegidas. Se compara con la duración de tu archivo: si dura igual y
+        se parece, la propuesta es «segura»; si no, quedan «posibles» para que elijas tú.
+        -> {results: {ruta: {best, cands, query, secs}}, sure, maybe, none}"""
+        def run():
+            import buscar_datos
             import etiquetas
-            stem = Path(path).stem
-            if " - " in stem and etiquetas.bad_artist(stem.split(" - ", 1)[0]):
-                stem = stem.split(" - ", 1)[1]
-            q = etiquetas.clean(stem.replace(" - ", " "))
-        try:
-            hits = sp.search_track(title=q)[:6]
-        except SpotifyPaused:
-            return {"ok": False, "error": "Spotify está en pausa por exceso de consultas: intenta más tarde."}
-        except SpotifyError as e:
-            return {"ok": False, "error": str(e)}
-        secs = biblioteca.duration(path) if path and os.path.isfile(path) else None
-        out = [{"artist": ", ".join(h["artists"]), "title": h["name"], "album": h.get("album") or "",
-                "secs": round((h.get("duration_ms") or 0) / 1000), "close": bool(secs and h.get("duration_ms")
-                                                                                   and abs(secs - h["duration_ms"] / 1000) <= 4)}
-               for h in hits]
-        return {"ok": True, "hits": out, "query": q, "secs": round(secs) if secs else None}
+            todo = [p for p in dict.fromkeys(paths or []) if p and os.path.isfile(p)]
+            out, sure, maybe, none, errors = {}, 0, 0, 0, []
+            self._meta_stop = False
+            for n, p in enumerate(todo, 1):
+                if self._meta_stop:  # «Parar»: lo ya encontrado se queda
+                    break
+                self._progress(f"Buscando en internet {n}/{len(todo)}: {Path(p).name}", (n - 1) / max(1, len(todo)))
+                r = buscar_datos.lookup(p, etiquetas.read(p))
+                if r.get("error") and not r.get("cands"):
+                    errors.append(r["error"])
+                    if len(errors) >= 5 and not sure and not maybe:
+                        raise unificar.UnifyError("No pude buscar en internet: " + errors[0] + ". Revisa tu conexión.")
+                out[p] = {k: r.get(k) for k in ("best", "cands", "query", "secs")}
+                if r.get("best"):
+                    sure += 1
+                elif r.get("cands"):
+                    maybe += 1
+                else:
+                    none += 1
+                if n % 25 == 0:
+                    buscar_datos.save()
+            buscar_datos.save()
+            self._progress("Listo.", 1)
+            return {"results": out, "sure": sure, "maybe": maybe, "none": none,
+                    "errors": sorted(set(errors))[:3], "stopped": self._meta_stop}
+        return self._task(run, "meta_lookup", "Buscar datos en internet")
+
+    def meta_lookup_stop(self):
+        self._meta_stop = True
+        return {"ok": True}
 
     def meta_fix(self, items):
         """Completa los datos de las canciones elegidas: escribe artista / título / género en el archivo y, si lo
