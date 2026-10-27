@@ -50,12 +50,9 @@ def _walk(roots):
 
 
 def _origin(path, moves_back):
-    """Dónde estaba antes (Historial): sigue los movimientos hacia atrás."""
-    cur, n = os.path.normcase(path), 0
-    while cur in moves_back and n < 20:
-        cur = moves_back[cur]
-        n += 1
-    return cur if n else None
+    """Dónde estaba justo antes de entrar a _duplicados (Historial). Un solo paso atrás: seguir toda la
+    cadena la devolvía a la carpeta de descargas de donde salió la primera vez."""
+    return moves_back.get(os.path.normcase(path))
 
 
 def scan(roots, dest_root, ops=(), duration=None, playlists=()):

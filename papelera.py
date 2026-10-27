@@ -105,6 +105,50 @@ def list_audio():
     return out
 
 
+# carpetas de programas y de BrainOrder que no son descargas sueltas
+_NOT_LOOSE = {"ableton", "audio music apps", "music", "pioneerdj", "traktor", "_serato_", "_serato_backup", "djay",
+              "rekordbox", "mapeos", "xml´s", "xml's", "itunes", "garageband", "logic"}
+
+
+def outside_dirs(cfg):
+    """Carpetas donde suelen quedar descargas y que BrainOrder no revisa: Descargas, Escritorio y las
+    carpetas de tu carpeta de Música que no están en Ajustes."""
+    home = Path.home()
+    known = [cfg.get("dest_root"), cfg.get("inbox")] + list(cfg.get("library_roots") or [])
+    known = [os.path.normcase(os.path.abspath(k)) for k in known if k]
+
+    def inside_known(p):
+        q = os.path.normcase(os.path.abspath(str(p)))
+        return any(q == k or q.startswith(k.rstrip(os.sep) + os.sep) or k.startswith(q.rstrip(os.sep) + os.sep)
+                   for k in known)
+    out = [home / "Downloads", home / "Desktop"]
+    for base in (home / "Music", home / "Música"):
+        try:
+            for d in base.iterdir():
+                if d.is_dir() and not d.name.startswith(".") and d.name.lower() not in _NOT_LOOSE:
+                    out.append(d)
+        except OSError:
+            pass
+    return [d for d in out if d.is_dir() and not inside_known(d)]
+
+
+def list_audio_dirs(dirs, limit=200000):
+    """Audios en esas carpetas (sin leer las de permiso denegado)."""
+    out = []
+    for root in dirs:
+        try:
+            for d, ds, fs in os.walk(root):
+                ds[:] = [x for x in ds if not x.startswith(".") and x != "_duplicados"]
+                for f in fs:
+                    if f.lower().endswith(RP.AUDIO) and not f.startswith("._"):
+                        _add(out, os.path.join(d, f), f, None)
+                        if len(out) >= limit:
+                            return out
+        except OSError:
+            continue
+    return out
+
+
 def _add(out, path, name, original):
     try:
         size = os.path.getsize(path)

@@ -3547,10 +3547,14 @@ class Api:
         return self._task(run, "dup_rescue", "Recuperar de _duplicados")  # _relocate_ops toma el turno de archivos
 
     # ---------- buscar en la papelera ----------
-    def _trash_matches(self):
+    def _trash_matches(self, source="trash"):
         import papelera
-        self._progress("Revisando la papelera…")
-        trash = papelera.list_audio()
+        if source == "outside":
+            self._progress("Revisando Descargas, Escritorio y otras carpetas de tu música…")
+            trash = papelera.list_audio_dirs(papelera.outside_dirs(self._cfg))
+        else:
+            self._progress("Revisando la papelera…")
+            trash = papelera.list_audio()
         lost = []
         if (rekordbox_sync.RB_DIR / "master.db").exists():
             try:
@@ -3586,7 +3590,20 @@ class Api:
             return {"found": found, "total": len(trash)}
         return self._task(run, "trash_scan", "Buscar en la papelera")
 
-    def trash_restore(self, paths):
+    def outside_scan(self):
+        """¿Descargaste canciones que te faltan en una carpeta que BrainOrder no revisa?"""
+        def run():
+            trash, found = self._trash_matches("outside")
+            by = {}
+            for x in found:
+                d = str(Path(x["trash"]).parent)
+                by[d] = by.get(d, 0) + 1
+            self._progress("Listo.", 1)
+            return {"found": found, "total": len(trash), "folders": sorted(by.items(), key=lambda kv: -kv[1]),
+                    "inbox": self._cfg.get("inbox")}
+        return self._task(run, "outside_scan", "Buscar en otras carpetas")
+
+    def trash_restore(self, paths, source="trash"):
         """Saca de la papelera las elegidas y las pone donde van (la perdida de Rekordbox vuelve a su ruta:
         conserva cues y playlists sin tocar la librería). Queda en el Historial."""
         paths = set(paths or [])
@@ -3595,7 +3612,7 @@ class Api:
             import papelera
             import rb_cambios
             try:
-                _, found = self._trash_matches()
+                _, found = self._trash_matches(source)
             except papelera.TrashError as e:
                 raise unificar.UnifyError(str(e))
             todo = [x for x in found if x["trash"] in paths]
@@ -3613,7 +3630,8 @@ class Api:
             try:
                 res = organizador.relocate(ops, self._cfg, self._progress)
                 changes = res.get("changes") or {}
-                op = historial.record("relocate", f"Recuperar {len(changes)} canción(es) de la papelera",
+                where = "la papelera" if source == "trash" else "otras carpetas"
+                op = historial.record("relocate", f"Recuperar {len(changes)} canción(es) de {where}",
                                       list(changes.items())) if changes else None
             finally:
                 self._files.release()
@@ -3634,7 +3652,7 @@ class Api:
             analysis = self._build_analysis(light=True)
             return {"moved": len(changes), "skipped": res.get("skipped") or [], "op_id": op, "rb_note": rb_note,
                     "analysis": analysis}
-        return self._task(run, "trash_restore", "Recuperar de la papelera")
+        return self._task(run, "trash_restore", "Recuperar de la papelera" if source == "trash" else "Traer de otras carpetas")
 
     def rb_lost_replace(self, ids, remove_ids=None):
         """Repara las perdidas elegidas (reconectar al archivo o unir con su copia) y, si lo pides, saca de la
