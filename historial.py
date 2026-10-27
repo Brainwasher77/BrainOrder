@@ -17,7 +17,7 @@ from config import SUPPORT_DIR, log
 from plataforma import safe_move
 
 DIR = SUPPORT_DIR / "historial"
-KEEP = 50
+KEEP = 300  # el Historial también sirve para encontrar canciones que Rekordbox perdió
 _LOCK = threading.Lock()
 JUNK = {".DS_Store", "Thumbs.db", "desktop.ini"}
 
@@ -77,6 +77,19 @@ def mark_undone(op_id, info=None):
             op["undo_info"] = info
         with _LOCK:
             _save(op)
+
+
+def all_ops():
+    """Todas las operaciones guardadas (completas, con sus movimientos)."""
+    if not DIR.is_dir():
+        return []
+    out = []
+    for f in sorted(DIR.glob("*.json")):
+        try:
+            out.append(json.loads(f.read_text("utf-8")))
+        except Exception:
+            continue
+    return out
 
 
 def get(op_id):

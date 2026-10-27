@@ -38,6 +38,14 @@ def _quick_hash(path, chunk=262144):
         return None
 
 
+def _real(path):
+    try:
+        st = os.stat(path)
+        return (st.st_dev, st.st_ino) if st.st_ino else os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(os.path.realpath(path))
+
+
 def _bitrate(path):
     if not mutagen:
         return None
@@ -86,6 +94,13 @@ def scan(cfg, analysis=None, rb=None, progress=None):
     groups, seen_sets = [], set()
 
     def add_group(members, kind, seconds):
+        # el mismo archivo por dos caminos (acceso directo, enlace) no es un duplicado: apartar uno rompía el otro
+        uniq = {}
+        for f in members:
+            uniq.setdefault(_real(f.path), f)
+        members = list(uniq.values())
+        if len(members) < 2:
+            return
         key = frozenset(f.path for f in members)
         if key in seen_sets:
             return

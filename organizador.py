@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 from config import log
-from plataforma import safe_move
+from plataforma import is_dup_dir, safe_move, same_file
 
 
 def _unique(dst: Path) -> Path:
@@ -73,8 +73,10 @@ def organize(analysis, cfg, progress=None):
             dd = Path(dest_dir)
             dd.mkdir(parents=True, exist_ok=True)
             dst = dd / src_p.name
+            if dst.exists() and same_file(src_p, dst):
+                continue  # es el mismo archivo (otro camino): ya está en su lugar
             if dst.exists():
-                # ya hay un archivo con ese nombre en la carpeta: no se duplica
+                # ya hay un archivo con ese nombre en la carpeta (y se queda ahí): la descarga se aparta
                 to_duplicates(src_p)
                 to_dups += 1
             else:
@@ -85,13 +87,16 @@ def organize(analysis, cfg, progress=None):
             errors.append(f"{src_p.name}: {e}")
             log(f"Error moviendo {src} -> {dest_dir}: {e}")
 
+    keep = keepers(analysis)
     for src in dups:
         n += 1
         src_p = Path(src)
         if progress:
             progress(f"Organizando {n}/{total}: {src_p.name} (ya la tenías)")
         try:
-            if src_p.exists():
+            k = keep.get(src)
+            # solo se aparta si la copia que ya tenías sigue ahí (y no es este mismo archivo)
+            if src_p.exists() and k and os.path.exists(k) and not is_dup_dir(k) and not same_file(src_p, k):
                 to_duplicates(src_p)
                 to_dups += 1
         except Exception as e:
@@ -112,7 +117,7 @@ def relocate(ops, cfg, progress=None):
     import unificar
 
     rb = unificar.rb_paths(progress) or set()
-    need_rb = any(src in rb for src, _ in ops)
+    need_rb = any(op[0] in rb for op in ops)
     if need_rb and rekordbox_sync.rekordbox_running():
         raise rekordbox_sync.RekordboxError(
             "Rekordbox está abierto. Ciérralo y vuelve a aplicar: hay canciones de tu librería y hay que corregir sus rutas.")
@@ -120,14 +125,17 @@ def relocate(ops, cfg, progress=None):
 
     moved, changes, skipped = [], {}, []
     try:
-        for n, (src, dest_dir) in enumerate(ops, 1):
+        for n, op in enumerate(ops, 1):
+            src, dest_dir = op[0], op[1]
             s = Path(src)
             if progress:
                 progress(f"Moviendo {n}/{len(ops)}: {s.name}", n / max(1, len(ops)))
-            d = Path(dest_dir) / s.name
+            d = Path(dest_dir) / (op[2] if len(op) > 2 and op[2] else s.name)
             if not s.exists():
                 skipped.append({"file": s.name, "why": "ya no existe"})
                 continue
+            if d.exists() and same_file(s, d):
+                continue  # ya está ahí (mismo archivo)
             if d.exists():
                 skipped.append({"file": s.name, "why": f"ya hay un archivo con ese nombre en {Path(dest_dir).name}"})
                 continue
@@ -181,6 +189,8 @@ def move_unmatched(groups, files, cfg, progress=None):
                 continue
             dest.mkdir(parents=True, exist_ok=True)
             target = dest / src.name
+            if target.exists() and same_file(src, target):
+                continue  # es el mismo archivo (otro camino): ya está en su lugar
             if target.exists():
                 rel = src.relative_to(inbox) if inbox in src.parents else Path(src.name)
                 t = _unique(dup_dir / rel)

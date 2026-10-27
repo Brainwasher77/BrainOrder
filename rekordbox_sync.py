@@ -102,10 +102,17 @@ def backup():
         shutil.copy2(src, dst)
         if wal.exists() and wal.stat().st_size > 0:  # que el respaldo no pierda lo que estaba en el diario
             shutil.copy2(wal, dst.with_name(dst.name + "-wal"))
-    # conservar solo los 5 respaldos más recientes de BrainOrder
-    olds = sorted(RB_DIR.glob("master.backup.brainorder-*.db"),
-                  key=_backup_stamp)
-    for old in olds[:-5]:
+    # se conservan los 5 más recientes y, además, el PRIMERO de cada uno de los últimos 7 días: varias
+    # operaciones seguidas ya no se llevan el respaldo de antes de empezar
+    olds = sorted(RB_DIR.glob("master.backup.brainorder-*.db"), key=_backup_stamp)
+    keep = set(olds[-5:])
+    first_of_day = {}
+    for b in olds:
+        st = _backup_stamp(b)
+        if (datetime.now() - st).days < 7:
+            first_of_day.setdefault(st.date(), b)
+    keep |= set(first_of_day.values())
+    for old in [b for b in olds if b not in keep]:
         for f in (old, old.with_name(old.name + "-wal")):
             try:
                 f.unlink()

@@ -1360,7 +1360,11 @@ class Api:
         bk = rekordbox_sync.backup().name
         db = DB(path=rekordbox_sync.RB_DIR / "master.db")
         try:
-            done, skipped = rb_perdidas.revert(db, op["rb"], self._progress)
+            if op.get("v") == 2:
+                import rb_coleccion
+                done, skipped = rb_coleccion.revert(db, op["rb"], self._progress)
+            else:
+                done, skipped = rb_perdidas.revert_v1(db, op["rb"], self._progress)
             db.commit()
         except Exception as e:
             try:
@@ -2128,9 +2132,13 @@ class Api:
 
     @staticmethod
     def _plan_dest(src, dest_dir, planned, dupdir):
-        """Carpeta destino donde el archivo no choca con otro del mismo nombre (si choca va a _duplicados,
-        nunca se pisa ni se deja atrás)."""
+        """Carpeta destino para src. None = ya está ahí (es el mismo archivo por otro camino: mayúsculas,
+        tildes, acceso directo) y no hay que moverlo. Si en el destino hay OTRO archivo con el mismo nombre,
+        src va a _duplicados (el del destino se queda); nunca se pisa nada."""
         name = Path(src).name
+        target = Path(dest_dir) / name
+        if target.exists() and plataforma.same_file(src, target):
+            return None
         d, n = Path(dest_dir), 1
         while (d / name).exists() or str(d / name) in planned:
             d = Path(dupdir) if n == 1 else Path(dupdir) / str(n)
@@ -2151,10 +2159,11 @@ class Api:
     def _move_folder(self, old, new, label):
         """Todo lo de la carpeta old pasa a new (con sus subcarpetas)."""
         old, new = Path(old), Path(new)
-        if not old.is_dir() or old == new:
-            return None
+        if not old.is_dir() or old == new or (new.exists() and plataforma.same_file(old, new)):
+            return None  # misma carpeta (p. ej. solo cambian mayúsculas en un disco que no las distingue)
         planned, dupdir = set(), Path(self._cfg["dest_root"]) / "_duplicados" / config.safe_name(new.name)
         ops = [(str(f), self._plan_dest(f, new / f.relative_to(old).parent, planned, dupdir)) for f in self._folder_files(old)]
+        ops = [o for o in ops if o[1]]
         new.mkdir(parents=True, exist_ok=True)
         res = self._relocate_ops(ops, label)
         rep = old / reportes.TXT_NAME
@@ -2186,10 +2195,17 @@ class Api:
         for p in ordered:
             for r in p["tracks"]:
                 home.setdefault(r["id"], p["folder"])
-        dup_ids = set()
+        dup_keep = {}
         if dup_of is not None:
-            dup_ids = {r["id"] for r in dup_of["tracks"] if r.get("source") and
-                       not str(r["source"]).startswith(str(folder) + os.sep)}
+            # la playlist destino ya tiene esa canción, pero SOLO cuenta si su archivo existe de verdad ahora,
+            # no está en _duplicados y no es este mismo archivo (antes un análisis viejo podía mandar la
+            # única copia a _duplicados)
+            for r in dup_of["tracks"]:
+                src = r.get("source")
+                if src and not str(src).startswith(str(folder) + os.sep) and os.path.isfile(src) \
+                        and not plataforma.is_dup_dir(src):
+                    dup_keep.setdefault(r["id"], src)
+        dup_ids = set(dup_keep)
         import unicodedata
         nk = (lambda x: os.path.normcase(unicodedata.normalize("NFC", str(x))))  # macOS guarda tildes en otra forma
         by_src = {nk(r["source"]): r for r in pl["tracks"] if r.get("source")}
@@ -2199,7 +2215,7 @@ class Api:
         for f in self._folder_files(folder):
             r = by_src.get(nk(f))
             rel = f.relative_to(folder).parent
-            if r and r["id"] in dup_ids:
+            if r and r["id"] in dup_ids and not plataforma.same_file(f, dup_keep[r["id"]]):
                 ops.append((str(f), self._plan_dest(f, dupdir / rel, planned, dupdir)))
                 n["dup"] += 1
             elif r and home.get(r["id"]) and Path(home[r["id"]]) != folder:
@@ -2208,6 +2224,7 @@ class Api:
             else:
                 ops.append((str(f), self._plan_dest(f, rest / rel, planned, dupdir)))
                 n["rest"] += 1
+        ops = [o for o in ops if o[1]]
         res = self._relocate_ops(ops, f"Eliminar «{name}»" if target is None else f"Fusionar «{name}»")
         rep = folder / reportes.TXT_NAME
         if rep.exists():
@@ -3404,11 +3421,55 @@ class Api:
         return {"ok": True, "keep": self._cfg["rb_keep"]}
 
     # ---------- canciones perdidas en Rekordbox ----------
-    def _rb_lost_scan(self):
+    def _rb_moves(self):
+        """Todo lo que BrainOrder movió (Historial), para seguir a cada archivo hasta donde está hoy."""
+        import rb_perdidas
+        moves = {}
+        for op in sorted(historial.all_ops(), key=lambda o: o.get("time") or ""):
+            pairs = op.get("moves") or []
+            if op.get("undone"):
+                pairs = [(b, a) for a, b in reversed(pairs)]  # se deshizo: volvieron a su lugar
+            for a, b in pairs:
+                moves[rb_perdidas._key(a)] = rb_perdidas._key(b)
+        return moves
+
+    def _rb_lost_roots(self, tracks_paths=()):
+        """Dónde buscar las canciones: tus carpetas de Ajustes y las carpetas donde vive tu colección."""
+        roots = [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or [])
+        home = Path.home()
+        tops = set()
+        for p in tracks_paths:
+            q = Path(plataforma.native(p))
+            try:
+                rel = q.relative_to(home)
+                if len(rel.parts) >= 3:
+                    tops.add(str(home / rel.parts[0] / rel.parts[1]))
+            except ValueError:
+                parts = q.parts
+                if len(parts) >= 4 and parts[1] == "Volumes":
+                    tops.add(str(Path(*parts[:4])))
+        roots += sorted(tops)
+        out = []
+        for r in sorted({os.path.normcase(os.path.abspath(r)) for r in roots if r and os.path.isdir(r)}, key=len):
+            if not any(r.startswith(x.rstrip(os.sep) + os.sep) for x in out):
+                out.append(r)
+        return out
+
+    def _rb_lost_scan(self, with_disk=True):
         import rb_perdidas
         path = rekordbox_sync.RB_DIR / "master.db"
         if not path.exists():
             raise rekordbox_sync.RekordboxError("No encontré la librería de Rekordbox en este computador.")
+
+        def run(con):
+            disk = None
+            if with_disk:
+                tracks, _ = rb_perdidas.read_tracks(con)
+                roots = self._rb_lost_roots([t["path"] for t in tracks if t.get("path")])
+                self._progress("Buscando tus canciones en el disco…")
+                disk = rb_perdidas.disk_index(roots)
+            self._progress("Comparando con tu colección de Rekordbox…")
+            return rb_perdidas.scan(con, disk=disk, moves=self._rb_moves(), duration=biblioteca.duration)
         try:
             con = rekordbox_sync.connect_ro()
         except Exception as e:
@@ -3416,7 +3477,7 @@ class Api:
             con = None
         if con is not None:
             try:
-                return rb_perdidas.scan(con)
+                return run(con)
             finally:
                 con.close()
         import shutil
@@ -3429,41 +3490,83 @@ class Api:
                     shutil.copy2(f, tmp / ("master.db" + suf))
             con = rekordbox_sync.connect_ro(tmp / "master.db")
             try:
-                return rb_perdidas.scan(con)
+                return run(con)
             finally:
                 con.close()
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def rb_lost(self):
-        """Canciones perdidas en Rekordbox y, para cada una, si hay otra copia en la colección."""
+        """Canciones perdidas en Rekordbox (y las que apuntan a _duplicados) y dónde está cada una ahora."""
         def run():
             import rb_perdidas
             self._progress("Buscando canciones perdidas en Rekordbox…")
             res = self._rb_lost_scan()
+            try:
+                res["rescue"] = self._rescue_scan()
+            except Exception as e:
+                config.log(f"rescate de _duplicados: {e!r}")
+                res["rescue"] = []
             res["summary"] = rb_perdidas.summary(res["items"])
             res["in_playlists"] = sum(1 for x in res["items"] if x["pids"])
             res["rekordbox_running"] = rekordbox_sync.rekordbox_running()
+            biblioteca.save_durations()
             self._progress("Listo.", 1)
             return res
         return self._task(run, "rb_lost", "Revisar perdidas en Rekordbox")
 
-    def rb_lost_replace(self, ids):
-        """Cambia cada perdida (ids) por su copia dentro de sus playlists. Rekordbox cerrado y con respaldo.
-        Las perdidas quedan fuera de toda playlist; borrarlas de la colección se hace en Rekordbox."""
+    def _rescue_scan(self):
+        import rescate
+        try:
+            con = rekordbox_sync.connect_ro()
+            try:
+                import rb_perdidas
+                tracks, _ = rb_perdidas.read_tracks(con)
+            finally:
+                con.close()
+        except Exception:
+            tracks = []
+        roots = self._rb_lost_roots([t["path"] for t in tracks if t.get("path")])
+        self._progress("Buscando canciones que solo están en _duplicados…")
+        names = [p["name"] for p in self._analysis() or []]
+        return rescate.scan(roots, self._cfg["dest_root"], historial.all_ops(), biblioteca.duration, names)
+
+    def dup_rescue(self, paths):
+        """Devuelve a su lugar las canciones que solo estaban en _duplicados (con Historial y Rekordbox)."""
+        paths = set(paths or [])
+
+        def run():
+            todo = [x for x in self._rescue_scan() if x["path"] in paths]
+            if not todo:
+                return {"moved": 0, "skipped": []}
+            ops = [(x["path"], str(Path(x["dest"]).parent), Path(x["dest"]).name) for x in todo]
+            res = self._relocate_ops(ops, f"Recuperar {len(ops)} canción(es) de _duplicados")
+            biblioteca.save_durations()
+            analysis = self._build_analysis(light=True)
+            return {"moved": res["moved"], "skipped": res["skipped"], "op_id": res.get("op_id"), "analysis": analysis}
+        return self._task(run, "dup_rescue", "Recuperar de _duplicados")  # _relocate_ops toma el turno de archivos
+
+    def rb_lost_replace(self, ids, remove_ids=None):
+        """Repara las perdidas elegidas (reconectar al archivo o unir con su copia) y, si lo pides, saca de la
+        colección las que no tienen copia en ninguna parte. Rekordbox cerrado, con respaldo y Deshacer."""
         ids = {str(i) for i in ids or []}
+        remove_ids = {str(i) for i in remove_ids or []}
 
         def run():
             import rb_cambios
+            import rb_coleccion
             import rb_perdidas
-            if not ids:
-                return {"stats": {"tracks": 0, "repointed": 0, "removed": 0}}
+            if not ids and not remove_ids:
+                return {"stats": {"relinked": 0, "merged": 0, "removed": 0, "skipped": 0}}
             if rekordbox_sync.rekordbox_running():
-                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para reemplazar las perdidas.")
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para reparar las perdidas.")
             self._progress("Revisando otra vez la colección…")
-            items = [x for x in self._rb_lost_scan()["items"] if x["id"] in ids and x["copy"] and x["pids"]]
-            if not items:
-                return {"stats": {"tracks": 0, "repointed": 0, "removed": 0}}
+            scan = self._rb_lost_scan()["items"]
+            items = [x for x in scan if x["id"] in ids and x.get("action")]
+            # solo se saca de la colección lo que de verdad no está en ninguna parte (no las de _duplicados)
+            remove = [x["id"] for x in scan if x["id"] in remove_ids and x["state"] == "lost" and not x.get("action")]
+            if not items and not remove:
+                return {"stats": {"relinked": 0, "merged": 0, "removed": 0, "skipped": 0}}
             try:
                 from pyrekordbox import MasterDatabase as DB
             except ImportError:  # pragma: no cover
@@ -3472,28 +3575,32 @@ class Api:
             bk = rekordbox_sync.backup().name
             db = DB(path=rekordbox_sync.RB_DIR / "master.db")
             try:
-                stats, changes, moved = rb_perdidas.replace(db, [(x["id"], x["copy"]["id"]) for x in items], self._progress)
+                stats, undo, anlz, moved = rb_perdidas.apply(db, items, remove, self._progress)
                 db.commit()
             except Exception as e:
                 try:
                     db.rollback()
                 except Exception:
                     pass
-                raise rekordbox_sync.RekordboxError(f"No pude reemplazar las perdidas (queda el respaldo {bk}): {e}")
+                config.log(f"Perdidas: {e!r}")
+                raise rekordbox_sync.RekordboxError(f"No pude reparar las perdidas (no se guardó nada; respaldo {bk}): {e}")
             finally:
                 try:
                     db.close()
                 except Exception:
                     pass
+            rb_coleccion.write_anlz(anlz)
             if moved:
                 rb_cambios.follow(moved=moved)  # que no salga como cambio hecho a mano en Rekordbox
             stats["backup"] = bk
             rb_perdidas.log_result(stats, bk)
-            op = historial.record_rb("rb_lost", f"Reemplazar {stats['tracks']} perdida(s) de Rekordbox por su copia",
-                                     changes, [Path(x["path"]).name for x in items[:3]], {"backup": bk})
+            n = stats["relinked"] + stats["merged"] + stats["removed"]
+            sample = [Path(x["path"]).name for x in items[:3]] or [f"{len(remove)} sin copia"]
+            op = historial.record_rb("rb_lost", f"Reparar {n} canción(es) perdida(s) en Rekordbox", undo, sample,
+                                     {"backup": bk, "v": 2})
             self._progress("Listo.", 1)
             return {"stats": stats, "op_id": op}
-        return self._task(run, "rb_lost_replace", "Reemplazar perdidas en Rekordbox", files=True)
+        return self._task(run, "rb_lost_replace", "Reparar perdidas en Rekordbox", files=True)
 
     # ---------- utilidades de UI ----------
     def reveal(self, path):

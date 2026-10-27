@@ -20,7 +20,7 @@ from pathlib import Path
 import biblioteca as b
 import reglas
 from config import AUDIO_EXT, log
-from plataforma import native, rb_path, safe_move
+from plataforma import free_name, identical, is_dup_dir, native, rb_path, safe_move, same_file
 
 DUP_DIR = "_duplicados"
 JUNK = {".DS_Store", "Thumbs.db", "desktop.ini"}
@@ -32,25 +32,55 @@ class UnifyError(Exception):
 
 
 # ---------------------------------------------------------------- Rekordbox (lectura)
+def _real(path):
+    try:
+        st = os.stat(path)
+        return (st.st_dev, st.st_ino) if st.st_ino else os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(os.path.realpath(path))
+
+
 def _pkey(p):
     """Clave para comparar una ruta de BrainOrder con una de Rekordbox: mismas barras y, en Windows,
     sin distinguir mayúsculas (C:/Users/Frank y c:\\users\\frank son el mismo archivo)."""
     return os.path.normcase(native(str(p)))
 
 
+def _with_links(paths):
+    """Las rutas y, para las que son un acceso directo (alias / symlink), también el archivo al que
+    apuntan: mover ese archivo también obliga a corregir Rekordbox."""
+    for x in paths:
+        yield x
+        try:
+            n = native(str(x))
+            if os.path.islink(n):
+                yield os.path.realpath(n)
+        except (OSError, ValueError):
+            pass
+
+
 class RbSet(set):
-    """Rutas de la librería de Rekordbox; «ruta in rb» compara con _pkey."""
+    """Rutas de la librería de Rekordbox (y destinos de sus accesos directos); «ruta in rb» compara con _pkey."""
     def __init__(self, items=()):
-        super().__init__(_pkey(x) for x in items)
+        super().__init__(_pkey(x) for x in _with_links(items))
 
     def __contains__(self, p):
         return super().__contains__(_pkey(p))
 
 
 class RbIndex(dict):
-    """{ruta: info} de Rekordbox; get / in comparan con _pkey."""
+    """{ruta: info} de Rekordbox; get / in comparan con _pkey. Un acceso directo cuenta también para el
+    archivo al que apunta (si ese archivo no tiene entrada propia)."""
     def __init__(self, items=()):
-        super().__init__((_pkey(k), v) for k, v in dict(items).items())
+        items = dict(items)
+        super().__init__((_pkey(k), v) for k, v in items.items())
+        for k, v in items.items():
+            try:
+                n = native(str(k))
+                if os.path.islink(n):
+                    self.setdefault(_pkey(os.path.realpath(n)), v)
+            except (OSError, ValueError):
+                pass
 
     def __contains__(self, p):
         return super().__contains__(_pkey(p))
@@ -209,6 +239,10 @@ def plan(cfg, analysis=None, progress=None):
             else:
                 subs.append([(f, d)])
         for s in subs:
+            uniq = {}
+            for f, d in s:  # el mismo archivo por dos caminos (acceso directo) no es un repetido
+                uniq.setdefault(_real(f.path), (f, d))
+            s = list(uniq.values())
             if len(s) < 2:
                 continue
             members = [f for f, _ in s]
@@ -326,11 +360,17 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
         moves.append((str(src), str(dst)))
 
     def retire(src: Path, keeper: str):
+        """Aparta src SOLO si de verdad hay otra copia: keeper existe, no está en _duplicados y no es el
+        mismo archivo por otro camino. Si no, src se queda donde está (antes podía apartarse la única copia)."""
+        if not keeper or not os.path.exists(keeper) or is_dup_dir(keeper) or same_file(src, keeper):
+            log_lines.append(f"SE QUEDA  {src}\n          (no hay otra copia segura: no se aparta)")
+            return False
         dst = _unique(dupdir / src.parent.name / src.name)
         move(src, dst)
         retired[str(src)] = str(dst)
         dup_of[str(src)] = keeper
         log_lines.append(f"REPETIDA  {src}\n          se conserva: {keeper}\n          apartada en: {dst}")
+        return True
 
     try:
         # 2. canciones repetidas
@@ -362,9 +402,12 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
                         continue
                     dst = target / e.name
                     if dst.exists():
-                        if p.suffix.lower() in AUDIO_EXT:
-                            retire(p, str(dst))
-                        continue  # otro archivo con el mismo nombre: se deja donde está
+                        if same_file(p, dst):
+                            continue  # es el mismo archivo (otro camino): nada que juntar
+                        if p.suffix.lower() in AUDIO_EXT and identical(p, dst):
+                            retire(p, str(dst))  # copia exacta: se aparta
+                            continue
+                        dst = free_name(dst)  # mismo nombre pero OTRO archivo: se conservan los dos
                     move(p, dst)
                     path_change[str(p)] = str(dst)
                     log_lines.append(f"MOVIDA    {p}\n          ahora en: {dst}")
@@ -438,72 +481,83 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
     return res
 
 
-def _rb_apply(path_change, dup_of, retired):
+def _rb_apply(path_change, dup_of, retired=None):
+    """Corrige la colección de Rekordbox después de mover archivos.
+    path_change {ruta vieja: ruta nueva}: la pista apunta a la ruta nueva.
+    dup_of {repetida apartada: la que se conserva}: la repetida se UNE a la que se conserva (toma su lugar
+      en cada playlist, le pasa sus cues si no tenía) y sale de la colección. Antes quedaba apuntando a
+      _duplicados y se perdía en cuanto vaciabas esa carpeta.
+    También se corrigen las pistas que apuntan a un ACCESO DIRECTO (alias / symlink) hacia un archivo
+    movido: antes el acceso directo quedaba roto y la canción perdida.
+    Todo en una sola transacción: si algo falla no se guarda nada."""
     try:
         from pyrekordbox import MasterDatabase as DB
     except ImportError:
         from pyrekordbox import Rekordbox6Database as DB
+    import rb_coleccion as RC
     import rekordbox_sync
     db = DB(path=rekordbox_sync.RB_DIR / "master.db")
-    stats = {"paths": 0, "repointed": 0}
+    stats = {"paths": 0, "repointed": 0, "merged": 0, "links": 0}
+    undo, anlz = [], []
     try:
         def content(path):
             return rekordbox_sync.content_by_path(db, path)
 
-        pending_anlz = []
+        link_idx = None
 
-        def set_path(c, new):
-            """Cambia la ruta de la pista. Los archivos de análisis (ANLZ) se actualizan
-            solo después de guardar la base, para que un fallo no deje nada a medias."""
-            old = c.FolderPath
-            try:
-                anlz = db.read_anlz_files(c.ID)
-            except Exception:
-                anlz = {}  # pista sin analizar: no hay ANLZ que tocar
-            new = rb_path(new)
-            c.FolderPath = new
-            if c.OrgFolderPath and rb_path(c.OrgFolderPath) == rb_path(old):
-                c.OrgFolderPath = new
-            name = new.rsplit("/", 1)[-1]
-            if c.FileNameL != name:
-                c.FileNameL = name
-            pending_anlz.append((anlz, new))
+        def links_to(path):
+            """Pistas cuya ruta es un acceso directo que apunta (apuntaba) a `path`."""
+            nonlocal link_idx
+            if link_idx is None:
+                link_idx = defaultdict(list)
+                for c in db.get_content():
+                    p = RC.content_path(c)
+                    if p and os.path.islink(p):
+                        link_idx[os.path.normcase(os.path.realpath(p))].append(c)
+            return list(link_idx.get(os.path.normcase(os.path.realpath(path)), []))
+
+        def put(c, new):
+            """c pasa a apuntar a `new`; si ya hay otra pista ahí, se unen (no quedan dos)."""
+            other = content(new)
+            if other is not None and str(other.ID) != str(c.ID):
+                RC.merge(db, c, other, undo)
+                stats["merged"] += 1
+                return other
+            RC.set_path(db, c, new, undo, anlz)
             stats["paths"] += 1
+            return c
 
         for old, new in path_change.items():
             c = content(old)
             if c is not None:
-                set_path(c, new)
+                put(c, new)
+            for lc in links_to(old):
+                if c is None or str(lc.ID) != str(c.ID):
+                    put(lc, new)
+                    stats["links"] += 1
 
         for old, keep in dup_of.items():
-            dc = content(old)
-            if dc is None:
-                continue
+            dcs = [x for x in [content(old)] + links_to(old) if x is not None]
             kc = content(keep)
             if kc is None:
-                # la copia conservada no estaba en Rekordbox: esta entrada pasa a apuntarle
-                set_path(dc, keep)
-                continue
-            for s in list(db.get_playlist_songs(ContentID=dc.ID)):
-                already = db.get_playlist_songs(PlaylistID=s.PlaylistID, ContentID=kc.ID).first()
-                if already is not None:
-                    db.remove_from_playlist(s.PlaylistID, s)
+                kl = links_to(keep)
+                kc = kl[0] if kl else None
+            seen = set()
+            for dc in dcs:
+                if str(dc.ID) in seen:
+                    continue
+                seen.add(str(dc.ID))
+                if kc is not None and str(dc.ID) == str(kc.ID):
+                    continue
+                stats["repointed"] += db.get_playlist_songs(ContentID=dc.ID).count()
+                if kc is None:
+                    # la que se conserva no estaba en Rekordbox: esta entrada pasa a apuntarle
+                    kc = put(dc, os.path.realpath(keep) if os.path.islink(keep) else keep)
                 else:
-                    s.ContentID = kc.ID
-                stats["repointed"] += 1
-            # la entrada repetida queda apuntando a su copia en _duplicados (no queda "perdida")
-            set_path(dc, retired[old])
+                    RC.merge(db, dc, kc, undo)
+                    stats["merged"] += 1
         db.commit()
-        for anlz, new in pending_anlz:
-            for apath, a in anlz.items():
-                try:
-                    p = new
-                    if str(a.get("path") or "").startswith("?/"):
-                        p = "?/" + new.rsplit("/", 1)[-1]
-                    a.set_path(p)
-                    a.save(apath)
-                except Exception as e:
-                    log(f"ANLZ {apath}: {e}")
+        RC.write_anlz(anlz)
         return stats
     except Exception:
         try:

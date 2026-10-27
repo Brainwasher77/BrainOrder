@@ -1264,7 +1264,7 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
-  if($('nLost')) $('nLost').innerHTML = LO.data ? (LO.data.items.length ? `<span style="color:var(--org)">${LO.data.items.length}</span>` : '0') : '–';
+  if($('nLost')){ const nl = LO.data ? LO.data.items.length + (LO.data.rescue||[]).length : null; $('nLost').innerHTML = nl === null ? '–' : (nl ? `<span style="color:var(--org)">${nl}</span>` : '0'); }
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
   { const n = mikRows(false).length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
@@ -2120,82 +2120,103 @@ function rbView(){
         <button class="primary" ${running('rb_apply')?'disabled':''} onclick="rbApply()">${running('rb_apply')?'Aplicando…':'Aplicar'}</button></div>` + keepBox;
 }
 // ---------- canciones perdidas en Rekordbox ----------
-// LO.data: {items:[{id,path,title,artist,len,cues,pls,pids,kind,copy}], total, offline, summary, in_playlists}
-let LO = {data:null, err:null, loading:false, sel:new Set(), kind:'', q:''};
-const LOST_KIND = {exacta:['Copia exacta','var(--ok)','El mismo archivo (mismo tamaño) está en otra carpeta de tu colección.'],
+// LO.data: {items:[{id,path,title,artist,len,cues,pls,pids,state,kind,action,copy}], total, offline, summary, in_playlists}
+// action: 'relink' (la pista pasa a apuntar al archivo) | 'merge' (se une con la copia que ya está en la colección) | null
+let LO = {data:null, err:null, loading:false, sel:new Set(), rm:false, kind:'', q:''};
+const LOST_KIND = {exacta:['Copia exacta','var(--ok)','El mismo archivo (mismo tamaño) está en otra carpeta, o BrainOrder lo movió.'],
   misma:['Misma canción','var(--ok)','Mismo ISRC, o mismo título y artista con la misma duración.'],
-  version:['Otra versión','var(--org)','Mismo título y artista pero otra duración: puede ser otro mix. Decide tú.'],
-  sin:['Sin copia','var(--miss)','No está en ninguna otra parte de tu colección. No la borres: búscala o vuelve a descargarla.']};
+  version:['Otra versión','var(--org)','Mismo título y artista pero otra duración: puede ser otro mix. No se toca sola.'],
+  sin:['Sin copia','var(--miss)','No está en ninguna carpeta de tu música ni en la colección.']};
+const LOST_ACT = {relink:'🔗 Reconectar', merge:'🔀 Unir con la copia'};
 async function lostLoad(){
   if(LO.loading) return; LO.loading = true; LO.err = null; if(S.view==='rblost') renderMain();
   try{ const r = await api().rb_lost();
-    if(r.ok){ LO.data = r; LO.sel = new Set(r.items.filter(x => x.pids.length && x.copy && (x.kind==='exacta' || x.kind==='misma')).map(x => x.id)); }
+    if(r.ok){ LO.data = r; LO.sel = new Set(r.items.filter(x => x.action).map(x => x.id)); LO.rm = false; }
     else { LO.err = r.error; } }
   catch(e){ LO.err = String(e); }
   LO.loading = false; render();
 }
 function lostVisible(){
   const q = (LO.q||'').toLowerCase();
-  return (LO.data ? LO.data.items : []).filter(x => (!LO.kind || x.kind===LO.kind) && (!q || (x.title+' '+x.artist+' '+x.pls.join(' ')).toLowerCase().includes(q)));
+  return (LO.data ? LO.data.items : []).filter(x => (!LO.kind || x.kind===LO.kind || (LO.kind==='dup' && x.state==='dup')) && (!q || (x.title+' '+x.artist+' '+x.pls.join(' ')).toLowerCase().includes(q)));
 }
+const lostGone = () => (LO.data ? LO.data.items : []).filter(x => x.state==='lost' && !x.action && x.kind==='sin');
 function lostView(){
   const head = `<div class="vhead"><h2>🎛️ Perdidas en Rekordbox</h2>
-    <span class="sub">Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca. Para cada una miro si hay <b>otra copia</b> en tu colección y la pongo en su lugar dentro de tus playlists, así puedes eliminar las perdidas sin que ninguna playlist pierda canciones.</span>
-    <div class="sp"><button onclick="lostLoad()" ${LO.loading?'disabled':''}>⟳ Revisar</button></div></div>`;
-  if(!LO.data) return head + `<div class="empty"><p>${LO.err ? esc(LO.err) : 'Leyendo tu colección de Rekordbox…'}</p></div>`;
+    <span class="sub">Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca, y las que apuntan a <code>_duplicados</code> (se pierden cuando vacías esa carpeta). Busco dónde está cada una —lo que movió BrainOrder, tu colección y tus carpetas— y las reparo <b>dentro de Rekordbox</b>: no se mueve ningún archivo.</span>
+    <div class="sp"><button onclick="lostLoad()" ${LO.loading?'disabled':''}>${LO.loading?'Buscando…':'⟳ Revisar'}</button></div></div>`;
+  if(!LO.data) return head + `<div class="empty"><p>${LO.err ? esc(LO.err) : 'Buscando en tu colección y en tus carpetas…'}</p></div>`;
   const d = LO.data, sm = d.summary, all = d.items;
-  if(!all.length) return head + `<div class="empty"><h3>No hay canciones perdidas 🎉</h3><p>Todas las canciones de tu colección (${d.total}) tienen su archivo.</p></div>`;
-  const rows = lostVisible(), withCopy = sm.exacta + sm.misma;
-  const tb = rows.slice(0, 500).map(x => { const k = LOST_KIND[x.kind], can = !!(x.copy && x.pids.length);
-    return `<tr><td style="width:30px">${can ? `<input type="checkbox" data-i="${esc(x.id)}" ${LO.sel.has(x.id)?'checked':''} onchange="this.checked?LO.sel.add(this.dataset.i):LO.sel.delete(this.dataset.i);lostSum()">` : ''}</td>
+  if(!all.length) return head + lostRescueBox() + `<div class="empty"><h3>No hay canciones perdidas 🎉</h3><p>Todas las canciones de tu colección (${d.total}) tienen su archivo.</p></div>`;
+  const rows = lostVisible(), fix = sm.relink + sm.merge, gone = lostGone();
+  const tb = rows.slice(0, 500).map(x => { const k = LOST_KIND[x.kind], c = x.copy;
+    return `<tr><td style="width:30px">${x.action ? `<input type="checkbox" data-i="${esc(x.id)}" ${LO.sel.has(x.id)?'checked':''} onchange="this.checked?LO.sel.add(this.dataset.i):LO.sel.delete(this.dataset.i);lostSum()">` : ''}</td>
       <td><div>${esc(x.title)}</div><div class="art">${esc(x.artist)}${x.len?` · ${pvFmt(x.len)}`:''}${x.cues?` · ${x.cues} cues`:''}</div>
-        <div class="art path" title="${esc(x.path)}" style="color:var(--mute)">✗ ${esc(x.path)}</div></td>
-      <td><span class="chip" style="cursor:default;color:${k[1]}" title="${esc(k[2])}">${k[0]}</span></td>
+        <div class="art path" title="${esc(x.path)}" style="color:var(--mute)">${x.state==='dup'?'⚠️ en _duplicados: ':'✗ '}${esc(x.path)}</div></td>
+      <td><span class="chip" style="cursor:default;color:${k[1]}" title="${esc(k[2])}">${k[0]}</span>${x.action?`<div class="art" style="margin-top:4px">${LOST_ACT[x.action]}</div>`:''}</td>
       <td>${x.pls.slice(0,3).map(n=>`<span class="chip" style="cursor:default">♫ ${esc(n)}</span>`).join('')}${x.pls.length>3?`<span class="art">+${x.pls.length-3}</span>`:''}${!x.pls.length?'<span class="art">ninguna</span>':''}</td>
-      <td>${x.copy ? `<div class="art path" onclick="reveal(${jsq(x.copy.path)})" title="${esc(x.copy.path)}">✓ ${esc(base(x.copy.path))}</div>
-        <div class="art">${x.copy.len?pvFmt(x.copy.len):''}${x.copy.cues?` · ${x.copy.cues} cues`:''}${x.copy.cues < x.cues ? ` <span style="color:var(--org)">(menos cues)</span>`:''}</div>` : '<span class="art">—</span>'}</td></tr>`; }).join('');
-  const sinL = all.filter(x => x.kind==='sin' || x.kind==='version');
+      <td>${c ? `<div class="art path" onclick="reveal(${jsq(c.path)})" title="${esc(c.path)}">✓ ${esc(base(c.path))}</div>
+        <div class="art">${esc(c.why||'')}${c.len?` · ${pvFmt(c.len)}`:''}${c.cues?` · ${c.cues} cues`:''}</div>` : '<span class="art">—</span>'}</td></tr>`; }).join('');
   return head + `<div class="cards" style="grid-template-columns:repeat(4,1fr)">
-      <div class="card"><div class="k">Perdidas</div><div class="v" style="color:var(--org)">${all.length}</div></div>
-      <div class="card"><div class="k">Con copia en la colección</div><div class="v" style="color:var(--ok)">${withCopy}</div></div>
-      <div class="card"><div class="k">Dentro de playlists</div><div class="v">${d.in_playlists}</div></div>
+      <div class="card"><div class="k">Por reparar</div><div class="v" style="color:var(--org)">${all.length}</div></div>
+      <div class="card"><div class="k">Se reparan solas</div><div class="v" style="color:var(--ok)">${fix}</div></div>
+      <div class="card"><div class="k">En _duplicados</div><div class="v">${sm.dup}</div></div>
       <div class="card"><div class="k">Sin copia / otra versión</div><div class="v" style="color:${sm.sin?'var(--miss)':'var(--text)'}">${sm.sin} / ${sm.version}</div></div></div>
     ${d.offline ? `<div class="art" style="margin:-4px 0 10px">${d.offline} canción(es) están en un disco que no está conectado: no cuentan como perdidas.</div>` : ''}
-    <div class="box" style="margin-bottom:10px"><b>Cómo va:</b> 1) <b>Reemplazar</b> cambia cada perdida marcada por su copia en todas sus playlists (misma posición; si la copia ya estaba en esa playlist, la perdida solo se quita). Antes respaldo la librería y se puede deshacer en Historial.
-      2) Después, en Rekordbox abre el <b>gestor de archivos perdidos</b> (menú <b>Archivo</b>; en inglés «Missing File Manager»), selecciónalas y <b>Eliminar</b>. Ya no estarán en ninguna playlist, así que no pierdes nada.
-      ${sinL.length ? `<br><span style="color:var(--org)">Al eliminar en Rekordbox <b>no</b> selecciones estas ${sinL.length}: ${sinL.slice(0,6).map(x=>esc(x.artist+' – '+x.title)).join(' · ')}${sinL.length>6?' …':''}</span>` : ''}</div>
+    ${lostRescueBox()}
+    <div class="box" style="margin-bottom:10px"><b>Cómo se reparan:</b> 🔗 <b>Reconectar</b>: la pista de Rekordbox pasa a apuntar al archivo que encontré (conserva cues, playlists, historial y análisis; es lo mismo que «Reubicar» en Rekordbox). 🔀 <b>Unir</b>: la copia que ya está en tu colección toma su lugar en cada playlist (misma posición), se queda con sus cues si no tenía, y la perdida sale de la colección.
+      Rekordbox tiene que estar cerrado; antes respaldo la librería y todo se puede deshacer en Historial.
+      ${gone.length ? `<br><label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" ${LO.rm?'checked':''} onchange="LO.rm=this.checked;lostSum()"> Sacar también de la colección las <b>${gone.length}</b> que no están en ninguna parte${gone.some(x=>x.pids.length)?` (${gone.filter(x=>x.pids.length).length} están en playlists: salen de ellas)`:''}. Se puede deshacer.</label>` : ''}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <select onchange="LO.kind=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit">
-        <option value="">Todas (${all.length})</option>${Object.keys(LOST_KIND).map(k=>`<option value="${k}" ${LO.kind===k?'selected':''}>${LOST_KIND[k][0]} (${sm[k]})</option>`).join('')}</select>
+        <option value="">Todas (${all.length})</option>${Object.keys(LOST_KIND).map(k=>`<option value="${k}" ${LO.kind===k?'selected':''}>${LOST_KIND[k][0]} (${sm[k]})</option>`).join('')}<option value="dup" ${LO.kind==='dup'?'selected':''}>En _duplicados (${sm.dup})</option></select>
       <input placeholder="Buscar…" value="${esc(LO.q)}" oninput="LO.q=this.value; clearTimeout(LO.t); LO.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
       <button class="ghost" onclick="lostAll(true)">Marcar las de la lista</button><button class="ghost" onclick="lostAll(false)">Ninguna</button>
-      <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reemplazar por su copia</button></div>
-    ${rows.length ? `<table><tr><th></th><th>Perdida</th><th>¿Tiene copia?</th><th>Playlists</th><th>Copia que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro, también las que no se ven.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+      <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reparar</button></div>
+    ${rows.length ? `<table><tr><th></th><th>En Rekordbox</th><th>¿Dónde está?</th><th>Playlists</th><th>Archivo que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
 }
+function lostRescueBox(){
+  const r = (LO.data && LO.data.rescue) || [];
+  if(!r.length) return '';
+  const by = {}; r.forEach(x => { const k = x.why; by[k] = (by[k]||0) + 1; });
+  return `<div class="box warn" style="margin-bottom:10px;display:flex;gap:12px;align-items:center"><div style="flex:1">⚠️ <b>${r.length} ${r.length===1?'canción está':'canciones están'} SOLO en <code>_duplicados</code></b>: no hay otra copia en tu música. Si vacías esa carpeta, se pierden.
+      <div class="art" style="margin-top:4px">Las devuelvo a su lugar: ${Object.entries(by).map(([k,n])=>`${n} a ${esc(k)}`).join(' · ')}. No se pisa nada, Rekordbox se corrige y se puede deshacer.</div>
+      <div class="art" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.slice(0,6).map(x=>esc(base(x.path))).join(' · ')}${r.length>6?' …':''}</div></div>
+    <button class="primary" ${running('dup_rescue')?'disabled':''} onclick="lostRescue()">${running('dup_rescue')?'Recuperando…':`Recuperar ${r.length}`}</button></div>`;
+}
+async function lostRescue(){
+  const r = (LO.data && LO.data.rescue) || []; if(!r.length) return;
+  setTimeout(()=>{ if(S.view==='rblost') renderMain(); }, 150);
+  const x = await api().dup_rescue(r.map(y => y.path));
+  if(!x.ok){ taskErr(x); renderMain(); return; }
+  if(x.analysis) await applyAnalysis(x);
+  loadHist();
+  toast(`✅ <b>${x.moved}</b> ${x.moved===1?'canción volvió':'canciones volvieron'} a su lugar desde _duplicados.` + ((x.skipped||[]).length?`<br><span style="color:var(--org)">${x.skipped.length} se saltaron: ${x.skipped.slice(0,2).map(s=>esc(s.file+' ('+s.why+')')).join('; ')}</span>`:'') + undoLink(x));
+  LO.data = null; lostLoad();
+}
+function lostCount(){ return LO.sel.size + (LO.rm ? lostGone().length : 0); }
 function lostSum(){
-  const n = LO.sel.size, b = $('loGo');
-  if(b){ b.disabled = !n || running('rb_lost_replace'); b.textContent = running('rb_lost_replace') ? 'Reemplazando…' : n ? `Reemplazar ${n} por su copia` : 'Reemplazar por su copia'; }
+  const n = lostCount(), b = $('loGo');
+  if(b){ b.disabled = !n || running('rb_lost_replace'); b.textContent = running('rb_lost_replace') ? 'Reparando…' : n ? `Reparar ${n}` : 'Reparar'; }
 }
-function lostAll(on){ lostVisible().forEach(x => { if(x.copy && x.pids.length){ on ? LO.sel.add(x.id) : LO.sel.delete(x.id); } }); renderMain(); }
+function lostAll(on){ lostVisible().forEach(x => { if(x.action){ on ? LO.sel.add(x.id) : LO.sel.delete(x.id); } }); renderMain(); }
 function lostAsk(){
-  const n = LO.sel.size; if(!n) return;
-  const items = LO.data.items.filter(x => LO.sel.has(x.id)), ver = items.filter(x => x.kind==='version').length;
-  const pls = new Set(items.flatMap(x => x.pls));
-  modal(`<h3>Reemplazar ${n} ${n===1?'perdida':'perdidas'} por su copia</h3>
-    <p>En <b>${pls.size}</b> playlist${pls.size!==1?'s':''} de Rekordbox, cada perdida pasa a ser la copia que sí tienes, en la misma posición. Las perdidas quedan fuera de toda playlist para que las elimines tranquilo en Rekordbox.</p>
-    ${ver ? `<div class="box warn">${ver} ${ver===1?'es':'son'} <b>otra versión</b> (otra duración). Revisa que sea la que quieres en esas playlists.</div>` : ''}
+  const n = lostCount(); if(!n) return;
+  const items = LO.data.items.filter(x => LO.sel.has(x.id));
+  const rl = items.filter(x => x.action==='relink').length, mg = items.filter(x => x.action==='merge').length, rm = LO.rm ? lostGone().length : 0;
+  modal(`<h3>Reparar ${n} ${n===1?'canción':'canciones'} en Rekordbox</h3>
+    <ul style="margin:6px 0 10px 18px">${rl?`<li>🔗 <b>${rl}</b> se reconectan a su archivo (conservan cues y playlists).</li>`:''}${mg?`<li>🔀 <b>${mg}</b> se unen con la copia que ya tienes en la colección.</li>`:''}${rm?`<li>🗑 <b>${rm}</b> sin copia salen de la colección.</li>`:''}</ul>
     <div class="box">Rekordbox tiene que estar cerrado. Respaldo la librería antes y se puede deshacer en Historial. No se mueve ni se borra ningún archivo de música.</div>
-    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="lostGo()">Reemplazar ${n}</button></div>`);
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="lostGo()">Reparar ${n}</button></div>`);
 }
 async function lostGo(){
-  closeModal(); const ids = [...LO.sel];
+  closeModal(); const ids = [...LO.sel], rm = LO.rm ? lostGone().map(x => x.id) : [];
   setTimeout(()=>{ if(S.view==='rblost') renderMain(); }, 150);
-  const r = await api().rb_lost_replace(ids);
+  const r = await api().rb_lost_replace(ids, rm);
   if(!r.ok){ taskErr(r); renderMain(); return; }
   const st = r.stats || {};
   loadHist();
-  toast(`✅ <b>${st.tracks||0}</b> ${st.tracks===1?'perdida reemplazada':'perdidas reemplazadas'} por su copia (${st.repointed||0} en playlists${st.removed?`, ${st.removed} quitadas porque la copia ya estaba`:''}).
-    <br>Ahora en Rekordbox: <b>Archivo → gestor de archivos perdidos</b> y elimínalas.` + undoLink(r));
+  toast(`✅ Rekordbox reparado: <b>${st.relinked||0}</b> reconectadas, <b>${st.merged||0}</b> unidas con su copia${st.removed?`, <b>${st.removed}</b> sacadas de la colección`:''}${st.skipped?` (${st.skipped} cambiaron mientras tanto y se saltaron)`:''}.` + undoLink(r));
   LO.data = null; lostLoad();
 }
 function c0src(c){ return c.type==='created' && !c.source ? 'nueva' : (SRC_NAME[c.source]||c.source||''); }
@@ -2333,8 +2354,8 @@ function histView(){
 function askUndo(id){
   const o = (S.hist||[]).find(x=>x.id===id); if(!o) return;
   modal(`<h3>Deshacer «${esc(o.label)}»</h3>
-    ${o.rb ? `<p>Cada playlist vuelve a tener la entrada perdida en lugar de su copia, en la misma posición (con respaldo).</p>
-    <div class="box">Rekordbox tiene que estar cerrado. Si ya eliminaste alguna perdida de la colección en Rekordbox, esa no se puede devolver y se salta.</div>`
+    ${o.rb ? `<p>Tu colección de Rekordbox vuelve a como estaba antes: las pistas reconectadas vuelven a su ruta anterior y las que salieron de la colección vuelven con sus cues y en sus playlists (con respaldo).</p>
+    <div class="box">Rekordbox tiene que estar cerrado. Lo que cambiaste después en Rekordbox sobre esas mismas pistas se respeta y esas se saltan.</div>`
     : `<p>Se devuelven <b>${o.ready}</b> archivo${o.ready!==1?'s':''} a donde estaban y se corrigen sus rutas en tus programas de DJ (con respaldo).</p>
     <div class="box">Tus programas de DJ tienen que estar cerrados. Las playlists que BrainOrder creó se quedan; solo cambian las rutas.</div>`}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();undoOp(${jsq(id)})">Deshacer</button></div>`);
