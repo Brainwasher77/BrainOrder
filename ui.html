@@ -1351,7 +1351,7 @@ function renderMain(){
       + (reorgRows(pl).length?`<button class="ro" onclick="openReorg(${i})" title="Elige si mover a su carpeta las canciones que ya tienes en otras carpetas">📂 Reorganizar <span class="badge mono">${reorgRows(pl).length}</span></button>`:'')
       + copyButtons(`pl:${i}`) + `<button class="xl" onclick="exportPlaylist(${i})">📊 Informe Excel</button>`;
   } else if(S.view==='missing'){
-    plBtn = copyButtons('missing');
+    plBtn = `<button class="ghost" ${running('trash_scan')?'disabled':''} onclick="trashScan()" title="¿Borraste alguna sin querer? Busco en la papelera las que te faltan">${running('trash_scan')?'Buscando…':'🗑 Buscar en la papelera'}</button>` + copyButtons('missing');
   }
   m.innerHTML = cards() + `<div class="vhead">${head}<div class="sp">${plBtn}${searchBox()}</div></div><div id="tbl"></div>`;
   renderTable();
@@ -2144,7 +2144,7 @@ const lostGone = () => (LO.data ? LO.data.items : []).filter(x => x.state==='los
 function lostView(){
   const head = `<div class="vhead"><h2>🎛️ Perdidas en Rekordbox</h2>
     <span class="sub">Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca, y las que apuntan a <code>_duplicados</code> (se pierden cuando vacías esa carpeta). Busco dónde está cada una —lo que movió BrainOrder, tu colección y tus carpetas— y las reparo <b>dentro de Rekordbox</b>: no se mueve ningún archivo.</span>
-    <div class="sp"><button onclick="lostLoad()" ${LO.loading?'disabled':''}>${LO.loading?'Buscando…':'⟳ Revisar'}</button></div></div>`;
+    <div class="sp"><button class="ghost" ${running('trash_scan')?'disabled':''} onclick="trashScan()" title="¿Borraste alguna sin querer? Busco en la papelera las perdidas y las que te faltan">${running('trash_scan')?'Buscando…':'🗑 Buscar en la papelera'}</button><button onclick="lostLoad()" ${LO.loading?'disabled':''}>${LO.loading?'Buscando…':'⟳ Revisar'}</button></div></div>`;
   if(!LO.data) return head + `<div class="empty"><p>${LO.err ? esc(LO.err) : 'Buscando en tu colección y en tus carpetas…'}</p></div>`;
   const d = LO.data, sm = d.summary, all = d.items;
   if(!all.length) return head + lostRescueBox() + `<div class="empty"><h3>No hay canciones perdidas 🎉</h3><p>Todas las canciones de tu colección (${d.total}) tienen su archivo.</p></div>`;
@@ -2174,6 +2174,42 @@ function lostView(){
       <button class="ghost" onclick="lostAll(true)">Marcar las de la lista</button><button class="ghost" onclick="lostAll(false)">Ninguna</button>
       <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reparar</button></div>
     ${rows.length ? `<table><tr><th></th><th>En Rekordbox</th><th>¿Dónde está?</th><th>Playlists</th><th>Archivo que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+// ---------- papelera ----------
+let TR = {data:null, sel:new Set()};
+async function trashScan(){
+  setTimeout(()=>render(), 120);
+  const r = await api().trash_scan();
+  render();
+  if(!r.ok){ taskErr(r); return; }
+  if(r.denied){ modal(`<h3>🗑 No pude abrir la papelera</h3><p>${esc(r.error_msg)}</p><div class="actions"><button class="primary" onclick="closeModal()">Entendido</button></div>`); return; }
+  TR.data = r; TR.sel = new Set(r.found.map(x => x.trash));
+  if(!r.found.length){ toast(`🗑 Revisé la papelera (${r.total} ${r.total===1?'canción':'canciones'}): no hay ninguna de las que te faltan ni de las perdidas en Rekordbox.`); return; }
+  trashModal();
+}
+function trashModal(){
+  const f = TR.data.found, rb = f.filter(x=>x.kind==='rb').length, fl = f.length - rb;
+  modal(`<h3>🗑 Encontré ${f.length} en la papelera</h3>
+    <p>${rb?`<b>${rb}</b> ${rb===1?'es una perdida':'son perdidas'} de Rekordbox (vuelven a su ruta: conservan cues y playlists)`:''}${rb&&fl?' y ':''}${fl?`<b>${fl}</b> te ${fl===1?'falta':'faltan'} en tus playlists (van a la carpeta de su playlist)`:''}.</p>
+    <div style="max-height:46vh;overflow:auto;margin:8px 0">${f.map(x=>`<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--line)">
+      <input type="checkbox" ${TR.sel.has(x.trash)?'checked':''} onchange="this.checked?TR.sel.add(${jsq(x.trash)}):TR.sel.delete(${jsq(x.trash)});trashSum()">
+      <div><div>${esc(x.title||x.name)}${x.artist?` <span class="art">· ${esc(x.artist)}</span>`:''}</div>
+        <div class="art">${x.kind==='rb'?'🎛️ perdida en Rekordbox':'⬇ falta en'} ${x.pls.slice(0,2).map(esc).join(', ')}${x.pls.length>2?'…':''} · ${esc(x.why)}</div>
+        <div class="art path" title="${esc(x.target)}">→ ${esc(x.target)}</div></div></label>`).join('')}</div>
+    <div class="box">Se sacan de la papelera y quedan en el Historial para deshacer. ${rb?'Rekordbox tiene que estar cerrado solo si alguna no puede volver a su ruta exacta.':''}</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="trGo" onclick="trashGo()">Recuperar ${TR.sel.size}</button></div>`);
+}
+function trashSum(){ const b = $('trGo'); if(b){ b.disabled = !TR.sel.size; b.textContent = `Recuperar ${TR.sel.size}`; } }
+async function trashGo(){
+  const paths = [...TR.sel]; if(!paths.length) return;
+  closeModal(); toast('Sacando de la papelera…');
+  const r = await api().trash_restore(paths);
+  if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) await applyAnalysis(r);
+  loadHist(); TR.data = null;
+  toast(`✅ <b>${r.moved}</b> ${r.moved===1?'canción volvió':'canciones volvieron'} de la papelera.` + (r.rb_note?`<br><span style="color:var(--org)">${esc(r.rb_note)}</span>`:'')
+    + ((r.skipped||[]).length?`<br><span style="color:var(--org)">${r.skipped.length} se saltaron.</span>`:'') + undoLink(r), !!r.rb_note);
+  if(S.view==='rblost'){ LO.data = null; lostLoad(); } else render();
 }
 function lostRescueBox(){
   const r = (LO.data && LO.data.rescue) || [];
