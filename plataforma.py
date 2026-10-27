@@ -216,6 +216,52 @@ def refresh_launcher(log=print):
 
 
 # ---------------- mover archivos sin riesgo ----------------
+def same_file(a, b):
+    """¿a y b son EL MISMO archivo (mismo inodo: mismo camino con otras mayúsculas o tildes, acceso
+    directo, enlace)? Apartar «uno» a _duplicados sería apartar el único que hay."""
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return False
+
+
+def _quick_hash(path, chunk=262144):
+    import hashlib
+    h = hashlib.sha1()
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        h.update(f.read(chunk))
+        if size > chunk * 2:
+            f.seek(-chunk, os.SEEK_END)
+            h.update(f.read(chunk))
+    return size, h.hexdigest()
+
+
+def identical(a, b):
+    """¿Dos archivos distintos con el mismo contenido (copia exacta)?"""
+    try:
+        return not same_file(a, b) and _quick_hash(str(a)) == _quick_hash(str(b))
+    except OSError:
+        return False
+
+
+def is_dup_dir(path):
+    return "_duplicados" in Path(str(path)).parts
+
+
+def free_name(path):
+    """Ruta libre junto a `path` («Canción (2).mp3», «(3)»…) para no pisar ni apartar nada."""
+    p = Path(str(path))
+    if not os.path.lexists(p):
+        return p
+    n = 2
+    while True:
+        q = p.with_name(f"{p.stem} ({n}){p.suffix}")
+        if not os.path.lexists(q):
+            return q
+        n += 1
+
+
 def _move_link(src, dst):
     """Un acceso directo (symlink) se mueve como acceso directo, apuntando al MISMO archivo de antes.
     Moverlo tal cual rompía los relativos («../otra carpeta/x.mp3» deja de existir desde la carpeta nueva),

@@ -155,13 +155,14 @@ Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras u
 Mientras no decidas, Organizar no toca esas playlists. Para escribir en Spotify hay que **reconectar Spotify** una vez (permiso de editar playlists). Deezer y los archivos exportados solo se pueden leer.
 
 ## Perdidas en Rekordbox
-Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca (por ejemplo, porque se movieron a otra carpeta). Para cada una BrainOrder mira si hay **otra copia en tu colección**:
-- **Copia exacta**: el mismo archivo (mismo tamaño) en otra carpeta.
-- **Misma canción**: mismo ISRC, o mismo título y artista con la misma duración (±4 s).
-- **Otra versión**: mismo título y artista pero otra duración (puede ser otro mix: decides tú).
-- **Sin copia**: no está en ninguna otra parte; no la borres.
+Canciones de tu colección de Rekordbox cuyo archivo ya no está donde Rekordbox lo busca, y las que apuntan a una carpeta `_duplicados` (se pierden en cuanto la vacías). Para cada una BrainOrder busca **dónde está ahora**: primero lo que movió BrainOrder (Historial, el archivo exacto), después otra entrada de tu colección (copia exacta, mismo ISRC o mismo título y artista con la misma duración ±4 s) y por último cualquier archivo de tus carpetas que no esté en la colección. Y las repara **dentro de Rekordbox** (no se mueve ningún archivo):
+- 🔗 **Reconectar**: la pista pasa a apuntar al archivo encontrado. Conserva cues, playlists, historial y análisis (lo mismo que «Reubicar» de Rekordbox, pero automático).
+- 🔀 **Unir con la copia**: la copia que ya está en tu colección toma su lugar en cada playlist (misma posición), se queda con sus cues si no tenía, y la perdida sale de la colección (con todo lo que cuelga de ella, sin dejar restos).
+- **Otra versión** (otra duración) no se toca sola. Las **sin copia** en ninguna parte se pueden sacar de la colección marcando la casilla.
 
-**Reemplazar por su copia** cambia cada perdida marcada por su copia dentro de **todas sus playlists**, en la misma posición (si la copia ya estaba en esa playlist, la perdida solo se quita). Rekordbox tiene que estar cerrado; antes se respalda la librería y se puede deshacer en Historial. No se mueve ni se borra ningún archivo de música. Después, en Rekordbox, abre el gestor de archivos perdidos (menú Archivo) y elimina las perdidas: ya no están en ninguna playlist, así que no pierdes nada. Las canciones de un disco externo desconectado no cuentan como perdidas.
+Rekordbox tiene que estar cerrado; antes se respalda la librería y todo se puede deshacer en Historial (vuelve exactamente como estaba: rutas, cues, playlists y su orden). Las canciones de un disco externo desconectado no cuentan como perdidas.
+
+**Canciones que solo están en `_duplicados`:** si una canción no tiene otra copia en tu música, el aviso de arriba lo dice y **Recuperar** la devuelve a su lugar: donde la espera un acceso directo roto (así vuelve a funcionar), donde estaba antes (Historial), la carpeta de su playlist o `_Recuperadas`. Se corrige Rekordbox y se puede deshacer.
 
 ## Duplicados
 Busca archivos repetidos en **toda** tu música: copias idénticas (aunque tengan otro nombre) y la misma canción en otro formato o calidad. Sugiere cuál conservar (cues o playlists en Rekordbox, Mixed In Key, uso en tus playlists, calidad) y tú eliges. Lo apartado va a `_duplicados`, se corrigen las rutas en tus programas de DJ y se puede deshacer en Historial.
@@ -174,6 +175,9 @@ En la barra lateral, **Reglas**:
 
 ## Seguridad de tus archivos
 - Nunca se borra música: lo repetido se aparta en carpetas `_duplicados` para que lo revises tú.
+- Solo se aparta algo a `_duplicados` si **de verdad** hay otra copia: que exista ahora, que no esté en `_duplicados` y que no sea el mismo archivo visto por otro camino (acceso directo, mayúsculas o tildes distintas). Si al juntar carpetas hay dos archivos con el mismo nombre pero distinto contenido, se conservan los dos («Canción (2).mp3»).
+- Al apartar una repetida, su pista de Rekordbox se **une** a la que se conserva (no queda apuntando a `_duplicados`), y las pistas que apuntan a un acceso directo se corrigen cuando su archivo se mueve.
+- Se guardan los 5 respaldos más recientes de Rekordbox y además el primero de cada uno de los últimos 7 días.
 - Mover entre discos es a prueba de cortes: se copia a un temporal oculto, se verifica y recién entonces se borra el original. Si se llena el disco o se desconecta, el original queda intacto y no queda ninguna copia a medias.
 - Antes de escribir en Rekordbox se respalda `master.db` en un solo archivo consistente (incluye lo que Rekordbox aún tenía en su diario `-wal`); se guardan los últimos 5 `master.backup.brainorder-…db`. Si no hay espacio para el respaldo, no se escribe nada. El paso automático de Mixed In Key hace como mucho un respaldo por hora.
 - Para revisar cambios en Rekordbox se lee la librería en modo solo lectura, sin copiarla (antes se copiaban ~200 MB en cada revisión).
@@ -225,7 +229,9 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 | `deezer.py` | Links de Deezer (ISRC o búsqueda) |
 | `reportes.py`, `excel.py` | `.txt` por carpeta e informes Excel |
 | `plataforma.py` | Diferencias entre macOS y Windows |
-| `rb_perdidas.py` | Canciones perdidas en Rekordbox y su copia en la colección |
+| `rb_perdidas.py` | Canciones perdidas en Rekordbox: dónde está cada una ahora |
+| `rb_coleccion.py` | Reconectar, unir y sacar pistas de la colección de Rekordbox, con Deshacer |
+| `rescate.py` | Canciones que solo quedaron en `_duplicados` |
 | `novedades.py` | Qué es nuevo en una playlist de tu programa de DJ (sin duplicar archivos ni playlists) |
 
 ---
