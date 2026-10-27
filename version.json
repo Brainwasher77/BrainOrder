@@ -1,5 +1,5 @@
 {
-  "version": "2.20.3",
-  "build": 60,
-  "notes": "Nuevo: «Faltan por descargar» dice en qué carpeta busca tus descargas y «🔎 Buscar en otras carpetas» encuentra las que bajaste en otro lado (y te ofrece usar esa carpeta). Arreglado: «Recuperar» de _duplicados devuelve cada canción a la carpeta de su playlist, no a descargas."
+  "version": "2.21.0",
+  "build": 61,
+  "notes": "Nuevo: sección «Sin playlist» para elegir a qué playlist llevar las descargas sueltas y las de _SIn Playlist. Los pendientes de Spotify se hacen antes de leer tus playlists, sin repetir búsquedas ni releer playlists enteras, y te dice por qué no avanzan."
 }

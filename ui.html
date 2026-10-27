@@ -285,6 +285,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
       <div class="nav">
         <a data-v="missing" onclick="show('missing')"><div class="row"><span class="name">Faltan por descargar</span><span class="cnt mono" id="nMissing">–</span></div></a>
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
+        <a data-v="noplaylist" onclick="show('noplaylist')"><div class="row"><span class="name">Sin playlist</span><span class="cnt mono" id="nNoPl">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="mik" onclick="show('mik')"><div class="row"><span class="name">Sin Mixed In Key</span><span class="cnt mono" id="nMik">–</span></div></a>
         <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
@@ -585,7 +586,7 @@ async function fdHide(kind, i){
 async function spqRun(){
   const r = await api().spotify_queue_run();
   if(!r.ok){ taskErr(r); fdLoad(); return; }
-  if(r.idle) toast('Spotify todavía no lo permite: se hace solo en cuanto se pueda.');
+  if(r.idle) toast(r.blocked ? `Todavía no se puede: ${esc(r.blocked)}. Se hace solo en cuanto se pueda.` : 'No había nada pendiente.', !!r.blocked);
   fdLoad();
 }
 async function spqCancel(id){
@@ -595,14 +596,16 @@ async function spqCancel(id){
 }
 // la lista de pendientes para Spotify, desde la cabecera
 async function spqModal(jobs){
-  if(!jobs){ const r = await api().spotify_queue(); jobs = r.jobs || []; }
+  let blocked = null;
+  if(!jobs){ const r = await api().spotify_queue(); jobs = r.jobs || []; blocked = r.blocked; }
   if(!jobs.length){ if($('spqList')) closeModal(); toast('No hay nada pendiente para Spotify.'); return; }
   const what = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
   modal(`<h3>⏳ Pendientes para Spotify</h3>
-    <div class="art" style="margin-bottom:8px">Se hacen solos en cuanto Spotify lo permita. Cancela los que ya no quieras (con ✕ o clic derecho).</div>
+    <div class="art" style="margin-bottom:8px">Se hacen solos en cuanto Spotify lo permita, y siempre <b>antes</b> de volver a leer tus playlists. Cancela los que ya no quieras (con ✕ o clic derecho).</div>
+    ${blocked ? `<div class="box warn" style="margin-bottom:8px">⏸ Ahora no se pueden hacer: ${esc(blocked)}.</div>` : ''}
     <table id="spqList">${jobs.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${what(j)}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
       <td style="text-align:right;width:40px"><button class="spq-x ib" onclick="spqCancel(${jsq(j.id)})" title="Cancelar este pendiente">${IC.x}</button></td></tr>`).join('')}</table>
-    <div class="actions"><button onclick="closeModal()">Cerrar</button></div>`);
+    <div class="actions"><button onclick="closeModal()">Cerrar</button><button class="primary" ${blocked?'disabled':''} onclick="closeModal();spqRun()">Hacerlos ya</button></div>`);
 }
 window.onSpotifyQueue = async (x) => {
   S.spQueue = x.left;
@@ -1264,6 +1267,7 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  if($('nNoPl')) $('nNoPl').innerHTML = NP.data ? (NP.data.rows.length ? `<span style="color:var(--org)">${NP.data.rows.length}</span>` : '0') : '–';
   if($('nLost')){ const nl = LO.data ? LO.data.items.length + (LO.data.rescue||[]).length : null; $('nLost').innerHTML = nl === null ? '–' : (nl ? `<span style="color:var(--org)">${nl}</span>` : '0'); }
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
@@ -1310,6 +1314,7 @@ function renderMain(){
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
   if(S.view==='rblost'){ m.innerHTML = lostView(); lostSum(); return; }
+  if(S.view==='noplaylist'){ m.innerHTML = npView(); npSum(); return; }
   if(S.view==='mik' && S.analysis){ m.innerHTML = mikView(); mikSum(); return; }
   if(S.view==='cmp' && S.analysis){ m.innerHTML = cmpView(); return; }
   if(!anySource() && !S.analysis){
@@ -1802,7 +1807,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -2174,6 +2179,64 @@ function lostView(){
       <button class="ghost" onclick="lostAll(true)">Marcar las de la lista</button><button class="ghost" onclick="lostAll(false)">Ninguna</button>
       <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reparar</button></div>
     ${rows.length ? `<table><tr><th></th><th>En Rekordbox</th><th>¿Dónde está?</th><th>Playlists</th><th>Archivo que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+// ---------- canciones sin playlist: elegir a cuál llevarlas ----------
+// NP.data: {rows:[{path, where, artist, title, suggest}], playlists:[{id,name,source}]}
+let NP = {data:null, loading:false, pick:{}, sel:new Set(), q:'', where:''};
+async function npLoad(){
+  if(NP.loading) return; NP.loading = true; if(S.view==='noplaylist') renderMain();
+  try{ const r = await api().noplaylist(); if(r.ok){ NP.data = r; NP.sel = new Set(); NP.pick = {}; } else toast(esc(r.error), true); }catch(e){}
+  NP.loading = false; render();
+}
+function npVisible(){
+  const q = (NP.q||'').toLowerCase();
+  return (NP.data ? NP.data.rows : []).filter(x => (!NP.where || x.where===NP.where) && (!q || (x.artist+' '+x.title+' '+base(x.path)).toLowerCase().includes(q)));
+}
+const npPlName = id => ((NP.data.playlists.find(p=>p.id===id))||{}).name || '';
+function npChoice(x){ return x.path in NP.pick ? NP.pick[x.path] : (x.suggest || ''); }
+function npView(){
+  const head = `<div class="vhead"><h2>Sin playlist</h2><span class="sub">Canciones que no son de ninguna playlist: descargas que no coinciden con nada y las de <code>_SIn Playlist</code>. Elige a qué playlist va cada una: el archivo pasa a su carpeta y la canción se agrega a la playlist (en Spotify también; si está en pausa, queda en los pendientes y mientras tanto ya la ves aquí).</span>
+    <div class="sp"><button onclick="npLoad()" ${NP.loading?'disabled':''}>${NP.loading?'Buscando…':'⟳ Revisar'}</button></div></div>`;
+  if(!NP.data) return head + `<div class="empty"><p>${NP.loading?'Buscando canciones sin playlist…':'Dale a Revisar.'}</p></div>`;
+  const all = NP.data.rows, rows = npVisible(), wheres = [...new Set(all.map(x=>x.where))];
+  if(!all.length) return head + `<div class="empty"><h3>Todas tus canciones tienen playlist 🎉</h3></div>`;
+  const opts = (sel) => `<option value="">— elegir playlist —</option>` + NP.data.playlists.map(p=>`<option value="${esc(p.id)}" ${sel===p.id?'selected':''}>${esc(p.name)}${p.source&&p.source!=='spotify'?` (${esc(SRC_NAME[p.source]||p.source)})`:''}</option>`).join('');
+  const tb = rows.slice(0, 500).map((x,k) => { const ch = npChoice(x);
+    return `<tr><td style="width:30px"><input type="checkbox" ${NP.sel.has(x.path)?'checked':''} onchange="this.checked?NP.sel.add(${jsq(x.path)}):NP.sel.delete(${jsq(x.path)});npSum()"></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn({source:x.path, id:'np'+k, name:x.title||base(x.path), artists:[x.artist]})}<div><div>${esc(x.title||base(x.path))}</div><div class="art">${esc(x.artist||'')}</div></div></div></td>
+      <td class="art">${x.where==='descargas'?'📥 descargas':'📂 '+esc(x.where)}</td>
+      <td><select onchange="NP.pick[${jsq(x.path)}]=this.value; if(this.value){NP.sel.add(${jsq(x.path)});} renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px;font:inherit;max-width:260px">${opts(ch)}</select>
+        ${x.suggest && !(x.path in NP.pick) ? `<div class="art">★ sugerida: ahí tienes más de ${esc(x.artist)}</div>` : ''}</td></tr>`; }).join('');
+  return head + `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select onchange="NP.where=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit">
+        <option value="">Todas (${all.length})</option>${wheres.map(w=>`<option value="${esc(w)}" ${NP.where===w?'selected':''}>${w==='descargas'?'Descargas':esc(w)} (${all.filter(x=>x.where===w).length})</option>`).join('')}</select>
+      <input placeholder="Buscar…" value="${esc(NP.q)}" oninput="NP.q=this.value; clearTimeout(NP.t); NP.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
+      <button class="ghost" onclick="npAll(true)">Marcar las de la lista</button><button class="ghost" onclick="npAll(false)">Ninguna</button>
+      <select id="npBulk" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;max-width:220px">${opts('').replace('— elegir playlist —','Poner a las marcadas…')}</select><button class="ghost" onclick="npBulk()">Aplicar</button>
+      <button id="npGo" class="primary" onclick="npGo()">Llevar a su playlist</button></div>
+    ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Dónde está</th><th>Llevar a</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function npReady(){ return (NP.data ? NP.data.rows : []).filter(x => NP.sel.has(x.path) && npChoice(x)); }
+function npSum(){ const n = npReady().length, b = $('npGo'); if(b){ b.disabled = !n || running('assign_downloads'); b.textContent = running('assign_downloads') ? 'Llevando…' : n ? `Llevar ${n} a su playlist` : 'Marca canciones con playlist elegida'; } }
+function npAll(on){ npVisible().forEach(x => on ? NP.sel.add(x.path) : NP.sel.delete(x.path)); renderMain(); }
+function npBulk(){ const v = ($('npBulk')||{}).value; if(!v) return; NP.data.rows.forEach(x => { if(NP.sel.has(x.path)) NP.pick[x.path] = v; }); renderMain(); }
+async function npGo(){
+  const items = npReady().map(x => ({src:x.path, pid:npChoice(x)})); if(!items.length) return;
+  const n = items.length, pls = new Set(items.map(i=>i.pid)).size;
+  modal(`<h3>Llevar ${n} ${n===1?'canción':'canciones'} a ${pls} playlist${pls!==1?'s':''}</h3>
+    <p>Cada archivo pasa a la carpeta de su playlist y la canción se agrega a la playlist (en Spotify también, o queda pendiente si Spotify está en pausa). Se corrigen tus programas de DJ y se puede deshacer en Historial.</p>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="closeModal();npDo()">Llevar ${n}</button></div>`);
+}
+async function npDo(){
+  const items = npReady().map(x => ({src:x.path, pid:npChoice(x)}));
+  setTimeout(()=>renderMain(), 120);
+  const r = await api().assign_downloads(items);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  if(r.analysis) await applyAnalysis(r);
+  loadHist(); if(r.queue !== undefined){ S.spQueue = r.queue; }
+  const lines = (r.playlists||[]).map(p => `«${esc(p.name)}»: ${p.count}` + (p.spotify==='queued' ? ' (a Spotify cuando termine la pausa)' : p.spotify==='ok' ? ` (en Spotify${p.unresolved?`, ${p.unresolved} no las encontré allá`:''})` : p.platform_note ? ` (en ${esc(p.platform_note)} agrégalas tú)` : ''));
+  toast(`✅ <b>${r.moved}</b> ${r.moved===1?'canción llevada':'canciones llevadas'} a su playlist.<br>${lines.join('<br>')}` + undoLink(r));
+  NP.data = null; npLoad();
 }
 // ---------- papelera ----------
 let TR = {data:null, sel:new Set(), src:'trash'};
@@ -2632,7 +2695,7 @@ async function askOrganizeAll(){
             : `«${esc(x.options[0].name)}» en <b>${esc(x.options[0].playlist)}</b>${x.options[0].duration_ms?` (${pvFmt(x.options[0].duration_ms/1000)})`:''}`}</div></div>
         <button onclick="oxAccept(${k})" title="Este archivo cuenta como esa canción de tu playlist (se organiza con ella)">Usar esta versión</button></div>`).join('')}</div>`:''}
     ${unmatched?`<div class="box warn">❓ <b>${unmatched}</b> no coinciden con ninguna playlist analizada${ib.pending?` (tienes <b>${ib.pending}</b> playlists sin analizar; puede que sean de ahí)`:''}.
-        <div style="margin-top:8px"><button onclick="closeModal();analyze()">Analizar todo para ubicarlas</button></div></div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" onclick="closeModal();show('noplaylist')">Elegir a qué playlist va cada una →</button><button onclick="closeModal();analyze()">Analizar todo para ubicarlas</button></div></div>
       ${ib.groups.length?`<div style="margin:10px 0 4px;font-weight:650">Subcarpetas de descargas <span class="art">— márcalas para moverlas como carpeta de playlist</span></div>
         ${ib.groups.map((g,k)=>`<label class="oxrow"><input type="checkbox" onchange="this.checked?OX.groups.add(${jsq(g.name)}):OX.groups.delete(${jsq(g.name)});oxSum()">
           <div style="min-width:0"><div><b>${esc(g.name)}</b> <span class="art">(${g.count})</span> → 📁 ${esc(short(g.dest))}${g.dest_exists?' <span class="art">(ya existe: se juntan)</span>':''}</div>

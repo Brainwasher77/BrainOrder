@@ -418,11 +418,15 @@ class Spotify:
         return self.send("PUT", f"/playlists/{pid}", {"name": name})
 
     def add_items(self, pid, uris, position=None):
+        """-> snapshot_id nuevo de la playlist (sirve para no volver a leerla entera)."""
+        snap = None
         for i in range(0, len(uris), 100):
             body = {"uris": uris[i:i + 100]}
             if position is not None:
                 body["position"] = position + i
-            self.send("POST", f"/playlists/{pid}/items", body)
+            r = self.send("POST", f"/playlists/{pid}/items", body)
+            snap = (r or {}).get("snapshot_id") or snap
+        return snap
 
     def remove_items(self, pid, uris):
         for i in range(0, len(uris), 100):
