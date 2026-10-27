@@ -1,5 +1,5 @@
 {
-  "version": "2.20.1",
-  "build": 58,
-  "notes": "Nuevo: «🗑 Buscar en la papelera» (en Perdidas en Rekordbox y en Faltan por descargar). Encuentra en la papelera las canciones perdidas en Rekordbox o que te faltan y las devuelve a su lugar, con Deshacer."
+  "version": "2.20.2",
+  "build": 59,
+  "notes": "Arreglado: en Perdidas en Rekordbox el botón «Recuperar» del aviso de _duplicados quedaba fuera de la pantalla cuando los nombres de las canciones eran largos."
 }

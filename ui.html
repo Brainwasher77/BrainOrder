@@ -2215,10 +2215,10 @@ function lostRescueBox(){
   const r = (LO.data && LO.data.rescue) || [];
   if(!r.length) return '';
   const by = {}; r.forEach(x => { const k = x.why; by[k] = (by[k]||0) + 1; });
-  return `<div class="box warn" style="margin-bottom:10px;display:flex;gap:12px;align-items:center"><div style="flex:1">⚠️ <b>${r.length} ${r.length===1?'canción está':'canciones están'} SOLO en <code>_duplicados</code></b>: no hay otra copia en tu música. Si vacías esa carpeta, se pierden.
+  return `<div class="box warn" style="margin-bottom:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:0">⚠️ <b>${r.length} ${r.length===1?'canción está':'canciones están'} SOLO en <code>_duplicados</code></b>: no hay otra copia en tu música. Si vacías esa carpeta, se pierden.
       <div class="art" style="margin-top:4px">Las devuelvo a su lugar: ${Object.entries(by).map(([k,n])=>`${n} a ${esc(k)}`).join(' · ')}. No se pisa nada, Rekordbox se corrige y se puede deshacer.</div>
       <div class="art" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.slice(0,6).map(x=>esc(base(x.path))).join(' · ')}${r.length>6?' …':''}</div></div>
-    <button class="primary" ${running('dup_rescue')?'disabled':''} onclick="lostRescue()">${running('dup_rescue')?'Recuperando…':`Recuperar ${r.length}`}</button></div>`;
+    <button class="primary" style="flex-shrink:0" ${running('dup_rescue')?'disabled':''} onclick="lostRescue()">${running('dup_rescue')?'Recuperando…':`Recuperar ${r.length}`}</button></div>`;
 }
 async function lostRescue(){
   const r = (LO.data && LO.data.rescue) || []; if(!r.length) return;
