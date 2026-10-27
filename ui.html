@@ -286,6 +286,8 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="missing" onclick="show('missing')"><div class="row"><span class="name">Faltan por descargar</span><span class="cnt mono" id="nMissing">–</span></div></a>
         <a data-v="organize" onclick="show('organize')"><div class="row"><span class="name">Listas para organizar</span><span class="cnt mono" id="nOrg">–</span></div></a>
         <a data-v="noplaylist" onclick="show('noplaylist')"><div class="row"><span class="name">Sin playlist</span><span class="cnt mono" id="nNoPl">–</span></div></a>
+        <a data-v="suggest" onclick="show('suggest')"><div class="row"><span class="name">Sugerencias</span><span class="cnt mono" id="nSug">–</span></div></a>
+        <a data-v="meta" onclick="show('meta')"><div class="row"><span class="name">Datos incompletos</span><span class="cnt mono" id="nMeta">–</span></div></a>
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="mik" onclick="show('mik')"><div class="row"><span class="name">Sin Mixed In Key</span><span class="cnt mono" id="nMik">–</span></div></a>
         <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
@@ -1267,6 +1269,8 @@ function renderCore(){
   $('nPct').textContent = (a && globalStats().songs) ? globalStats().pct + '%' : '–';
   const rr = S.rules||{}; const nr = (rr.exclude_dirs||[]).length + (rr.exclude_patterns||[]).length + Object.values(rr.playlist_mode||{}).filter(v=>v==='ignorar').length;
   $('nRules').textContent = nr ? nr : '–';
+  if($('nSug')) $('nSug').textContent = SG.data ? (SG.data.suggestions.length || '0') : '–';
+  if($('nMeta')) $('nMeta').innerHTML = MD.data ? (MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length ? `<span style="color:var(--org)">${MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length}</span>` : '0') : '–';
   if($('nNoPl')) $('nNoPl').innerHTML = NP.data ? (NP.data.rows.length ? `<span style="color:var(--org)">${NP.data.rows.length}</span>` : '0') : '–';
   if($('nLost')){ const nl = LO.data ? LO.data.items.length + (LO.data.rescue||[]).length : null; $('nLost').innerHTML = nl === null ? '–' : (nl ? `<span style="color:var(--org)">${nl}</span>` : '0'); }
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
@@ -1315,6 +1319,8 @@ function renderMain(){
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
   if(S.view==='rblost'){ m.innerHTML = lostView(); lostSum(); return; }
   if(S.view==='noplaylist'){ m.innerHTML = npView(); npSum(); return; }
+  if(S.view==='suggest'){ m.innerHTML = sgView(); sgSum(); return; }
+  if(S.view==='meta'){ m.innerHTML = mdView(); mdSum(); return; }
   if(S.view==='mik' && S.analysis){ m.innerHTML = mikView(); mikSum(); return; }
   if(S.view==='cmp' && S.analysis){ m.innerHTML = cmpView(); return; }
   if(!anySource() && !S.analysis){
@@ -1807,7 +1813,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -2349,6 +2355,229 @@ async function npDo(){
   toast(`✅ <b>${r.moved}</b> ${r.moved===1?'canción llevada':'canciones llevadas'} a su playlist.<br>${lines.join('<br>')}` + undoLink(r));
   NP.data = null; npLoad();
 }
+// ---------- sugerencias: playlists por género / energía / BPM (criterios de cada usuario) ----------
+let SG = {data:null, loading:false, sel:new Set(), names:{}, open:null, sp:false, edit:null, err:''};
+const IN_ST = 'background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit';
+async function sgLoad(){
+  if(SG.loading) return; SG.loading = true; if(S.view==='suggest') renderMain();
+  try{ const r = await api().suggest(); if(r.ok){ SG.data = r; SG.sel = new Set(); SG.names = {}; SG.open = null; } else if(!r.cancelled) toast(esc(r.error), true); }catch(e){}
+  SG.loading = false; render();
+}
+async function sgSet(part){
+  const r = await api().suggest_rules_save(part);
+  if(!r.ok){ toast(esc(r.error), true); return; }
+  SG.data = null; sgLoad();
+}
+function sgName(x){ return x.name in SG.names ? SG.names[x.name] : x.name; }
+function sgView(){
+  const busy = SG.loading || running('suggest');
+  const head = `<div class="vhead"><h2>Sugerencias</h2><span class="sub">Ideas de playlists para ordenar tu música según <b>tus</b> criterios: género (la etiqueta de cada archivo), energía (la de Mixed In Key), BPM o combinados. Los criterios los ajustas tú en «✏️ Mis criterios». Crear una playlist <b>no mueve ningún archivo</b>: cada canción se queda en su carpeta y la playlist la usa desde ahí.</span>
+    <div class="sp"><button class="ghost" onclick="sgEdit()" ${busy?'disabled':''}>✏️ Mis criterios</button><button onclick="sgLoad()" ${busy?'disabled':''}>${busy?'Revisando…':'⟳ Revisar'}</button></div></div>`;
+  if(SG.edit) return head + sgEditor();
+  if(!SG.data) return head + `<div class="empty"><p>${busy?'Leyendo género, energía y BPM de tus canciones (la primera vez tarda un poco)…':'Dale a Revisar.'}</p></div>`;
+  const d = SG.data, R = d.rules, st = d.stats;
+  const modes = Object.entries(d.modes).map(([k,v]) => `<button class="${R.mode===k?'primary':'ghost'}" ${busy?'disabled':''} onclick="sgSet({mode:${jsq(k)}})">${esc(v)}</button>`).join('');
+  const pct = (n) => st.songs ? Math.round(100*n/st.songs) : 0;
+  const hint = (R.mode.includes('energia') && pct(st.energy) < 60) ? `<div class="box warn">⚡ Solo ${pct(st.energy)}% de tus canciones tiene energía. Analízalas con Mixed In Key (sección «Sin Mixed In Key») para que entren en estas sugerencias.</div>`
+    : (R.mode.includes('genero') && pct(st.genre) < 60) ? `<div class="box warn">🏷️ Solo ${pct(st.genre)}% de tus canciones tiene género en sus etiquetas. Puedes completarlo en «Datos incompletos».</div>` : '';
+  const sugs = d.suggestions;
+  const rows = sugs.map((x,k) => { const on = SG.sel.has(x.name), nm = sgName(x);
+    return `<tr><td style="width:30px"><input type="checkbox" ${on?'checked':''} onchange="this.checked?SG.sel.add(${jsq(x.name)}):SG.sel.delete(${jsq(x.name)});sgSum()"></td>
+      <td><input value="${esc(nm)}" maxlength="100" oninput="SG.names[${jsq(x.name)}]=this.value" style="${IN_ST};width:100%;max-width:300px">
+        ${x.exists ? `<div class="art">🟢 Ya tienes «${esc(x.exists.name)}»: le ${x.missing.length===1?'falta 1 canción':`faltan ${x.missing.length}`}, se le suman.</div>` : `<div class="art">🆕 Playlist nueva</div>`}</td>
+      <td class="mono" style="white-space:nowrap">${x.count}</td>
+      <td class="art">${esc(x.artists.join(', '))}${x.count>x.artists.length?'…':''}<div>${x.energy?`⚡ ${x.energy}`:''}${x.bpm?` · ${x.bpm[0]===x.bpm[1]?x.bpm[0]:x.bpm[0]+'–'+x.bpm[1]} BPM`:''}</div></td>
+      <td><a class="lnk" onclick="SG.open=SG.open===${k}?null:${k};renderMain()">${SG.open===k?'Ocultar':'Ver canciones'}</a></td></tr>`
+      + (SG.open===k ? `<tr><td></td><td colspan="4"><div style="max-height:320px;overflow:auto"><table>${x.songs.map((s,j)=>`<tr><td><div style="display:flex;align-items:flex-start">${pvBtn({source:s.path, id:'sg'+k+'_'+j, name:s.title||base(s.path), artists:[s.artist]})}<div><div>${esc(s.title||base(s.path))}</div><div class="art">${esc(s.artist)}</div></div></div></td><td class="art">${esc(s.genre||'')}</td><td class="mono art">${s.energy?'⚡'+s.energy:''}</td><td class="mono art">${s.bpm?Math.round(s.bpm):''}</td></tr>`).join('')}</table>${x.songs_total>x.songs.length?`<div class="art">Mostrando ${x.songs.length} de ${x.songs_total}.</div>`:''}</div></td></tr>` : ''); }).join('');
+  const sp = d.spotify||{}, can = sp.connected && sp.can_write;
+  return head + `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><span class="art">Organizar por:</span>${modes}</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <select style="${IN_ST}" onchange="sgSet({scope:this.value})" ${busy?'disabled':''}><option value="todo" ${R.scope==='todo'?'selected':''}>Toda tu música</option><option value="sin_playlist" ${R.scope==='sin_playlist'?'selected':''}>Solo las que no tienen playlist</option></select>
+      <label class="art">Mínimo <input type="number" min="1" max="1000" value="${R.min_songs}" style="${IN_ST};width:70px" onchange="sgSet({min_songs:+this.value})"> canciones por playlist</label></div>
+    <div class="art" style="margin-bottom:6px">Revisé <b>${st.songs}</b> canciones: ${pct(st.genre)}% con género, ${pct(st.energy)}% con energía, ${pct(st.bpm)}% con BPM.${st.unclassified?` ${st.unclassified} no entran con estos criterios.`:''}${st.small?` ${st.small} grupo(s) con menos de ${R.min_songs} canciones no se muestran.`:''}</div>
+    ${hint}
+    ${sugs.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+        <button class="ghost" onclick="sugsAll(true)">Marcar todas</button><button class="ghost" onclick="sugsAll(false)">Ninguna</button>
+        <label style="display:flex;gap:6px;align-items:center;${can?'':'opacity:.55'}" title="${can?'':'Conecta Spotify (con permiso de editar) para crearlas allá'}"><input type="checkbox" ${SG.sp&&can?'checked':''} ${can?'':'disabled'} onchange="SG.sp=this.checked">Crearlas también en Spotify</label>
+        <button id="sgGo" class="primary" onclick="sgGo()">Crear</button></div>
+      <table><tr><th></th><th>Playlist sugerida (puedes cambiarle el nombre)</th><th>Canciones</th><th>Artistas</th><th></th></tr>${rows}</table>`
+      : `<div class="empty"><h3>No hay sugerencias con estos criterios</h3><p>Prueba otro modo, baja el mínimo de canciones o ajusta «✏️ Mis criterios».</p></div>`}`;
+}
+function sugsAll(on){ (SG.data?SG.data.suggestions:[]).forEach(x => on ? SG.sel.add(x.name) : SG.sel.delete(x.name)); renderMain(); }
+function sgSum(){ const n = SG.sel.size, b = $('sgGo'); if(b){ b.disabled = !n || running('suggest_create'); b.textContent = running('suggest_create') ? 'Creando…' : n ? `Crear ${n} playlist${n===1?'':'s'}` : 'Marca las que quieres'; } }
+function sgItems(){ return (SG.data?SG.data.suggestions:[]).filter(x=>SG.sel.has(x.name)).map(x=>({name:(sgName(x)||'').trim(), paths:x.exists?x.missing:x.paths, spotify:!!SG.sp, exists:x.exists})); }
+function sgGo(){
+  const it = sgItems(); if(!it.length) return;
+  if(it.some(x=>!x.name)){ toast('Hay una playlist sin nombre.', true); return; }
+  const nNew = it.filter(x=>!x.exists).length, nAdd = it.length - nNew, songs = it.reduce((a,x)=>a+x.paths.length,0);
+  modal(`<h3>Crear ${it.length} playlist${it.length===1?'':'s'}</h3>
+    <p>${nNew?`🆕 ${nNew} nueva${nNew===1?'':'s'}`:''}${nNew&&nAdd?' · ':''}${nAdd?`➕ a ${nAdd} que ya tienes se le suman las que faltan`:''} (${songs} canciones en total).</p>
+    <div class="box">📁 <b>No se mueve ningún archivo.</b> Cada canción se queda en su carpeta y la playlist la usa desde ahí. Las nuevas quedan al final de tu prioridad (Reglas), así ninguna canción cambia de carpeta; solo las que no tienen playlist se ordenarán ahí al Organizar.</div>
+    ${SG.sp?'<p>También se crean en Spotify (busco las que no vienen de Spotify; si está en pausa, quedan pendientes).</p>':''}
+    <p class="art">Para verlas en tus programas de DJ, dale a Organizar después.</p>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="closeModal();sgDo()">Crear</button></div>`);
+}
+async function sgDo(){
+  const it = sgItems().map(({exists, ...x}) => x);
+  setTimeout(()=>renderMain(), 120);
+  const r = await api().suggest_create(it);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  if(r.analysis) await applyAnalysis(r);
+  if(r.queue !== undefined) S.spQueue = r.queue;
+  const lines = (r.playlists||[]).map(p => (p.created?'🆕 ':'➕ ') + `«${esc(p.name)}»: ${p.count}` + (p.spotify_error?` (solo en BrainOrder: ${esc(p.spotify_error)})`:'') + (p.spotify==='queued'?' (a Spotify cuando termine la pausa)':p.spotify==='ok'?` (en Spotify${p.unresolved?`, ${p.unresolved} no las encontré allá`:''})`:'') + (p.platform_note?` (en ${esc(p.platform_note)} agrégalas tú)`:''));
+  toast(`✅ Listo.<br>${lines.join('<br>')}<br><a class="lnk" onclick="organize()">Organizar para pasarlas a tus programas de DJ</a>`);
+  SG.data = null; sgLoad();
+}
+// editor de criterios
+async function sgEdit(){
+  const r = await api().suggest_rules(); if(!r.ok) return;
+  SG.edit = JSON.parse(JSON.stringify(r.rules)); SG.edit._defaults = r.defaults; SG.err = ''; renderMain();
+}
+function sgEditor(){
+  const E = SG.edit, found = (SG.data && SG.data.genres) || [];
+  const gRows = E.genres.map((g,i) => `<tr>
+      <td style="white-space:nowrap"><button class="ghost" title="Subir" ${i?'':'disabled'} onclick="sgMv(${i},-1)">↑</button><button class="ghost" title="Bajar" ${i<E.genres.length-1?'':'disabled'} onclick="sgMv(${i},1)">↓</button></td>
+      <td><input value="${esc(g.name)}" maxlength="80" oninput="SG.edit.genres[${i}].name=this.value" style="${IN_ST};width:170px"></td>
+      <td><input value="${esc((g.match||[]).join(', '))}" oninput="SG.edit.genres[${i}].match=this.value.split(',').map(x=>x.trim()).filter(Boolean)" style="${IN_ST};width:100%"></td>
+      <td><a class="lnk" title="Quitar este grupo" onclick="SG.edit.genres.splice(${i},1);renderMain()">✕</a></td></tr>`).join('');
+  const rng = (key, unit) => (E[key]||[]).map((x,i) => `<tr><td><input value="${esc(x.name)}" maxlength="60" oninput="SG.edit.${key}[${i}].name=this.value" style="${IN_ST};width:160px"></td>
+      <td class="art">de <input type="number" value="${x.min}" oninput="SG.edit.${key}[${i}].min=+this.value" style="${IN_ST};width:70px"> a <input type="number" value="${x.max}" oninput="SG.edit.${key}[${i}].max=+this.value" style="${IN_ST};width:70px"> ${unit}</td>
+      <td><a class="lnk" onclick="SG.edit.${key}.splice(${i},1);renderMain()">✕</a></td></tr>`).join('');
+  const chips = found.slice(0, 120).map(g => `<span class="chip" title="${esc(g.group?`Va a «${g.group}»`:'No entra en ningún grupo')}">${esc(g.genre)} <span class="art">${g.count}</span> → <select style="background:transparent;color:var(--text);border:none;font:inherit;max-width:150px" onchange="sgAddWord(${jsq(g.genre)}, this.value)"><option>${esc(g.group||'—')}</option>${E.genres.map((x,i)=>`<option value="${i}">${esc(x.name)}</option>`).join('')}<option value="new">＋ Grupo nuevo</option></select></span>`).join('');
+  return `<div class="box"><b>✏️ Mis criterios</b> — se guardan solo para ti (en esta computadora). Los cambios se ven al darle Guardar.</div>
+    <h3 style="margin:14px 0 4px">🏷️ Grupos de géneros</h3>
+    <div class="art" style="margin-bottom:6px">Cada grupo es una playlist. Sus palabras se buscan en la etiqueta «género» del archivo (sin importar mayúsculas ni tildes). Si un género coincide con varios grupos, gana la palabra más específica («tech house» le gana a «house»); si empatan, el grupo que está más arriba.</div>
+    <table><tr><th></th><th>Playlist</th><th>Palabras del género (separadas por coma)</th><th></th></tr>${gRows}</table>
+    <button class="ghost" onclick="SG.edit.genres.push({name:'',match:[]});renderMain()">＋ Grupo</button>
+    ${chips ? `<div style="margin-top:10px"><div class="art">Géneros que encontré en tus canciones (cuántas tienen cada uno y a qué grupo van; cambia el grupo para agregar ese género a otro):</div><div style="margin-top:4px">${chips}</div></div>` : '<div class="art" style="margin-top:6px">Dale a Revisar para ver los géneros de tus canciones aquí.</div>'}
+    <div style="margin-top:10px">Los géneros que no entran en ningún grupo:
+      <select style="${IN_ST}" onchange="SG.edit.others=this.value;renderMain()">
+        <option value="propia" ${E.others==='propia'?'selected':''}>cada uno en su propia playlist</option>
+        <option value="otros" ${E.others==='otros'?'selected':''}>todos juntos en una playlist</option>
+        <option value="nada" ${E.others==='nada'?'selected':''}>no se sugieren</option></select>
+      ${E.others==='otros'?`<input value="${esc(E.others_name)}" maxlength="80" oninput="SG.edit.others_name=this.value" style="${IN_ST}">`:''}</div>
+    <h3 style="margin:18px 0 4px">⚡ Rangos de energía <span class="art">(Mixed In Key, de 1 a 10)</span></h3>
+    <table>${rng('energy','')}</table><button class="ghost" onclick="SG.edit.energy.push({name:'',min:1,max:10});renderMain()">＋ Rango</button>
+    <h3 style="margin:18px 0 4px">🥁 Rangos de BPM</h3>
+    <table>${rng('bpm','BPM')}</table><button class="ghost" onclick="SG.edit.bpm.push({name:'',min:0,max:300});renderMain()">＋ Rango</button>
+    <h3 style="margin:18px 0 4px">🔤 Nombres de las playlists</h3>
+    <div class="art">Usa {genero}, {energia} y {bpm}.</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:620px;margin-top:6px">
+      <span>Género + energía</span><input value="${esc(E.name_tpl)}" oninput="SG.edit.name_tpl=this.value" style="${IN_ST}">
+      <span>Género + BPM</span><input value="${esc(E.name_tpl_bpm)}" oninput="SG.edit.name_tpl_bpm=this.value" style="${IN_ST}">
+      <span>Prefijo (opcional)</span><input value="${esc(E.prefix||'')}" maxlength="30" placeholder="Ej.: 🎧 " oninput="SG.edit.prefix=this.value" style="${IN_ST}"></div>
+    ${SG.err?`<div class="box warn">${esc(SG.err)}</div>`:''}
+    <div class="actions" style="justify-content:flex-start;margin-top:14px"><button class="primary" onclick="sgEditSave()">Guardar</button><button onclick="SG.edit=null;renderMain()">Cancelar</button><button class="ghost" onclick="sgEditReset()">Volver a los de fábrica</button></div>`;
+}
+function sgMv(i, d){ const g = SG.edit.genres, j = i + d; if(j<0||j>=g.length) return; [g[i], g[j]] = [g[j], g[i]]; renderMain(); }
+function sgAddWord(genre, v){
+  const E = SG.edit, w = genre.toLowerCase();
+  E.genres.forEach(g => g.match = (g.match||[]).filter(x => x.toLowerCase() !== w));
+  if(v==='new') E.genres.unshift({name:genre, match:[w]});
+  else if(v!=='' && E.genres[+v]) E.genres[+v].match.unshift(w);  // el género completo es la palabra más específica: le gana a las demás
+  renderMain();
+}
+async function sgEditSave(){
+  const {_defaults, ...rules} = SG.edit;
+  rules.genres = rules.genres.filter(g => (g.name||'').trim() || (g.match||[]).length);
+  const r = await api().suggest_rules_save(rules);
+  if(!r.ok){ SG.err = r.error; renderMain(); return; }
+  SG.edit = null; SG.err = ''; toast('✅ Criterios guardados.'); SG.data = null; sgLoad();
+}
+async function sgEditReset(){
+  const r = await api().suggest_rules_save({}, true); if(!r.ok) return;
+  SG.edit = JSON.parse(JSON.stringify(r.rules)); SG.err = ''; toast('Volví a los criterios de fábrica.'); SG.data = null; renderMain(); sgLoad();
+}
+
+// ---------- datos incompletos: artista desconocido, sin título, nombre sin «Artista - Título», sin género ----------
+let MD = {data:null, loading:false, sel:new Set(), ed:{}, f:'', q:''};
+const MD_P = {'artista':'Artista desconocido','título':'Sin título','nombre':'Nombre sin «Artista - Título»','género':'Sin género'};
+async function mdLoad(){
+  if(MD.loading) return; MD.loading = true; if(S.view==='meta') renderMain();
+  try{ const r = await api().meta_scan(); if(r.ok){ MD.data = r; MD.sel = new Set(); MD.ed = {};
+      const bad = /^(desconocido|unknown( artist)?|artista desconocido|unknown mobile|<unknown>)$/i;
+      r.rows.forEach(x => { const ca = bad.test((x.cur.artist||'').trim()) ? '' : (x.cur.artist||'');
+        MD.ed[x.path] = {artist:(x.prop||{}).artist ?? ca, title:(x.prop||{}).title ?? (x.cur.title||''), genre:x.cur.genre||'', rename:!!x.newname}; }); }
+    else if(!r.cancelled) toast(esc(r.error), true); }catch(e){}
+  MD.loading = false; render();
+}
+function mdVisible(){
+  const q = (MD.q||'').toLowerCase();
+  return (MD.data?MD.data.rows:[]).filter(x => (!MD.f || x.problems.includes(MD.f)) && (!q || (x.name+' '+(x.cur.artist||'')+' '+(x.cur.title||'')).toLowerCase().includes(q)));
+}
+function mdNewName(x){ const e = MD.ed[x.path]; if(!e) return ''; const ext = (x.name.match(/\.[^.]+$/)||[''])[0];
+  const n = ((e.artist?e.artist+' - ':'') + e.title).replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,' ').trim(); return n ? n + ext : ''; }
+function mdView(){
+  const busy = MD.loading || running('meta_scan');
+  const head = `<div class="vhead"><h2>Datos incompletos</h2><span class="sub">Canciones con artista desconocido, sin título, sin género o con un nombre de archivo que no es «Artista - Título» (así BrainOrder no las reconoce bien). Revisa la propuesta, corrígela si hace falta y dale <b>Arreglar</b>: los datos se escriben en el archivo y, si marcas «renombrar», el archivo pasa a llamarse «Artista - Título». Se corrigen tus programas de DJ y se puede deshacer en Historial.</span>
+    <div class="sp"><button onclick="mdLoad()" ${busy?'disabled':''}>${busy?'Revisando…':'⟳ Revisar'}</button></div></div>`;
+  if(!MD.data) return head + `<div class="empty"><p>${busy?'Revisando las etiquetas de tu música (la primera vez tarda un poco)…':'Dale a Revisar.'}</p></div>`;
+  const d = MD.data, rows = mdVisible();
+  if(!d.rows.length) return head + `<div class="empty"><h3>Todas tus canciones tienen sus datos completos 🎉</h3><p>Revisé ${d.total}.</p></div>`;
+  const tb = rows.slice(0, 400).map((x,k) => { const e = MD.ed[x.path], nn = mdNewName(x);
+    return `<tr><td style="width:30px"><input type="checkbox" ${MD.sel.has(x.path)?'checked':''} onchange="this.checked?MD.sel.add(${jsq(x.path)}):MD.sel.delete(${jsq(x.path)});mdSum()"></td>
+      <td style="max-width:280px"><div style="display:flex;align-items:flex-start">${pvBtn({source:x.path, id:'md'+k, name:x.name, artists:[]})}<div style="min-width:0"><div style="overflow-wrap:anywhere">${esc(x.name)}</div>
+        <div class="art">${x.problems.map(p=>`<span class="chip" style="cursor:default">${esc(MD_P[p]||p)}</span>`).join('')}</div>
+        <div class="art">Ahora: ${esc(x.cur.artist||'—')} · ${esc(x.cur.title||'—')}${x.cur.genre?' · '+esc(x.cur.genre):''}</div></div></div></td>
+      <td><input value="${esc(e.artist)}" placeholder="Artista" oninput="MD.ed[${jsq(x.path)}].artist=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px">
+        <input value="${esc(e.title)}" placeholder="Título" oninput="MD.ed[${jsq(x.path)}].title=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px;margin-top:4px">
+        ${x.why?`<div class="art">💡 ${esc(x.why)}</div>`:'<div class="art" style="color:var(--org)">Sin propuesta: escríbelo o búscalo 🔎</div>'}</td>
+      <td><input value="${esc(e.genre)}" placeholder="Género" oninput="MD.ed[${jsq(x.path)}].genre=this.value;MD.sel.add(${jsq(x.path)})" style="${IN_ST};width:120px"></td>
+      <td><label class="art" style="display:flex;gap:6px;align-items:flex-start"><input type="checkbox" ${e.rename?'checked':''} onchange="MD.ed[${jsq(x.path)}].rename=this.checked"><span id="mdNn${k}" style="overflow-wrap:anywhere">Renombrar a «${esc(nn)}»</span></label></td>
+      <td><button class="ghost" title="Buscar en Spotify cómo se llama" onclick="mdSearch(${jsq(x.path)})">🔎</button></td></tr>`; }).join('');
+  const chips = [['', `Todas (${d.rows.length})`]].concat(Object.entries(d.counts).filter(([k,n])=>n).map(([k,n])=>[k, `${MD_P[k]} (${n})`]))
+    .map(([k,l]) => `<button class="${MD.f===k?'primary':'ghost'}" onclick="MD.f=${jsq(k)};renderMain()">${esc(l)}</button>`).join('');
+  return head + `<div class="art" style="margin-bottom:6px">Revisé <b>${d.total}</b> canciones; <b>${d.rows.length}</b> tienen algo incompleto.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <input placeholder="Buscar…" value="${esc(MD.q)}" oninput="MD.q=this.value; clearTimeout(MD.t); MD.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\\'Buscar…\\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="${IN_ST};flex:1;min-width:140px">
+      <button class="ghost" onclick="mdMark('prop')">Marcar las que tienen propuesta</button><button class="ghost" onclick="mdMark('none')">Ninguna</button>
+      <input id="mdG" placeholder="Género para las marcadas" style="${IN_ST};width:190px"><button class="ghost" onclick="mdGenre()">Aplicar</button>
+      <button id="mdGo" class="primary" onclick="mdGo()">Arreglar</button></div>
+    ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Artista y título</th><th>Género</th><th>Archivo</th><th></th></tr>${tb}</table>${rows.length>400?`<div class="art">Mostrando 400 de ${rows.length}: filtra o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function mdNn(k, path){ const x = MD.data.rows.find(r=>r.path===path), el = $('mdNn'+k); if(x && el) el.textContent = `Renombrar a «${mdNewName(x)}»`; mdSum(); }
+function mdMark(w){ if(w==='none') MD.sel = new Set(); else mdVisible().forEach(x => { if(x.prop) MD.sel.add(x.path); }); renderMain(); }
+function mdGenre(){ const g = ($('mdG')||{}).value.trim(); if(!g) return; if(!MD.sel.size){ toast('Marca primero las canciones.', true); return; } MD.sel.forEach(p => { if(MD.ed[p]) MD.ed[p].genre = g; }); renderMain(); }
+function mdItems(){
+  const bad = /^(desconocido|unknown( artist)?|artista desconocido|unknown mobile)$/i;
+  return (MD.data?MD.data.rows:[]).filter(x => MD.sel.has(x.path)).map(x => { const e = MD.ed[x.path], it = {path:x.path};
+    if(e.artist.trim() && e.artist.trim() !== (x.cur.artist||'') && !bad.test(e.artist.trim())) it.artist = e.artist.trim();
+    if(e.title.trim() && e.title.trim() !== (x.cur.title||'')) it.title = e.title.trim();
+    if(e.genre.trim() !== (x.cur.genre||'') && e.genre.trim()) it.genre = e.genre.trim();
+    if(e.rename && mdNewName(x) && mdNewName(x) !== x.name && e.artist.trim() && e.title.trim() && !bad.test(e.artist.trim())) it.rename = true;
+    return it; }).filter(it => Object.keys(it).length > 1);
+}
+function mdSum(){ const n = mdItems().length, b = $('mdGo'); if(b){ b.disabled = !n || running('meta_fix'); b.textContent = running('meta_fix') ? 'Arreglando…' : n ? `Arreglar ${n}` : 'Marca canciones con cambios'; } }
+function mdGo(){
+  const it = mdItems(); if(!it.length) return; const rn = it.filter(x=>x.rename).length;
+  modal(`<h3>Arreglar ${it.length} canción${it.length===1?'':'es'}</h3>
+    <p>Se escriben los datos en ${it.length===1?'el archivo':'los archivos'}${rn?` y ${rn} se renombra${rn===1?'':'n'} a «Artista - Título»`:''}. Tus cues, la key y la energía de Mixed In Key no se tocan. Se puede deshacer en Historial.</p>
+    ${rn?'<p class="art">Si alguna está en Rekordbox, ciérralo antes: se corrige su ruta allá.</p>':''}
+    <p class="art">En Rekordbox los datos nuevos se ven al seleccionar esas canciones → clic derecho → «Volver a cargar etiqueta» (Reload Tag).</p>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="closeModal();mdDo()">Arreglar</button></div>`);
+}
+async function mdDo(){
+  const it = mdItems(); setTimeout(()=>renderMain(), 120);
+  const r = await api().meta_fix(it);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  if(r.analysis) await applyAnalysis(r);
+  loadHist();
+  toast(`✅ ${r.fixed} con datos completados${r.renamed?`, ${r.renamed} renombrada${r.renamed===1?'':'s'}`:''}.${(r.skipped||[]).length?`<br>${r.skipped.length} no se pudieron renombrar (ya hay un archivo con ese nombre).`:''}${(r.errors||[]).length?`<br>${r.errors.length} con error: ${esc(r.errors[0])}`:''}` + undoLink(r));
+  MD.data = null; mdLoad();
+}
+async function mdSearch(path, q){
+  modal(`<h3>🔎 Buscar en Spotify</h3><p class="art">Buscando…</p>`);
+  const r = await api().meta_search(path, q||'');
+  if(!r.ok){ modal(`<h3>🔎 Buscar en Spotify</h3><div class="box warn">${esc(r.error)}</div><div class="actions"><button onclick="closeModal()">Cerrar</button></div>`); return; }
+  const fmt = s => s ? `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}` : '';
+  modal(`<h3>🔎 Buscar en Spotify</h3>
+    <div style="display:flex;gap:6px"><input id="mdQ" value="${esc(r.query)}" style="${IN_ST};flex:1" onkeydown="if(event.key==='Enter')mdSearch(${jsq(path)}, this.value)"><button onclick="mdSearch(${jsq(path)}, $('mdQ').value)">Buscar</button></div>
+    <p class="art">${esc(base(path))}${r.secs?` · dura ${fmt(r.secs)}`:''}</p>
+    ${r.hits.length ? `<table>${r.hits.map((h,i)=>`<tr><td><b>${esc(h.title)}</b><div class="art">${esc(h.artist)}${h.album?' · '+esc(h.album):''}</div></td><td class="mono art">${fmt(h.secs)}${h.close?' ✅':''}</td><td><button class="primary" onclick='mdPick(${jsq(path)}, ${JSON.stringify(h).replace(/'/g,"&#39;")})'>Usar</button></td></tr>`).join('')}</table><p class="art">✅ = dura lo mismo que tu archivo.</p>` : '<p>No encontré nada. Cambia la búsqueda.</p>'}
+    <div class="actions"><button onclick="closeModal()">Cerrar</button></div>`);
+}
+function mdPick(path, h){ const e = MD.ed[path]; if(!e) return; e.artist = h.artist; e.title = h.title; e.rename = true; MD.sel.add(path); closeModal(); renderMain(); }
 // ---------- papelera ----------
 let TR = {data:null, sel:new Set(), src:'trash'};
 async function trashScan(src){
