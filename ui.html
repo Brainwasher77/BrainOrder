@@ -2185,7 +2185,11 @@ function lostView(){
 let NP = {data:null, loading:false, pick:{}, sel:new Set(), q:'', where:'', news:[]};  // news: [{id:'new:…', name, spotify}]
 async function npLoad(){
   if(NP.loading) return; NP.loading = true; if(S.view==='noplaylist') renderMain();
-  try{ const r = await api().noplaylist(); if(r.ok){ NP.data = r; NP.sel = new Set(); NP.pick = {}; NP.news = []; } else toast(esc(r.error), true); }catch(e){}
+  try{ const r = await api().noplaylist();
+    if(r.ok){ NP.data = r; NP.sel = new Set(); NP.pick = {}; NP.news = [];
+      if(r.analysis) await applyAnalysis(r);
+      if((r.renamed||[]).length){ loadHist(); toast(`✏️ Tu carpeta ${r.renamed.map(x=>`«${esc(base(x[0]))}»`).join(', ')} ahora se llama <b>«${esc(r.nopl_name)}»</b>. Corregí las rutas en tus programas de DJ.`); }
+    } else toast(esc(r.error), true); }catch(e){}
   NP.loading = false; render();
 }
 function npVisible(){
@@ -2264,7 +2268,7 @@ function npNewOk(){
 }
 function npChoice(x){ return x.path in NP.pick ? NP.pick[x.path] : (x.suggest || ''); }
 function npView(){
-  const head = `<div class="vhead"><h2>Sin playlist</h2><span class="sub">Canciones que no son de ninguna playlist: descargas que no coinciden con nada y las de tu carpeta sin playlist (<code>_SIn Playlist</code> u otra que elijas abajo). Elige a qué playlist va cada una: el archivo pasa a su carpeta y la canción se agrega a la playlist (en Spotify también; si está en pausa, queda en los pendientes y mientras tanto ya la ves aquí).</span>
+  const head = `<div class="vhead"><h2>Sin playlist</h2><span class="sub">Canciones que no son de ninguna playlist: descargas que no coinciden con nada y las de tu carpeta sin playlist (<code>_Sin Playlist</code> u otra que elijas abajo). Elige a qué playlist va cada una: el archivo pasa a su carpeta y la canción se agrega a la playlist (en Spotify también; si está en pausa, queda en los pendientes y mientras tanto ya la ves aquí).</span>
     <div class="sp"><button onclick="npLoad()" ${NP.loading?'disabled':''}>${NP.loading?'Buscando…':'⟳ Revisar'}</button></div></div>`;
   if(!NP.data) return head + `<div class="empty"><p>${NP.loading?'Buscando canciones sin playlist…':'Dale a Revisar.'}</p></div>`;
   const all = NP.data.rows, rows = npVisible(), wheres = [...new Set(all.map(x=>x.where))];
@@ -2295,7 +2299,9 @@ function npDirsBox(){
       ${d.auto ? '' : `<a class="lnk" title="Dejar de leer esta carpeta" onclick="npDirsSave(NP.data.dirs.filter(y=>y!==${jsq(x)}))">✕</a>`}</span>`;
   return `<div class="box" style="margin-bottom:10px">
     <div><b>Leo las canciones sin playlist de:</b> ${d.auto ? '<span class="art">(la encontré sola)</span>' : '<span class="art">(elegida por ti)</span>'}</div>
-    <div style="margin-top:6px">${dirs.length ? dirs.map(chip).join('') : `<span class="art">Ninguna carpeta${d.auto?': no encontré ninguna como «_SIn Playlist»':''}.</span>`}</div>
+    <div style="margin-top:6px">${dirs.length ? dirs.map(chip).join('') : `<span class="art">Ninguna carpeta.</span>`}</div>
+    ${d.auto ? `<div class="art" style="margin-top:4px">Cuando la elijo yo, se llama <code>${esc(d.nopl_name||'_Sin Playlist')}</code>${(d.dirs||[]).length ? '' : ' (la creo en tu carpeta de playlists)'}.</div>` : ''}
+    ${d.auto && d.rename_pending ? `<div class="box warn" style="margin-top:6px">✏️ Para que tu carpeta se llame <code>${esc(d.nopl_name||'_Sin Playlist')}</code> la tengo que renombrar: ${esc(d.rename_pending)} Después dale <b>⟳ Revisar</b>.</div>` : ''}
     <div class="art" style="margin-top:4px">📥 Y siempre de tus descargas: <code>${esc(short(d.inbox||''))}</code></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
       <button class="ghost" ${busy?'disabled':''} onclick="npDirsAdd(false)">📁 Cambiar carpeta…</button>
