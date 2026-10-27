@@ -31,6 +31,7 @@ import rekordbox_sync  # noqa: E402
 import reportes  # noqa: E402
 import deezer  # noqa: E402
 import unificar  # noqa: E402
+import sugerencias  # noqa: E402
 import actualizador  # noqa: E402
 from spotify_api import Spotify, SpotifyError, SpotifyPaused  # noqa: E402
 import spotify_api  # noqa: E402
@@ -137,6 +138,8 @@ class Api:
         biblioteca.load_durations(config.SUPPORT_DIR / "durations.json")
         import armonia
         armonia.load(config.SUPPORT_DIR / "armonia.json")
+        import etiquetas
+        etiquetas.load(config.SUPPORT_DIR / "etiquetas.json")
         # Multitarea segura:
         #  _state: cachés de Spotify y análisis. Se toma solo en tramos cortos (leer/cruzar/escribir),
         #          así varias tareas avanzan a la vez y nunca se pisan los resultados.
@@ -1373,8 +1376,12 @@ class Api:
                 raise unificar.UnifyError("Esa operación ya se deshizo.")
             if op.get("rb") is not None:
                 return self._undo_rb(op)
+            if op.get("tags") and not op.get("moves"):
+                return self._undo_tags(op, {})
             todo, skipped = historial.plan_undo(op)
             if not todo:
+                if op.get("tags"):
+                    return self._undo_tags(op, {})
                 return {"restored": 0, "skipped": skipped, "analysis": None}
             back = {cur: orig for cur, orig in todo}
             # Rekordbox: si alguna pista movida está en la librería, hay que corregirla (cerrado y con respaldo)
@@ -1398,6 +1405,8 @@ class Api:
                         warnings.append(f"Rekordbox: {e}")
                 dj, w2 = self._dj_fix(done)
                 warnings += w2
+                if op.get("tags"):  # etiquetas que se cambiaron junto con el nombre
+                    self._restore_tags(op, dict(done))
                 self._set_stage(80, 100)
                 self._progress("Actualizando el análisis…")
                 analysis = None
@@ -1410,6 +1419,32 @@ class Api:
             return {"restored": len(done), "skipped": skipped, "rekordbox": rb_stats, "dj": dj,
                     "warnings": warnings, "analysis": analysis}
         return self._task(run, f"undo:{op_id}", f"Deshacer «{label}»", files=True)
+
+    def _restore_tags(self, op, moved_back):
+        """Vuelve a poner las etiquetas como estaban. moved_back: {ruta actual: ruta original} de lo devuelto."""
+        import etiquetas
+        done, skipped = 0, 0
+        for path, old in op.get("tags") or []:
+            p = moved_back.get(path, path)
+            if not os.path.isfile(p):
+                skipped += 1
+                continue
+            try:
+                etiquetas.write(p, old)
+                done += 1
+            except Exception as e:
+                config.log(f"deshacer etiquetas {p}: {e!r}")
+                skipped += 1
+        etiquetas.save()
+        return done, skipped
+
+    def _undo_tags(self, op, moved_back):
+        done, skipped = self._restore_tags(op, moved_back)
+        historial.mark_undone(op["id"])
+        analysis = self._build_analysis(light=True) if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]) else None
+        self._progress("Listo.", 1)
+        return {"restored": done, "skipped": [{"file": "", "why": f"{skipped} ya no existen"}] if skipped else [],
+                "analysis": analysis}
 
     def _undo_rb(self, op):
         """Deshace una operación que solo cambió la librería de Rekordbox."""
@@ -4140,6 +4175,354 @@ class Api:
                     "op_id": res.get("op_id"), "analysis": analysis, "queue": len(cola_spotify.load()),
                     "new_pids": new_pids}
         return self._task(run, "assign_downloads", "Llevar descargas a una playlist")
+
+    # ---------- sugerencias: playlists por género / energía / BPM (reglas de cada usuario) ----------
+    def _library_songs(self, scope="todo", analysis=None):
+        """Canciones de tu música para sugerir playlists: las de tus playlists (con su archivo) y las sin playlist.
+        scope «sin_playlist»: solo las que no son de ninguna. -> [{path, artist, title, genre, energy, bpm}]"""
+        import armonia
+        import etiquetas
+        analysis = analysis if analysis is not None else (self._analysis() or [])
+        paths = []
+        if scope != "sin_playlist":
+            for pl in analysis:
+                if pl.get("pending") or pl.get("ignored"):
+                    continue
+                for r in pl.get("tracks") or []:
+                    if r.get("source") and r.get("status") in (None, "ok", "elsewhere"):
+                        paths.append(r["source"])
+        used = {os.path.normcase(p) for p in paths} if scope != "sin_playlist" else \
+            {os.path.normcase(r["source"]) for pl in analysis for r in pl.get("tracks") or [] if r.get("source")}
+        for d in self._noplaylist_dirs():
+            for f in biblioteca.walk_audio(d):
+                if os.path.normcase(f) not in used and "_duplicados" not in Path(f).parts:
+                    paths.append(f)
+        try:
+            inbox = Path(self._cfg["inbox"])
+            for f in biblioteca.walk_audio(inbox):
+                if os.path.normcase(f) not in used and "_duplicados" not in Path(f).parts:
+                    paths.append(f)
+        except (OSError, KeyError):
+            pass
+        seen, out = set(), []
+        paths = [p for p in paths if not (os.path.normcase(p) in seen or seen.add(os.path.normcase(p)))]
+        for n, p in enumerate(paths, 1):
+            if n % 200 == 0:
+                self._progress(f"Leyendo género y energía: {n}/{len(paths)}…", n / max(1, len(paths)))
+            if not os.path.isfile(p):
+                continue
+            t = etiquetas.read(p)
+            h = armonia.info(p)
+            a, ti = t.get("artist") or "", t.get("title") or ""
+            if not a or etiquetas.bad_artist(a) or not ti:
+                fa, ft = biblioteca.parse_file(Path(p))
+                a, ti = (a if a and not etiquetas.bad_artist(a) else fa), (ti or ft)
+            g = t.get("genre") or ""
+            if sugerencias.norm(g) in ("other", "otros", "otro", "unknown", "desconocido", "genre", "misc", "varios"):
+                g = ""
+            out.append({"path": p, "artist": a, "title": ti, "genre": g, "energy": h.get("energy"),
+                        "bpm": h.get("bpm")})
+        etiquetas.save()
+        armonia.save()
+        return out
+
+    def suggest_rules(self):
+        return {"ok": True, "rules": sugerencias.get(self._cfg), "defaults": sugerencias.DEFAULTS, "modes": sugerencias.MODES}
+
+    def suggest_rules_save(self, rules, reset=False):
+        """Guarda tus criterios (cada usuario los suyos). reset: volver a los de fábrica."""
+        if reset:
+            self._cfg.pop("suggest_rules", None)
+            config.save(self._cfg)
+            return {"ok": True, "rules": sugerencias.get(self._cfg)}
+        r, errs = sugerencias.clean({**sugerencias.get(self._cfg), **(rules or {})})
+        if errs:
+            return {"ok": False, "error": " ".join(errs[:4]), "errors": errs}
+        self._cfg["suggest_rules"] = r
+        config.save(self._cfg)
+        return {"ok": True, "rules": r}
+
+    def suggest(self):
+        """Playlists sugeridas según tus criterios (Sugerencias)."""
+        def run():
+            rules = sugerencias.get(self._cfg)
+            analysis = self._analysis() or []
+            self._progress("Revisando tu música…", 0)
+            songs = self._library_songs(rules["scope"], analysis)
+            pls = [{"id": p["id"], "name": p["name"],
+                    "paths": {r.get("source") for r in p.get("tracks") or [] if r.get("source")}}
+                   for p in analysis if not p.get("pending") and p["id"] != "liked"]
+            res = sugerencias.suggest(songs, rules, pls)
+            for x in res["suggestions"]:  # para la pantalla basta una muestra de las canciones
+                x["songs_total"] = len(x["songs"])
+                x["songs"] = x["songs"][:400]
+            sp = self._sp()
+            self._progress("Listo.", 1)
+            return {**res, "rules": rules, "modes": sugerencias.MODES,
+                    "spotify": {"connected": sp.connected, "can_write": sp.can_write, "paused": spotify_api.paused_until()}}
+        return self._task(run, "suggest", "Sugerencias para organizar")
+
+    def _low_priority(self, pids, analysis):
+        """Playlists nuevas de sugerencias: al final de la prioridad, así no le quitan la carpeta a ninguna
+        canción que ya tiene su playlist (solo se llevan las que no son de ninguna)."""
+        rules = dict(self._cfg.get("rules") or {})
+        order = list(rules.get("playlist_order") or [])
+        if not order:
+            order = [p["id"] for p in reglas.ordered_playlists([p for p in analysis if p["id"] not in pids],
+                                                                reglas.get(self._cfg))]
+        rules["playlist_order"] = [x for x in order if x not in pids] + [p for p in pids if p]
+        self._cfg["rules"] = rules
+        config.save(self._cfg)
+
+    def suggest_create(self, items):
+        """Crea las playlists sugeridas que elegiste, SIN mover tus archivos: cada canción se queda donde está
+        (la playlist la usa desde ahí, como en Rekordbox). items: [{name, paths, spotify}]. Si ya tienes una
+        playlist con ese nombre, se le suman las que le faltan."""
+        def run():
+            import carpetas_nuevas as CN
+            import cola_spotify
+            from fuentes import carpetas as FC
+            analysis = self._analysis() or []
+            want_any_sp = any(it.get("spotify") for it in items or [])
+            if want_any_sp:
+                sp = self._sp()
+                if not sp.connected:
+                    raise SpotifyError("Spotify no está conectado. Conéctalo o crea las playlists solo en BrainOrder.")
+                if not sp.can_write:
+                    raise SpotifyError("Para crear playlists en Spotify reconecta Spotify (Conectar) y acepta el permiso de editar playlists.")
+            out, new_pids = [], []
+            items_ok = [it for it in items or [] if it.get("name") and it.get("paths")]
+            for k, it in enumerate(items_ok):
+                self._set_stage(k * 90 // max(1, len(items_ok)), (k + 1) * 90 // max(1, len(items_ok)))
+                paths = [p for p in dict.fromkeys(it["paths"]) if os.path.isfile(p)]
+                if not paths:
+                    continue
+                name, same = self._new_playlist_name(it["name"], analysis)
+                want_sp = bool(it.get("spotify"))
+                if same:  # ya existe: se le suma lo que falta
+                    pl, src_kind, entry, folder = self._pl_ctx(same, analysis)
+                    have = {r.get("source") for r in pl.get("tracks") or []}
+                    add = [p for p in paths if p not in have]
+                    info = {"name": pl["name"], "count": len(add), "added_to": True}
+                    if not add:
+                        out.append(info)
+                        continue
+                    if src_kind == "spotify" and same != "liked" and not self._is_foreign(same):
+                        local = [FC.track_for(m) for m in add]
+                        r = self._spotify_do({"kind": "merge_add", "pid": same, "name": pl["name"], "uris": [], "paths": add,
+                                              "queries": [], "local_tracks": [], "local_ids": [t["id"] for t in local]})
+                        info["spotify"] = r.get("state")
+                        if r.get("state") == "queued":
+                            def put(data, pid=same, local=local):
+                                cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                                if cur is not None and cur.get("tracks") is not None:
+                                    hv = {t.get("id") for t in cur["tracks"]}
+                                    cur["tracks"] = cur["tracks"] + [t for t in local if t["id"] not in hv]
+                            self._update_sp(put)
+                        else:
+                            info["unresolved"] = r.get("unresolved", 0)
+                    elif src_kind == "carpetas":
+                        FC.remember(same, add)
+                        meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == same), None)
+                        if meta:
+                            tracks = FC.tracks(self._cfg, meta)
+
+                            def put(data, pid=same, meta=meta, tracks=tracks):
+                                cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                                if cur is not None:
+                                    cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
+                            self._update_sp(put)
+                    else:
+                        info["platform_note"] = fuentes.SOURCES[src_kind].LABEL if src_kind in fuentes.SOURCES else src_kind
+                    out.append(info)
+                    continue
+                root = Path(self._cfg["dest_root"])
+                folder, n = root / config.safe_name(name), 2
+                while folder.exists() and any(folder.iterdir()):
+                    folder, n = root / f"{config.safe_name(name)} ({n})", n + 1  # nunca se mezcla con una carpeta que ya tiene cosas
+                folder.mkdir(parents=True, exist_ok=True)
+                pid = FC.pid_for(folder)
+                FC.remember(pid, paths)  # la playlist usa cada canción desde donde está
+                entry = {"name": name, "path": str(folder)}
+                self._progress(f"Creando «{name}» ({len(paths)} canciones)…", 0.2)
+                note = None
+                try:
+                    r = self._import_playlist(name, paths, {"spotify": want_sp}, entry, pid)
+                except Exception as e:
+                    if isinstance(e, SpotifyPaused) or not want_sp:
+                        raise
+                    config.log(f"sugerencia «{name}» en Spotify: {e!r}")
+                    note = ("no encontré en Spotify ninguna de sus canciones" if "ninguna canción" in str(e)
+                            else str(e) if isinstance(e, SpotifyError) else "no se pudo crear en Spotify")
+                    r = self._import_playlist(name, paths, {}, entry, pid)
+                CN.mark(folder, known=True, imported=True)
+                rr = r.get("result") or {}
+                info = {"name": name, "count": len(paths), "created": True}
+                if note:
+                    info["spotify_error"] = note
+                if rr.get("spotify"):
+                    info.update(spotify="ok", unresolved=len(rr["spotify"].get("unresolved") or []))
+                elif rr.get("queued"):
+                    info["spotify"] = "queued"
+                out.append(info)
+                new_pids.append(r.get("pid"))
+                analysis = self._analysis() or analysis
+            if new_pids:
+                self._low_priority(new_pids, analysis)
+            self._set_stage(90, 100)
+            analysis = self._build_analysis(light=True)
+            self._progress("Listo.", 1)
+            return {"playlists": out, "analysis": analysis, "queue": len(cola_spotify.load()), "new_pids": new_pids}
+        return self._task(run, "suggest_create", "Crear playlists sugeridas")
+
+    # ---------- datos incompletos: artista desconocido, sin título, nombre sin «Artista - Título», sin género ----------
+    def _all_music_files(self):
+        roots = [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or []) + \
+            self._noplaylist_dirs()
+        ex = reglas.Excluder(reglas.get(self._cfg))
+        seen, out = set(), []
+        for r in roots:
+            if not r or not os.path.isdir(r):
+                continue
+            for f in biblioteca.walk_audio(r, ex):
+                if "_duplicados" in Path(f).parts or os.path.islink(f):
+                    continue
+                k = os.path.normcase(os.path.realpath(f))
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(f)
+        return out
+
+    def meta_scan(self):
+        """Canciones con datos incompletos y cómo completarlas (Datos incompletos)."""
+        def run():
+            import etiquetas
+            analysis = self._analysis() or []
+            hint = {}
+            for pl in analysis:  # la canción de Spotify con la que BrainOrder ya cruzó cada archivo
+                if (pl.get("source") or "spotify") != "spotify":
+                    continue
+                for r in pl.get("tracks") or []:
+                    if r.get("source") and re.fullmatch(r"[A-Za-z0-9]{22}", str(r.get("id") or "")) and r.get("artists"):
+                        hint.setdefault(r["source"], {"artists": r["artists"], "name": r.get("name") or ""})
+            self._progress("Buscando tu música…", 0)
+            files = self._all_music_files()
+            rows, counts = [], {"artista": 0, "título": 0, "nombre": 0, "género": 0}
+            for n, p in enumerate(files, 1):
+                if n % 200 == 0:
+                    self._progress(f"Revisando etiquetas: {n}/{len(files)}…", n / max(1, len(files)))
+                t = etiquetas.read(p)
+                c = etiquetas.check(p, t, hint.get(p))
+                if not c:
+                    continue
+                for k in c["problems"]:
+                    counts[k] = counts.get(k, 0) + 1
+                rows.append({"path": p, "name": Path(p).name, "cur": t, **c})
+            etiquetas.save()
+            self._progress("Listo.", 1)
+            return {"rows": rows, "counts": counts, "total": len(files),
+                    "spotify": {"connected": self._sp().connected, "paused": spotify_api.paused_until()}}
+        return self._task(run, "meta_scan", "Datos incompletos")
+
+    def meta_search(self, path, query=""):
+        """Busca en Spotify cómo se llama de verdad una canción (para elegir). -> {hits: [...]}"""
+        sp = self._sp()
+        if not sp.connected:
+            return {"ok": False, "error": "Conecta Spotify para buscar."}
+        if spotify_api.paused_until():
+            return {"ok": False, "error": "Spotify está en pausa por exceso de consultas: intenta más tarde."}
+        q = re.sub(r"\s+", " ", str(query or "")).strip()
+        if not q:
+            import etiquetas
+            stem = Path(path).stem
+            if " - " in stem and etiquetas.bad_artist(stem.split(" - ", 1)[0]):
+                stem = stem.split(" - ", 1)[1]
+            q = etiquetas.clean(stem.replace(" - ", " "))
+        try:
+            hits = sp.search_track(title=q)[:6]
+        except SpotifyPaused:
+            return {"ok": False, "error": "Spotify está en pausa por exceso de consultas: intenta más tarde."}
+        except SpotifyError as e:
+            return {"ok": False, "error": str(e)}
+        secs = biblioteca.duration(path) if path and os.path.isfile(path) else None
+        out = [{"artist": ", ".join(h["artists"]), "title": h["name"], "album": h.get("album") or "",
+                "secs": round((h.get("duration_ms") or 0) / 1000), "close": bool(secs and h.get("duration_ms")
+                                                                                   and abs(secs - h["duration_ms"] / 1000) <= 4)}
+               for h in hits]
+        return {"ok": True, "hits": out, "query": q, "secs": round(secs) if secs else None}
+
+    def meta_fix(self, items):
+        """Completa los datos de las canciones elegidas: escribe artista / título / género en el archivo y, si lo
+        pides, le pone de nombre «Artista - Título» (así BrainOrder la reconoce). Las rutas se corrigen en tus
+        programas de DJ y todo queda en el Historial (Deshacer devuelve nombre y etiquetas).
+        items: [{path, artist, title, genre, rename}] — solo se escribe lo que viene."""
+        def run():
+            import etiquetas
+            roots = [Path(d).resolve() for d in [self._cfg.get("dest_root"), self._cfg.get("inbox")] +
+                     list(self._cfg.get("library_roots") or []) + self._noplaylist_dirs() if d]
+            todo = []
+            for it in items or []:
+                p = it.get("path")
+                try:
+                    rp = Path(p).resolve()
+                    ok = rp.is_file() and any(r in rp.parents for r in roots)
+                except (OSError, TypeError):
+                    ok = False
+                if not ok:
+                    continue
+                vals = {k: re.sub(r"\s+", " ", str(it[k])).strip()[:200] for k in ("artist", "title", "genre")
+                        if k in it and it[k] is not None}
+                if "artist" in vals and etiquetas.bad_artist(vals["artist"]) and vals["artist"]:
+                    raise unificar.UnifyError(f"«{vals['artist']}» no sirve como artista ({Path(p).name}).")
+                todo.append((p, vals, bool(it.get("rename"))))
+            if not todo:
+                return {"fixed": 0, "renamed": 0}
+            # 1) nombres de archivo (con todo lo de siempre: programas de DJ, Rekordbox, Historial)
+            ren = []
+            for p, vals, rename in todo:
+                if not rename:
+                    continue
+                cur = etiquetas.read(p)
+                a = vals.get("artist", cur.get("artist") or "")
+                t = vals.get("title", cur.get("title") or "")
+                if not a or not t or etiquetas.bad_artist(a):
+                    continue
+                new = etiquetas.safe_filename(a, t, Path(p).suffix)
+                if new != Path(p).name:
+                    ren.append((p, str(Path(p).parent), new))
+            res = self._relocate_ops(ren, f"Completar datos de {len(todo)} canción(es)") if ren else {"changes": {}}
+            changes = res.get("changes") or {}
+            # 2) etiquetas
+            self._progress("Escribiendo los datos en los archivos…", 0.8)
+            tag_undo, errors = [], []
+            for p, vals, _ in todo:
+                q = changes.get(p, p)
+                if not vals:
+                    continue
+                cur = etiquetas.read(q)
+                vals = {k: v for k, v in vals.items() if (cur.get(k) or "") != v}
+                if not vals:
+                    continue
+                try:
+                    old = etiquetas.write(q, vals)
+                    tag_undo.append((q, old))
+                except Exception as e:
+                    errors.append(f"{Path(q).name}: {e}")
+                    config.log(f"etiquetas {q}: {e!r}")
+            etiquetas.save()
+            op_id = res.get("op_id")
+            if op_id:
+                historial.add_tags(op_id, tag_undo)
+            elif tag_undo:
+                op_id = historial.record_tags(f"Completar datos de {len(tag_undo)} canción(es)", tag_undo)
+            analysis = None
+            if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
+                analysis = self._build_analysis(light=True)
+            self._progress("Listo.", 1)
+            return {"fixed": len(tag_undo), "renamed": len(changes), "skipped": res.get("skipped") or [],
+                    "errors": errors, "op_id": op_id, "analysis": analysis}
+        return self._task(run, "meta_fix", "Completar datos de canciones")
 
     def outside_scan(self):
         """¿Descargaste canciones que te faltan en una carpeta que BrainOrder no revisa?"""

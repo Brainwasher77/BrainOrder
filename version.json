@@ -1,5 +1,5 @@
 {
-  "version": "2.22.1",
-  "build": 63,
-  "notes": "La carpeta de canciones sin playlist se llama «_Sin Playlist» cuando la elige BrainOrder: si la tuya tenía otro nombre se renombra (corrigiendo tus programas de DJ) y si no tenías ninguna se crea."
+  "version": "2.23.0",
+  "build": 64,
+  "notes": "Nuevo: «Sugerencias» de playlists por género, energía y BPM con tus propios criterios (sin mover archivos), y «Datos incompletos» para arreglar artista desconocido, títulos, géneros y nombres de archivo."
 }

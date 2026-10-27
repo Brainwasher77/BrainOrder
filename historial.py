@@ -69,6 +69,27 @@ def record_rb(kind, label, changes, sample=None, extra=None):
     return op["id"]
 
 
+def record_tags(label, tags, extra=None):
+    """Operación que solo cambió etiquetas (artista, título, género) de archivos. tags: [[ruta, {antes}]]."""
+    if not tags:
+        return None
+    op = {"id": f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}", "time": datetime.now().isoformat(timespec="seconds"),
+          "kind": "tags", "label": label, "moves": [], "tags": [[str(a), b] for a, b in tags], "undone": None,
+          **(extra or {})}
+    with _LOCK:
+        _save(op)
+    return op["id"]
+
+
+def add_tags(op_id, tags):
+    """Le suma a una operación (p. ej. renombrar) cómo estaban las etiquetas, para deshacer todo junto."""
+    op = get(op_id)
+    if op and tags:
+        op["tags"] = (op.get("tags") or []) + [[str(a), b] for a, b in tags]
+        with _LOCK:
+            _save(op)
+
+
 def mark_undone(op_id, info=None):
     op = get(op_id)
     if op:
@@ -114,6 +135,12 @@ def list_ops(limit=30):
                        {"count": n, "ready": n, "rb": True, "sample": op.get("sample") or []})
             continue
         moves = op.get("moves") or []
+        if not moves and op.get("tags"):  # solo etiquetas
+            n = len(op["tags"])
+            out.append({k: op.get(k) for k in ("id", "time", "kind", "label", "undone")} |
+                       {"count": n, "ready": sum(1 for a, _ in op["tags"] if Path(a).exists()),
+                        "sample": [Path(a).name for a, _ in op["tags"][:3]]})
+            continue
         # cuántos se podrían devolver ahora mismo
         ready = sum(1 for a, b in moves if Path(b).exists() and not Path(a).exists())
         out.append({k: op.get(k) for k in ("id", "time", "kind", "label", "undone")} |
