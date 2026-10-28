@@ -245,6 +245,31 @@ def identical(a, b):
         return False
 
 
+REC_TOL = 4.0  # segundos: misma grabación si la duración difiere hasta esto
+
+
+def same_recording(a, b, duration=None, tol=REC_TOL):
+    """¿a y b son la MISMA grabación (y por eso una de las dos puede ir a _duplicados)?
+    Sí si son el mismo archivo, una copia exacta, o duran lo mismo (±tol s). Si no se puede saber la duración
+    de alguna, NO: ante la duda nunca se aparta nada. Es la regla única de Organizar, Unificar, Recuperar y
+    Perdidas: así lo que una aparta, la otra lo reconoce como repetido (y no se arma un bucle)."""
+    try:
+        if not (os.path.isfile(str(a)) and os.path.isfile(str(b))):
+            return False
+    except OSError:
+        return False
+    if same_file(a, b) or identical(a, b):
+        return True
+    if duration is None:
+        from biblioteca import duration as _d
+        duration = _d
+    try:
+        da, db = duration(str(a)), duration(str(b))
+    except Exception:
+        return False
+    return bool(da and db and abs(da - db) <= tol)
+
+
 def is_dup_dir(path):
     return "_duplicados" in Path(str(path)).parts
 

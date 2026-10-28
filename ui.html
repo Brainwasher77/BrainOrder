@@ -3126,6 +3126,7 @@ async function organize(){
   try{ const st = await api().get_state(S.rev ?? null); S.inboxCount = st.inbox_count || 0; }catch(e){}
   render();
   const f = r.files; let msg = `<b>${f.moved}</b> movidas a su carpeta, ${f.duplicates} repetidas apartadas en _duplicados`;
+  if((f.kept_similar||[]).length) msg += `<br>🛟 ${f.kept_similar.length} se parecían a una que ya tienes pero duran distinto: <b>no</b> se apartaron (se guardan las dos).`;
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
   msg += folderRenMsg(r.folder_rename) + djSummary(r.dj);
