@@ -1297,7 +1297,12 @@ class Api:
                             carpetas_nuevas.mark(d, known=True)
                         extra_res = organizador.move_unmatched(groups, sel, self._cfg, self._progress)
                 journal = files.pop("journal", []) + ((extra_res or {}).pop("journal", []) if extra_res else [])
-                op_id = historial.record("organize", label, journal)
+                # cuál copia se queda por cada descarga apartada (la que decidió Organizar, no la del análisis)
+                dup_of = {**files.pop("dup_of", {}), **((extra_res or {}).pop("dup_of", {}) if extra_res else {})}
+                keep = {**keep, **dup_of}
+                where = dict(journal)
+                op_id = historial.record("organize", label, journal,
+                                         {"dup_of": {where[a]: k for a, k in dup_of.items() if a in where}})
                 files["dj_paths"] = self._fix_moved_downloads(journal, keep, rb)
                 if not sp_data["playlists"] or not analysis:
                     self._inbox_sig = None
@@ -3634,6 +3639,17 @@ class Api:
                 moves[rb_perdidas._key(a)] = rb_perdidas._key(b)
         return moves
 
+    def _rb_kept(self):
+        """{archivo apartado en _duplicados: la copia que se quedó} según lo que anotaron Organizar y Unificar."""
+        import rb_perdidas
+        out = {}
+        for op in sorted(historial.all_ops(), key=lambda o: o.get("time") or ""):
+            if op.get("undone"):
+                continue
+            for loc, keeper in (op.get("dup_of") or {}).items():
+                out[rb_perdidas._key(loc)] = keeper
+        return out
+
     def _rb_lost_roots(self, tracks_paths=()):
         """Dónde buscar las canciones: tus carpetas de Ajustes y las carpetas donde vive tu colección."""
         roots = [self._cfg.get("dest_root"), self._cfg.get("inbox")] + list(self._cfg.get("library_roots") or [])
@@ -3670,7 +3686,8 @@ class Api:
                 self._progress("Buscando tus canciones en el disco…")
                 disk = rb_perdidas.disk_index(roots)
             self._progress("Comparando con tu colección de Rekordbox…")
-            return rb_perdidas.scan(con, disk=disk, moves=self._rb_moves(), duration=biblioteca.duration)
+            return rb_perdidas.scan(con, disk=disk, moves=self._rb_moves(), duration=biblioteca.duration,
+                                    kept=self._rb_kept())
         try:
             con = rekordbox_sync.connect_ro()
         except Exception as e:
@@ -4886,8 +4903,10 @@ class Api:
             with self._state:
                 res = unificar.apply(plan, self._cfg, [], [g["id"] for g in plan["dups"]], False, self._progress)
                 moved_map = res.pop("moved_map", {})
-                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, res.pop("repoint", {}))
-                res["op_id"] = historial.record("unify", "Apartar duplicados", list(moved_map.items()))
+                repoint = res.pop("repoint", {})
+                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, repoint)
+                res["op_id"] = historial.record("unify", "Apartar duplicados", list(moved_map.items()),
+                                                {"dup_of": {moved_map[a]: k for a, k in repoint.items() if a in moved_map}})
                 analysis = None
                 if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):
                     self._progress("Actualizando el análisis…")
@@ -4907,8 +4926,10 @@ class Api:
             with self._state:
                 res = unificar.apply(pl, self._cfg, merge_ids or [], dup_ids or [], bool(remove_empty), self._progress)
                 moved_map = res.pop("moved_map", {})
-                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, res.pop("repoint", {}))
-                res["op_id"] = historial.record("unify", "Unificar repetidos", list(moved_map.items()))
+                repoint = res.pop("repoint", {})
+                res["dj"], res["dj_warnings"] = self._dj_fix(moved_map, repoint)
+                res["op_id"] = historial.record("unify", "Unificar repetidos", list(moved_map.items()),
+                                                {"dup_of": {moved_map[a]: k for a, k in repoint.items() if a in moved_map}})
                 self._unify_plan = None
                 analysis = None
                 if any(p.get("tracks") is not None for p in self._load_sp()["playlists"]):

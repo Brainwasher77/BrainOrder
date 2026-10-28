@@ -1,5 +1,9 @@
 """Canciones que quedaron SOLO en una carpeta `_duplicados` (no hay otra copia en tu música).
 
+«Otra copia» = la misma grabación (plataforma.same_recording): mismo contenido, o mismo nombre y duración, o la
+copia que Organizar / Unificar anotaron como «la que se queda» cuando la apartaron (aunque tenga otro nombre).
+Es la misma regla con la que se aparta: así lo que se apartó con razón no vuelve a salir aquí como «única copia».
+
 `_duplicados` es para lo repetido: si la vacías, estas se pierden para siempre. Pasa, por ejemplo, cuando
 versiones anteriores apartaban una canción cuya «otra copia» era el mismo archivo visto por otro camino
 (acceso directo, mayúsculas) o ya no existía. Aquí se encuentran y se devuelven a su lugar:
@@ -14,7 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import rb_perdidas as RP
-from plataforma import _quick_hash, free_name
+from plataforma import _quick_hash, free_name, same_recording
 
 DUP = "_duplicados"
 TOL = 4
@@ -62,13 +66,18 @@ def scan(roots, dest_root, ops=(), duration=None, playlists=()):
     for f in outside:
         by_size[f["size"]].append(f)
         by_stem[f["stem"]].append(f)
-    back, original = {}, {}
+    back, original, kept_as = {}, {}, {}
     for op in sorted(ops or [], key=lambda o: o.get("time") or ""):
         if op.get("undone"):
             continue
         for a, b in op.get("moves") or []:
             back[os.path.normcase(b)] = a
             original[os.path.normcase(a)] = a
+        for loc, keeper in (op.get("dup_of") or {}).items():  # Organizar/Unificar anotaron cuál copia se quedó
+            kept_as[os.path.normcase(loc)] = keeper
+    moved_to = {}
+    for b, a in back.items():
+        moved_to[os.path.normcase(a)] = b
     pl_names = {n.lower(): n for n in playlists or []}
     out, taken = [], set()
 
@@ -93,6 +102,15 @@ def scan(roots, dest_root, ops=(), duration=None, playlists=()):
                 if secs and d2 and abs(secs - d2) <= TOL:
                     twin = o["path"]
                     break
+        if not twin:
+            # la copia que se quedó cuando se apartó (puede tener otro nombre: «Artista feat. X - Canción»)
+            k = kept_as.get(os.path.normcase(f["path"]))
+            seen_k = set()
+            while k and os.path.normcase(k) not in seen_k and not os.path.exists(k):
+                seen_k.add(os.path.normcase(k))
+                k = moved_to.get(os.path.normcase(k))  # la copia se movió después: se la sigue
+            if k and os.path.exists(k) and DUP not in Path(k).parts and same_recording(f["path"], k, duration):
+                twin = k
         if twin:
             continue  # sí hay otra copia: es un repetido de verdad
         name = os.path.basename(f["path"])

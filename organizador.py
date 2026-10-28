@@ -1,7 +1,9 @@
 """Organiza descargas sin duplicar archivos.
 
 - Cada descarga se MUEVE (no se copia) a la carpeta hogar de su canción.
-- Las descargas de canciones que ya tienes van a <descargas>/_duplicados para que las borres tú.
+- Las descargas de canciones que ya tienes van a <descargas>/_duplicados para que las borres tú, SOLO si la que
+  ya tienes es la misma grabación (plataforma.same_recording). Con el mismo nombre pero otra duración se guardan
+  las dos. Se anota cuál es la copia que se queda (dup_of) para Rekordbox, el Historial y «Recuperar».
 - Los archivos que ya están en otras carpetas de tu biblioteca no se tocan.
 - Nunca se borra nada.
 """
@@ -9,7 +11,7 @@ import os
 from pathlib import Path
 
 from config import log
-from plataforma import is_dup_dir, safe_move, same_file
+from plataforma import free_name, is_dup_dir, safe_move, same_file, same_recording
 
 
 def _unique(dst: Path) -> Path:
@@ -52,15 +54,18 @@ def organize(analysis, cfg, progress=None):
     dup_dir = inbox / "_duplicados"
     moved, to_dups, errors = 0, 0, []
     journal = []  # (origen, destino) para poder deshacer
+    dup_of = {}   # descarga apartada (ruta original) -> la copia que se queda (para Rekordbox y el Historial)
+    kept = []     # se parecían pero NO son la misma grabación: no se apartan
     total = len(moves) + len(dups)
     n = 0
 
-    def to_duplicates(src_p: Path):
+    def to_duplicates(src_p: Path, keeper):
         rel = src_p.relative_to(inbox) if inbox in src_p.parents else Path(src_p.name)
         target = _unique(dup_dir / rel)
         target.parent.mkdir(parents=True, exist_ok=True)
         safe_move(str(src_p), str(target))
         journal.append((str(src_p), str(target)))
+        dup_of[str(src_p)] = str(keeper)
 
     for src, dest_dir in moves.items():
         n += 1
@@ -75,10 +80,17 @@ def organize(analysis, cfg, progress=None):
             dst = dd / src_p.name
             if dst.exists() and same_file(src_p, dst):
                 continue  # es el mismo archivo (otro camino): ya está en su lugar
-            if dst.exists():
-                # ya hay un archivo con ese nombre en la carpeta (y se queda ahí): la descarga se aparta
-                to_duplicates(src_p)
+            if dst.exists() and same_recording(src_p, dst):
+                # ya está esa misma grabación en la carpeta (y se queda ahí): la descarga se aparta
+                to_duplicates(src_p, dst)
                 to_dups += 1
+            elif dst.exists():
+                # mismo nombre pero OTRA grabación (otra duración): no es repetida, se guardan las dos
+                dst = free_name(dst)
+                safe_move(str(src_p), str(dst))
+                journal.append((str(src_p), str(dst)))
+                kept.append({"file": src_p.name, "as": dst.name, "why": "mismo nombre pero otra duración"})
+                moved += 1
             else:
                 safe_move(str(src_p), str(dst))
                 journal.append((str(src_p), str(dst)))
@@ -95,16 +107,20 @@ def organize(analysis, cfg, progress=None):
             progress(f"Organizando {n}/{total}: {src_p.name} (ya la tenías)")
         try:
             k = keep.get(src)
-            # solo se aparta si la copia que ya tenías sigue ahí (y no es este mismo archivo)
+            # solo se aparta si la copia que ya tenías sigue ahí, no es este mismo archivo y es la MISMA grabación
             if src_p.exists() and k and os.path.exists(k) and not is_dup_dir(k) and not same_file(src_p, k):
-                to_duplicates(src_p)
-                to_dups += 1
+                if same_recording(src_p, k):
+                    to_duplicates(src_p, k)
+                    to_dups += 1
+                else:
+                    kept.append({"file": src_p.name, "as": None, "why": f"se parece a «{Path(k).name}» pero dura distinto"})
         except Exception as e:
             errors.append(f"{src_p.name}: {e}")
             log(f"Error moviendo duplicado {src}: {e}")
 
-    log(f"Organizar: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
-    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal}
+    log(f"Organizar: {moved} movidos, {to_dups} a _duplicados, {len(kept)} parecidas que se quedan, {len(errors)} errores")
+    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal, "dup_of": dup_of,
+            "kept_similar": kept}
 
 
 def relocate(ops, cfg, progress=None):
@@ -180,7 +196,7 @@ def move_unmatched(groups, files, cfg, progress=None):
             ops.append((Path(p), Path(dest)))
     ops += [(Path(f), Path(d)) for f, d in files]
     moved, to_dups, errors = 0, 0, []
-    journal = []
+    journal, dup_of = [], {}
     for n, (src, dest) in enumerate(ops, 1):
         if progress:
             progress(f"Moviendo {n}/{len(ops)}: {src.name}", n / max(1, len(ops)))
@@ -191,13 +207,19 @@ def move_unmatched(groups, files, cfg, progress=None):
             target = dest / src.name
             if target.exists() and same_file(src, target):
                 continue  # es el mismo archivo (otro camino): ya está en su lugar
-            if target.exists():
+            if target.exists() and same_recording(src, target):
                 rel = src.relative_to(inbox) if inbox in src.parents else Path(src.name)
                 t = _unique(dup_dir / rel)
                 t.parent.mkdir(parents=True, exist_ok=True)
                 safe_move(str(src), str(t))
                 journal.append((str(src), str(t)))
+                dup_of[str(src)] = str(target)
                 to_dups += 1
+            elif target.exists():  # mismo nombre, otra grabación: se guardan las dos
+                t = free_name(target)
+                safe_move(str(src), str(t))
+                journal.append((str(src), str(t)))
+                moved += 1
             else:
                 safe_move(str(src), str(target))
                 journal.append((str(src), str(target)))
@@ -218,4 +240,4 @@ def move_unmatched(groups, files, cfg, progress=None):
             except OSError:
                 pass
     log(f"Organizar sin playlist: {moved} movidos, {to_dups} a _duplicados, {len(errors)} errores")
-    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal}
+    return {"moved": moved, "duplicates": to_dups, "errors": errors, "journal": journal, "dup_of": dup_of}

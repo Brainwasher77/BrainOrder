@@ -139,10 +139,11 @@ def follow_moves(path, moves, limit=20):
     return cur if n else None
 
 
-def scan(con, exists=None, disk=None, moves=None, duration=None):
+def scan(con, exists=None, disk=None, moves=None, duration=None, kept=None):
     """-> {"items": [...], "total": n, "offline": n}
     exists(path): ¿existe el archivo? · disk: disk_index(...) · moves: {clave origen: clave destino} del
-    Historial · duration(path): segundos de un archivo del disco (para comparar con la perdida)."""
+    Historial · duration(path): segundos de un archivo del disco (para comparar con la perdida) ·
+    kept: {clave de un archivo apartado en _duplicados: la copia que se quedó} (Organizar / Unificar)."""
     exists = exists or (lambda p: os.path.exists(native(p)))
     moves = moves or {}
     tracks, names = read_tracks(con)
@@ -190,15 +191,26 @@ def scan(con, exists=None, disk=None, moves=None, duration=None):
         return {"id": None, "path": native(f["path"]), "title": os.path.splitext(os.path.basename(f["path"]))[0],
                 "artist": "", "len": secs, "cues": 0, "pls": [], "in_collection": False, "why": why}
 
+    kept = kept or {}
     items = []
     for m in missing:
         nt, stem = norm_title(m["title"]), norm_stem(m["fname"])
         kind, copy = None, None
+        # duración de la canción: la de Rekordbox o, si Rekordbox aún no la analizó, la del archivo apartado
+        m_len = m["len"] or (duration(native(m["path"])) if duration and m["state"] == "dup" else None)
         # 1. BrainOrder la movió: es EL MISMO archivo
         dst = follow_moves(m["path"], moves)
         if dst and dst != _key(m["path"]) and exists(dst) and not in_dups(dst):
             t = by_path.get(dst)
             kind, copy = "exacta", (entry(t, "la movió BrainOrder") if t else loose({"path": dst}, "la movió BrainOrder"))
+        # 1b. BrainOrder la apartó como repetida: la copia que se quedó (aunque tenga otro nombre)
+        k = kept.get(_key(m["path"])) if m["state"] == "dup" else None
+        if not kind and k:
+            kk = follow_moves(k, moves) or _key(k)
+            if exists(kk) and not in_dups(kk):
+                t = by_path.get(kk)
+                kind, copy = "misma", (entry(t, "la copia que se quedó al apartarla") if t
+                                       else loose({"path": kk}, "la copia que se quedó al apartarla"))
         # 2. otra entrada de la colección
         if not kind and m["size"]:
             c = [t for t in by_size.get(m["size"], []) if t["id"] != m["id"]
@@ -226,10 +238,11 @@ def scan(con, exists=None, disk=None, moves=None, duration=None):
             c = d_stem.get(stem, [])
             for f in c:
                 secs = duration(f["path"]) if duration else None
-                if secs and m["len"] and abs(secs - m["len"]) <= TOL:
+                if secs and m_len and abs(secs - m_len) <= TOL:
                     kind, copy = "misma", loose(f, "mismo nombre y duración en otra carpeta", secs)
                     break
-            if not kind and c and not duration:
+            if not kind and c and (not duration or not m_len):
+                # sin duración para comparar (Rekordbox aún no la analizó y el archivo no está): mismo nombre
                 kind, copy = "misma", loose(c[0], "mismo nombre en otra carpeta")
         # versión distinta (no se repara sola: decides tú)
         if not kind and nt:
