@@ -1,5 +1,5 @@
 {
-  "version": "2.24.1",
-  "build": 66,
-  "notes": "Arreglado: Organizar ya no aparta a _duplicados una canción que solo tiene el mismo nombre (tiene que ser la misma grabación), y Perdidas / Recuperar reconocen la copia que se quedó: se acabó el bucle de «única copia en _duplicados»."
+  "version": "2.24.2",
+  "build": 67,
+  "notes": "Arreglado: los pendientes de Spotify se atascaban. Un pendiente con error ya no frena a los demás, un «espera» repetido de Spotify ya no marca canciones como no encontradas, la lista de tus playlists se lee una vez por intento (gasta menos cuota) y «Hacerlos ya» siempre dice qué pasó. Cada intento deja un informe en _Informes/Pendientes de Spotify.txt."
 }

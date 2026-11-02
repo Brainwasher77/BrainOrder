@@ -143,6 +143,23 @@ def _retry_after(e):
     time.sleep(secs + 1)
 
 
+def _pause_short(e, secs=120):
+    """Spotify siguió diciendo «espera» tras varios reintentos: pausa corta en vez de dar error."""
+    try:
+        secs = max(secs, int(e.headers.get("Retry-After", "0")))
+    except (TypeError, ValueError):
+        pass
+    quota = "QUOTA_EXCEEDED" in _body(e)
+    until = time.time() + max(secs, 600 if quota else secs)
+    try:
+        PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAUSE_FILE.write_text(json.dumps({"until": until, "reason": "quota" if quota else "rate"}), "utf-8")
+    except OSError:
+        pass
+    log(f"Spotify: sigue pidiendo esperar tras varios reintentos; pausa hasta {_hora(until)}")
+    raise _pause_error(until)
+
+
 def _forbidden(detail):
     """Explica un 403 de Spotify en palabras."""
     d = (detail or "").lower()
@@ -309,9 +326,11 @@ class Spotify:
             with _urlopen(req, timeout=30) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            if e.code == 429 and _retry:
-                _retry_after(e)
-                return self.get(path_or_url, params, _retry - 1)
+            if e.code == 429:
+                if _retry:
+                    _retry_after(e)
+                    return self.get(path_or_url, params, _retry - 1)
+                _pause_short(e)
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
                 return self.get(path_or_url, params, _retry - 1)
@@ -397,9 +416,11 @@ class Spotify:
                 raw = r.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
-            if e.code == 429 and _retry:
-                _retry_after(e)
-                return self.send(method, path, body, _retry - 1)
+            if e.code == 429:
+                if _retry:
+                    _retry_after(e)
+                    return self.send(method, path, body, _retry - 1)
+                _pause_short(e)
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
                 return self.send(method, path, body, _retry - 1)

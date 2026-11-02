@@ -2091,15 +2091,21 @@ class Api:
         import cola_spotify as Q
         from fuentes import carpetas as FC
         lock = self.__dict__.setdefault("_q_lock", threading.Lock())
-        if not Q.load() or self._queue_blocked():
+        if not Q.load():
+            return None
+        why = self._queue_blocked()
+        if why:
+            self._queue_report(blocked=why)
             return None
         if not lock.acquire(blocking=False):
-            return None  # ya lo está haciendo otra tarea
+            return {"busy": True, "done": [], "failed": []}  # ya lo está haciendo otra tarea
         sp = self._sp()
-        done, failed = [], []
+        done, failed, errors, stopped = [], [], [], None
+        self._q_mine, self._q_in_run = None, True  # la lista de tus playlists se lee UNA vez por vuelta
         try:
             jobs = sorted(Q.load(), key=lambda j: (self._Q_ORDER.get(j.get("kind"), 9), j.get("created") or ""))
-            for job in jobs:
+            for n, job in enumerate(jobs, 1):
+                self._progress(f"Pendiente {n}/{len(jobs)} para Spotify: {job.get('name')}", (n - 1) / max(1, len(jobs)))
                 try:
                     if job["kind"] == "import":
                         entry = job["entry"]
@@ -2139,17 +2145,27 @@ class Api:
                         done.append({"name": job["name"], "kind": "add", "found": out["added"],
                                      "unresolved": len(out["unresolved"]), "reused": True})
                     Q.remove(job["id"])
-                except SpotifyPaused:
+                except SpotifyPaused as e:
+                    stopped = str(e)
                     break  # otra vez en pausa: lo que falta sigue en la cola (con lo ya buscado guardado)
-                except SpotifyError as e:
+                except Exception as e:  # cualquier error: se anota en ESE pendiente y se sigue con los demás
+                    if not isinstance(e, SpotifyError):
+                        config.log(f"pendiente de Spotify «{job.get('name')}»: {traceback.format_exc()}")
+                    msg = str(e) if isinstance(e, SpotifyError) else f"error interno ({e.__class__.__name__}: {e})"
                     tries = int(job.get("tries") or 0) + 1
-                    if tries >= 3 and job["kind"] != "merge_add":  # una fusión se reintenta siempre: si no, se pierde
+                    errors.append({"name": job.get("name"), "kind": job.get("kind"), "error": msg})
+                    if tries >= 3 and job.get("kind") not in ("merge_add", "add"):  # canciones agregadas no se pierden
                         Q.remove(job["id"])
-                        failed.append({"name": job["name"], "error": str(e)})
+                        failed.append({"name": job.get("name"), "error": msg})
                     else:
-                        Q.update(job["id"], tries=tries, error=str(e))
+                        Q.update(job["id"], tries=tries, error=msg)
         finally:
+            self._q_mine, self._q_in_run = None, False
             lock.release()
+            try:
+                self._queue_report(done=done, failed=failed, errors=errors, stopped=stopped)
+            except Exception as e:
+                config.log(f"informe de pendientes: {e!r}")
         if done and rebuild:
             try:
                 self._build_analysis(light=True, quiet=True)
@@ -2158,7 +2174,45 @@ class Api:
         if (done or failed) and self._window:
             payload = json.dumps({"done": done, "failed": failed, "left": len(Q.load())})
             self._window.evaluate_js(f"window.onSpotifyQueue && onSpotifyQueue({payload})")
-        return {"done": done, "failed": failed}
+        return {"done": done, "failed": failed, "errors": errors, "stopped": stopped, "left": len(Q.load())}
+
+    def _queue_report(self, done=(), failed=(), errors=(), stopped=None, blocked=None):
+        """Deja en _Informes un .txt con el último intento de pasar pendientes a Spotify (qué se hizo,
+        por qué se detuvo, cada pendiente con su error) y lo último del registro sobre Spotify."""
+        import time as _t
+        import cola_spotify as Q
+        until = spotify_api.paused_until()
+        L = [f"BrainOrder — pendientes de Spotify · {config.CREDIT}",
+             f"Último intento: {_t.strftime('%Y-%m-%d %H:%M:%S')} · versión {(actualizador.local_version() or {}).get('version')}", ""]
+        if blocked:
+            L.append(f"NO SE INTENTÓ: {blocked}")
+        if until:
+            L.append(f"Pausa de Spotify hasta {_t.strftime('%Y-%m-%d %H:%M', _t.localtime(until))} "
+                     f"({'cuota de la app agotada' if spotify_api.pause_reason() == 'quota' else 'exceso de consultas'})")
+        if stopped:
+            L.append(f"SE DETUVO: {stopped}")
+        sp = self._sp()
+        granted = ((sp.token or {}).get("scope") or "")
+        L.append(f"Spotify: {'conectado' if sp.connected else 'NO conectado'} · permiso de editar: {'sí' if sp.can_write else 'NO'}"
+                 f" · encendido: {'sí' if self._spotify_on() else 'NO'} · scopes: {granted}")
+        L += ["", f"HECHOS EN ESTE INTENTO ({len(done)})"] + [f"  ✓ {d.get('kind')} «{d.get('name')}» "
+                                                           f"(agregadas {d.get('found')}, sin encontrar {d.get('unresolved')})" for d in done]
+        L += ["", f"ERRORES EN ESTE INTENTO ({len(errors)})"] + [f"  ✗ {x.get('kind')} «{x.get('name')}»: {x.get('error')}" for x in errors]
+        if failed:
+            L += ["", f"DESCARTADOS TRAS 3 INTENTOS ({len(failed)})"] + [f"  ✗ «{x.get('name')}»: {x.get('error')}" for x in failed]
+        jobs = Q.load()
+        L += ["", f"QUEDAN EN LA COLA ({len(jobs)})"]
+        for j in jobs:
+            L.append(f"  • {j.get('kind')} «{j.get('name')}» · creado {j.get('created')} · intentos {j.get('tries') or 0}"
+                     f" · por buscar {len(j.get('paths') or []) + len(j.get('queries') or [])} · ya encontradas {len(j.get('uris') or [])}"
+                     f" · sin encontrar {j.get('_unresolved') or 0}" + (f"\n      último error: {j['error']}" if j.get("error") else ""))
+        try:
+            lines = config.LOG_FILE.read_text("utf-8", errors="ignore").splitlines()[-400:]
+            sp_lines = [x for x in lines if "potify" in x or "pendiente" in x or "Traceback" in x or "Error" in x][-60:]
+        except OSError:
+            sp_lines = []
+        L += ["", "REGISTRO (lo último sobre Spotify)"] + ["  " + x[:400] for x in sp_lines]
+        Path(self._reports_dir(), "Pendientes de Spotify.txt").write_text("\n".join(L) + "\n", "utf-8")
 
     def _spotify_fill_uris(self, sp, name, uris, meta):
         """Crea la playlist con esas canciones o usa la tuya que ya se llama así (solo agrega lo que falte).
@@ -2177,6 +2231,8 @@ class Api:
                 return pid, existing.get("url"), cur.get("snapshot"), True, cur["tracks"]
             return pid, existing.get("url"), None, True, self._read_tracks({"id": pid, "name": name, "source": "spotify"})
         created = sp.create_playlist(name, description=f"Importada con {config.CREDIT}")
+        if getattr(self, "_q_in_run", False) and self._q_mine is not None:  # otro pendiente con ese nombre la reutiliza
+            self._q_mine.append({"id": created["id"], "name": name, "snapshot": None})
         snap = sp.add_items(created["id"], uris)
         tracks = []
         for u in dict.fromkeys(uris):
@@ -2801,6 +2857,7 @@ class Api:
             return {"ok": True, "idle": True, "blocked": why, "jobs": Q.summary()}
         out = self._task(lambda: self._process_spotify_queue() or {"idle": True}, "spotify_queue", "Pasar pendientes a Spotify")
         out["jobs"] = Q.summary()
+        out["report"] = str(Path(self._reports_dir(), "Pendientes de Spotify.txt"))
         return out
 
     def spotify_queue_cancel(self, job_id):
@@ -2813,7 +2870,13 @@ class Api:
         """Tu playlist de Spotify con ese nombre (sin distinguir mayúsculas), si existe."""
         want = name.strip().lower()
         try:
-            for p in sp.list_mine():
+            in_run = getattr(self, "_q_in_run", False)
+            mine = getattr(self, "_q_mine", None) if in_run else None
+            if mine is None:
+                mine = sp.list_mine()
+                if in_run:
+                    self._q_mine = mine
+            for p in mine:
                 if (p.get("name") or "").strip().lower() == want:
                     return {**p, "url": f"https://open.spotify.com/playlist/{p['id']}"}
         except SpotifyError:
