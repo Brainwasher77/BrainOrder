@@ -1,5 +1,5 @@
 {
-  "version": "2.24.2",
-  "build": 67,
-  "notes": "Arreglado: los pendientes de Spotify se atascaban. Un pendiente con error ya no frena a los demás, un «espera» repetido de Spotify ya no marca canciones como no encontradas, la lista de tus playlists se lee una vez por intento (gasta menos cuota) y «Hacerlos ya» siempre dice qué pasó. Cada intento deja un informe en _Informes/Pendientes de Spotify.txt."
+  "version": "2.24.3",
+  "build": 68,
+  "notes": "Con Spotify en pausa, el informe _Informes/Pendientes de Spotify.txt también se escribe (qué espera y hasta cuándo)."
 }
