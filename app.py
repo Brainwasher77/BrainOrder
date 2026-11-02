@@ -2850,11 +2850,24 @@ class Api:
     def spotify_queue_run(self, auto=False):
         """Pasar ya a Spotify lo pendiente (si Spotify lo permite). auto: lo llama el vigilante."""
         import cola_spotify as Q
+        import time as _t
         if auto and (not Q.load() or spotify_api.paused_until()):
+            # en pausa también se deja el informe (cada 10 min), para saber qué espera y hasta cuándo
+            if Q.load() and _t.time() - getattr(self, "_q_rep_t", 0) > 600:
+                self._q_rep_t = _t.time()
+                try:
+                    self._queue_report(blocked=self._queue_blocked())
+                except Exception as e:
+                    config.log(f"informe de pendientes: {e!r}")
             return {"ok": True, "idle": True}
         why = self._queue_blocked() if Q.load() else None
         if why:
-            return {"ok": True, "idle": True, "blocked": why, "jobs": Q.summary()}
+            try:
+                self._queue_report(blocked=why)
+            except Exception as e:
+                config.log(f"informe de pendientes: {e!r}")
+            return {"ok": True, "idle": True, "blocked": why, "jobs": Q.summary(),
+                    "report": str(Path(self._reports_dir(), "Pendientes de Spotify.txt"))}
         out = self._task(lambda: self._process_spotify_queue() or {"idle": True}, "spotify_queue", "Pasar pendientes a Spotify")
         out["jobs"] = Q.summary()
         out["report"] = str(Path(self._reports_dir(), "Pendientes de Spotify.txt"))
