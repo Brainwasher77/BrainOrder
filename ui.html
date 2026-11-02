@@ -586,9 +586,20 @@ async function fdHide(kind, i){
 }
 // ---------- cola de Spotify: lo que se hace solo cuando termina la pausa ----------
 async function spqRun(){
+  toast('Pasando los pendientes a Spotify…');
   const r = await api().spotify_queue_run();
   if(!r.ok){ taskErr(r); fdLoad(); return; }
-  if(r.idle) toast(r.blocked ? `Todavía no se puede: ${esc(r.blocked)}. Se hace solo en cuanto se pueda.` : 'No había nada pendiente.', !!r.blocked);
+  S.spQueue = (r.jobs||[]).length; renderCore();
+  const informe = r.report ? `<br><a class="lnk" onclick="reveal(${jsq(r.report)})">Ver el informe</a>` : '';
+  if(r.busy){ toast('Ya se están pasando los pendientes a Spotify: espera a que termine.'); fdLoad(); return; }
+  if(r.idle){ toast(r.blocked ? `Todavía no se puede: ${esc(r.blocked)}. Se hace solo en cuanto se pueda.${informe}` : 'No había nada pendiente.', !!r.blocked); fdLoad(); return; }
+  // siempre decir qué pasó (antes, si se detenía o fallaba, no aparecía nada)
+  const n = (r.done||[]).length, errs = r.errors||[];
+  let msg = n ? `✅ ${n} pendiente(s) hecho(s) en Spotify.` : '⚠️ No se pudo hacer ningún pendiente.';
+  if(r.stopped) msg += `<br>⏸ Se detuvo: ${esc(r.stopped)}`;
+  if(errs.length) msg += '<br>' + errs.slice(0,4).map(e => `<span style="color:var(--org)">«${esc(e.name)}»: ${esc(e.error)}</span>`).join('<br>') + (errs.length>4?`<br>…y ${errs.length-4} más`:'');
+  if(r.left) msg += `<br>Quedan ${r.left}.`;
+  toast(msg + informe, !n);
   fdLoad();
 }
 async function spqCancel(id){
