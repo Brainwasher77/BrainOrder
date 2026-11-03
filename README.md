@@ -231,7 +231,7 @@ Ajustes, sesión de Spotify, cachés y el log (`brainorder.log`, se rota al pasa
 Tu Client ID y tu sesión de Spotify viven solo ahí, nunca en el repositorio.
 
 ## Límite de consultas de Spotify
-**Pendientes para Spotify:** se hacen solos cada minuto en cuanto Spotify lo permite, o con **Hacerlos ya**. Un pendiente con error no frena a los demás (el error queda anotado en ese pendiente) y cada intento deja un informe en `_Informes/Pendientes de Spotify.txt` de tu carpeta de playlists: qué se hizo, por qué se detuvo, cada pendiente con lo que le falta y lo último del registro sobre Spotify.
+**Pendientes para Spotify:** se hacen solos cada minuto en cuanto Spotify lo permite, o con **Hacerlos ya**. Van primero los baratos (renombrar, eliminar y las playlists con menos canciones por buscar; las enormes al final). Un corte de red no cuenta como intento fallido. Un pendiente con error no frena a los demás (el error queda anotado en ese pendiente) y cada intento deja un informe en `_Informes/Pendientes de Spotify.txt` de tu carpeta de playlists: qué se hizo, por qué se detuvo, cada pendiente con lo que le falta y lo último del registro sobre Spotify.
 
 **Conexiones → 🩺 Probar Spotify** hace una sola consulta y te dice exactamente qué pasa: funciona, **cuota agotada** (desde 2026 las apps en modo desarrollo tienen una cuota de consultas por cuenta de desarrollador; se recupera sola con el tiempo), pausa por exceso de consultas, falta **Premium** en la cuenta dueña de la app, tu cuenta no está en **User Management** de la app, o la sesión venció. Con **Reintentar ahora** vuelve a preguntar sin esperar la pausa.
 
