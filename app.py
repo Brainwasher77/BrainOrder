@@ -33,7 +33,7 @@ import deezer  # noqa: E402
 import unificar  # noqa: E402
 import sugerencias  # noqa: E402
 import actualizador  # noqa: E402
-from spotify_api import Spotify, SpotifyError, SpotifyPaused  # noqa: E402
+from spotify_api import Spotify, SpotifyError, SpotifyPaused, SpotifyNetError  # noqa: E402
 import spotify_api  # noqa: E402
 
 CACHE_SPOTIFY = config.SUPPORT_DIR / "spotify_cache.json"
@@ -2103,7 +2103,9 @@ class Api:
         done, failed, errors, stopped = [], [], [], None
         self._q_mine, self._q_in_run = None, True  # la lista de tus playlists se lee UNA vez por vuelta
         try:
-            jobs = sorted(Q.load(), key=lambda j: (self._Q_ORDER.get(j.get("kind"), 9), j.get("created") or ""))
+            # lo barato primero: renombrar/eliminar, y entre las playlists a crear, las que menos búsquedas
+            # necesitan (las gigantes al final: con la cuota de un día alcanzan a pasar muchas pequeñas)
+            jobs = sorted(Q.load(), key=lambda j: (self._Q_ORDER.get(j.get("kind"), 9), self._job_cost(j), j.get("created") or ""))
             for n, job in enumerate(jobs, 1):
                 self._progress(f"Pendiente {n}/{len(jobs)} para Spotify: {job.get('name')}", (n - 1) / max(1, len(jobs)))
                 try:
@@ -2148,6 +2150,12 @@ class Api:
                 except SpotifyPaused as e:
                     stopped = str(e)
                     break  # otra vez en pausa: lo que falta sigue en la cola (con lo ya buscado guardado)
+                except SpotifyNetError as e:
+                    # se cortó la conexión: no es culpa del pendiente (no cuenta como intento) y no se sigue
+                    # golpeando a Spotify; lo ya buscado quedó guardado
+                    Q.update(job["id"], error=str(e))
+                    stopped = str(e)
+                    break
                 except Exception as e:  # cualquier error: se anota en ESE pendiente y se sigue con los demás
                     if not isinstance(e, SpotifyError):
                         config.log(f"pendiente de Spotify «{job.get('name')}»: {traceback.format_exc()}")
@@ -2175,6 +2183,18 @@ class Api:
             payload = json.dumps({"done": done, "failed": failed, "left": len(Q.load())})
             self._window.evaluate_js(f"window.onSpotifyQueue && onSpotifyQueue({payload})")
         return {"done": done, "failed": failed, "errors": errors, "stopped": stopped, "left": len(Q.load())}
+
+    def _job_cost(self, job):
+        """Cuántas búsquedas en Spotify le faltan a un pendiente (para hacer primero los pequeños)."""
+        if job.get("_resolved"):
+            return len(job.get("paths") or []) + len(job.get("queries") or [])
+        if job.get("kind") == "import":
+            try:
+                from fuentes import carpetas as FC
+                return len(FC.member_paths(self._cfg, job.get("entry") or {}) or [])
+            except Exception:
+                return 10 ** 6
+        return len(job.get("files") or []) + len(job.get("paths") or []) + len(job.get("queries") or [])
 
     def _queue_report(self, done=(), failed=(), errors=(), stopped=None, blocked=None):
         """Deja en _Informes un .txt con el último intento de pasar pendientes a Spotify (qué se hizo,
@@ -2204,7 +2224,7 @@ class Api:
         L += ["", f"QUEDAN EN LA COLA ({len(jobs)})"]
         for j in jobs:
             L.append(f"  • {j.get('kind')} «{j.get('name')}» · creado {j.get('created')} · intentos {j.get('tries') or 0}"
-                     f" · por buscar {len(j.get('paths') or []) + len(j.get('queries') or [])} · ya encontradas {len(j.get('uris') or [])}"
+                     f" · por buscar {self._job_cost(j)} · ya encontradas {len(j.get('uris') or [])}"
                      f" · sin encontrar {j.get('_unresolved') or 0}" + (f"\n      último error: {j['error']}" if j.get("error") else ""))
         try:
             lines = config.LOG_FILE.read_text("utf-8", errors="ignore").splitlines()[-400:]

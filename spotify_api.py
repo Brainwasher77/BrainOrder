@@ -32,6 +32,10 @@ class SpotifyError(Exception):
     pass
 
 
+class SpotifyNetError(SpotifyError):
+    """Se cortó la conexión con Spotify (no es culpa del pendiente: se reintenta sin contar como intento)."""
+
+
 class SpotifyPaused(SpotifyError):
     """Spotify castigó a la app por exceso de consultas: no se le pregunta nada hasta que pase."""
 
@@ -101,7 +105,7 @@ def _urlopen(req, timeout=30, tries=3):
                 time.sleep(delay)
                 delay *= 2
                 continue
-            raise SpotifyError(f"No pude conectar con Spotify. Revisa tu conexión a internet. ({e})")
+            raise SpotifyNetError(f"No pude conectar con Spotify. Revisa tu conexión a internet. ({e})")
 
 
 def _body(e):
@@ -338,6 +342,11 @@ class Spotify:
             if e.code == 403 and _forbidden(detail):
                 raise SpotifyError(_forbidden(detail))
             raise SpotifyError(f"Error {e.code} en {url.split('?')[0]}: {detail[:200]}")
+        except _NET_ERRORS as e:  # se cortó leyendo la respuesta (timeout, conexión reiniciada)
+            if _retry:
+                time.sleep(2)
+                return self.get(path_or_url, params, _retry - 1)
+            raise SpotifyNetError(f"Se cortó la conexión con Spotify ({e.__class__.__name__}). Se reintenta después.")
 
     def paged(self, path, params, on_page=None):
         data = self.get(path, params)
@@ -431,6 +440,8 @@ class Spotify:
                 raise SpotifyError("Spotify no dejó modificar (403). Reconecta Spotify para dar permiso de edición; "
                                    f"si sigue, tu app de desarrollador no tiene permiso de escritura. Detalle: {detail}")
             raise SpotifyError(f"Error {e.code} en {method} {url.split('?')[0]}: {detail}")
+        except _NET_ERRORS as e:
+            raise SpotifyNetError(f"Se cortó la conexión con Spotify ({e.__class__.__name__}). Se reintenta después.")
 
     def create_playlist(self, name, public=False, description="Creada desde Rekordbox con BrainOrder by @BRAINWASHERDJ"):
         return self.send("POST", "/me/playlists", {"name": name, "public": public, "description": description})
@@ -454,13 +465,14 @@ class Spotify:
             self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in uris[i:i + 100]]})
 
     def save_to_library(self, uris):
+        # /me/library recibe las uris en la dirección (?uris=a,b), no en el cuerpo
         for i in range(0, len(uris), 40):
-            self.send("PUT", "/me/library", {"uris": uris[i:i + 40]})
+            self.send("PUT", "/me/library?" + urllib.parse.urlencode({"uris": ",".join(uris[i:i + 40])}))
 
     def remove_from_library(self, uris):
         """También sirve para dejar de seguir (borrar de tu biblioteca) una playlist: spotify:playlist:ID."""
         for i in range(0, len(uris), 40):
-            self.send("DELETE", "/me/library", {"uris": uris[i:i + 40]})
+            self.send("DELETE", "/me/library?" + urllib.parse.urlencode({"uris": ",".join(uris[i:i + 40])}))
 
     def search_track(self, isrc=None, artist="", title=""):
         """-> lista de tracks simplificados (máx. 10, límite de Spotify)."""

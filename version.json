@@ -1,5 +1,5 @@
 {
-  "version": "2.24.3",
-  "build": 68,
-  "notes": "Con Spotify en pausa, el informe _Informes/Pendientes de Spotify.txt también se escribe (qué espera y hasta cuándo)."
+  "version": "2.24.4",
+  "build": 69,
+  "notes": "Arreglado: eliminar una playlist en Spotify fallaba («Missing required field: uris»). Un corte de red ya no cuenta como intento fallido (antes podía descartar una playlist grande con lo ya buscado). Los pendientes pequeños van antes que los grandes, así con la cuota diaria pasan más playlists."
 }
