@@ -2022,6 +2022,9 @@ class Api:
                 out["result"].update(summary)
                 CN.dj_mark(program, ref, done=True)
                 self._dj_group(out.get("pid"), opts)
+                out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
+                if out["result"]["adopt"] and out["result"]["adopt"].get("state") == "done":
+                    out["analysis"] = self._analysis()
                 return out
             # la playlist queda completa, pero lo que ya tenías se usa desde tu archivo de siempre:
             # solo la música nueva se pasa a tu carpeta de playlists (nada se copia dos veces)
@@ -2035,6 +2038,9 @@ class Api:
             out["result"].update(summary)
             CN.dj_mark(program, ref, done=True)
             self._dj_group(out.get("pid"), opts)
+            out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
+            if out["result"]["adopt"] and out["result"]["adopt"].get("state") == "done":
+                out["analysis"] = self._analysis()
             return out
         return self._task(run, f"djimport:{program}:{ref}", "Importar playlist")
 
@@ -2087,6 +2093,124 @@ class Api:
         CN.dj_undismiss(program, ref)
         self._told().discard(f"d:{program}:{ref}")
         return {"ok": True}
+
+    # ---------- la original de Rekordbox pasa a la carpeta de BrainOrder (sin tenerla dos veces) ----------
+    def _rb_adopt_add(self, jobs):
+        cur = [j for j in self._cfg.get("rb_adopt") or [] if str(j["ref"]) not in {str(x["ref"]) for x in jobs}]
+        self._cfg["rb_adopt"] = cur + list(jobs)
+        config.save(self._cfg)
+
+    def _rb_adopt_run(self, interactive=False):
+        """Mueve (o quita, si la sumaste a otra) en Rekordbox las playlists originales que agregaste a
+        BrainOrder. Necesita Rekordbox cerrado; si está abierto queda pendiente y se hace al cerrarlo."""
+        import rb_cambios
+        jobs = list(self._cfg.get("rb_adopt") or [])
+        if not jobs:
+            return None
+        if rekordbox_sync.rekordbox_running():
+            if interactive:
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto: ciérralo para mover tus playlists a la carpeta de BrainOrder.")
+            return None
+        names = {p["id"]: p["name"] for p in self._analysis() or []}
+        for j in jobs:  # el nombre que tiene hoy en BrainOrder (por si la renombraste mientras tanto)
+            if j.get("pid") in names and j.get("mode") != "delete":
+                j["name"] = names[j["pid"]]
+        res = rekordbox_sync.adopt(self._cfg, jobs, self._progress)
+        rb_cambios.merge_baseline(res.pop("baseline", None))
+        done = {str(j["ref"]) for j in res.pop("done", [])}
+        # sigue marcada como nacida en Rekordbox: Organizar no la reescribe (no hay copia) y lo que cambies en
+        # ella pasa solo a BrainOrder / Spotify (Rekordbox manda)
+        self._cfg["rb_adopt"] = [j for j in self._cfg.get("rb_adopt") or [] if str(j["ref"]) not in done]
+        config.save(self._cfg)
+        folder = self._cfg.get("rekordbox_folder") or "BrainOrder"
+        msg = []
+        if res["moved"] or res["merged"]:
+            msg.append(f"{res['moved'] + res['merged']} playlist(s) movida(s) a «{folder}» en Rekordbox")
+        if res["deleted"]:
+            msg.append(f"{res['deleted']} original(es) quitada(s) de Rekordbox (sus canciones ya están en la playlist donde las sumaste)")
+        self._rb_log(msg)
+        try:
+            self._build_analysis(light=True)
+        except Exception as e:
+            config.log(f"análisis después de mover playlists: {e!r}")
+        return {**res, "messages": msg}
+
+    def _rb_adopt_after_import(self, program, ref, out, opts):
+        """Después de agregar una playlist de Rekordbox: la original va a la carpeta de BrainOrder (o se quita
+        si la sumaste a otra). -> dict para el resultado (estado y motivo)."""
+        if program != "rekordbox" or not opts.get("adopt", True):
+            return None
+        res = out.get("result") or {}
+        pid = out.get("pid")
+        if not pid or res.get("nothing_new") and not res.get("merged_into"):
+            return None
+        if res.get("merged_into"):
+            sp = res.get("spotify") or {}
+            if sp.get("state") == "queued":
+                return {"state": "kept", "why": "Spotify está en pausa: la original se queda hasta confirmar que todas sus canciones llegaron"}
+            if sp.get("unresolved"):
+                return {"state": "kept", "why": f"{len(sp['unresolved'])} de sus canciones no están en Spotify: la original se queda para no perderlas"}
+            job = {"ref": str(ref), "pid": pid, "name": res["merged_into"], "mode": "delete"}
+        else:
+            job = {"ref": str(ref), "pid": pid, "name": res.get("name"), "mode": "move"}
+        self._rb_adopt_add([job])
+        try:
+            r = self._rb_adopt_run()
+        except Exception as e:
+            config.log(f"mover la original a la carpeta de BrainOrder: {e!r}")
+            return {"state": "pending", "why": str(e)}
+        return {"state": "done", "mode": job["mode"]} if r is not None else {"state": "pending", "mode": job["mode"]}
+
+    def rb_adopt_existing(self):
+        """Las playlists de Rekordbox que agregaste ANTES de esta opción (siguen fuera de la carpeta): se
+        mueven a la carpeta de BrainOrder."""
+        def run():
+            import dj_playlists as DJ
+            lists = DJ.read(self._cfg, "rekordbox") or {}
+            outside = {ref: v for ref, v in lists.items()}
+            jobs, seen = [], set()
+            from fuentes import carpetas as FC
+            for e in self._cfg.get("folder_playlists") or []:
+                if e.get("program") == "rekordbox" and str(e.get("ref")) in outside:
+                    jobs.append({"ref": str(e["ref"]), "pid": FC.entry_pid(e), "name": e.get("name") or outside[str(e["ref"])]["name"], "mode": "move"})
+                    seen.add(str(e["ref"]))
+            origin = self._cfg.get("playlist_origin") or {}
+            by_name = {}
+            for ref, v in outside.items():
+                by_name.setdefault(biblioteca.folder_key(v["name"]), []).append(ref)
+            for p in self._analysis() or []:
+                if (p.get("origin") or origin.get(p["id"])) != "rekordbox":
+                    continue
+                refs = [r for r in by_name.get(biblioteca.folder_key(p["name"]), []) if r not in seen]
+                if len(refs) == 1:  # solo si no hay duda de cuál es
+                    jobs.append({"ref": refs[0], "pid": p["id"], "name": p["name"], "mode": "move"})
+                    seen.add(refs[0])
+            if not jobs:
+                return {"queued": 0, "result": None}
+            # solo las que de verdad están fuera de la carpeta
+            jobs = [j for j in jobs if not self._rb_inside_folder(j["ref"])]
+            if not jobs:
+                return {"queued": 0, "result": None}
+            self._rb_adopt_add(jobs)
+            r = self._rb_adopt_run()
+            return {"queued": len(jobs), "result": r, "pending": r is None,
+                    "analysis": self._analysis() if r else None}
+        return self._task(run, "rb_adopt", "Mover playlists a la carpeta de BrainOrder")
+
+    def rb_adopt_run(self):
+        def run():
+            r = self._rb_adopt_run(interactive=True) or {}
+            return {"result": r, "analysis": self._analysis()}
+        return self._task(run, "rb_adopt", "Mover playlists a la carpeta de BrainOrder")
+
+    def _rb_inside_folder(self, ref):
+        """¿Esa playlist de Rekordbox ya está dentro de la carpeta de BrainOrder?"""
+        try:
+            import rb_cambios
+            state = rb_cambios.read_state(self._cfg) or {}
+            return str(ref) in state
+        except Exception:
+            return False
 
     def _dj_add_to_existing(self, nov, opts):
         """La playlist de Rekordbox se llama igual que una de BrainOrder: se le suman solo las canciones nuevas."""
@@ -3639,9 +3763,12 @@ class Api:
                                 moves.append({"src": f, "dest": dest, "from": name})
                     done.append(f"«{name}»: {('+' + str(len(add)) + ' ') if add else ''}{('−' + str(len(rem))) if rem else ''}".strip()
                                 + " en BrainOrder")
+                elif src == FC.KEY and any(FC.entry_pid(e) == pid and e.get("program") == "rekordbox"
+                                           for e in FC.entries(self._cfg)):
+                    done.append(f"«{name}»: al día (BrainOrder la lee directo de Rekordbox)")
                 else:
                     label = "otra plataforma" if src not in ("spotify", FC.KEY) else (
-                        "una playlist de Spotify que no es tuya" if src == "spotify" else "su playlist original de Rekordbox")
+                        "una playlist de Spotify que no es tuya" if src == "spotify" else "su programa de origen")
                     done.append(f"«{name}»: se queda como está en Rekordbox (no se puede pasar a {label})")
                 accepted |= d["rb"]
             except SpotifyPaused:
@@ -3732,6 +3859,15 @@ class Api:
         while True:
             time.sleep(15)
             try:
+                if self._cfg.get("rb_adopt") and not self._files.locked() and not rekordbox_sync.rekordbox_running():
+                    # cerraste Rekordbox: las playlists que agregaste pasan a la carpeta de BrainOrder
+                    try:
+                        ad = self._rb_adopt_run()
+                        if ad and ad.get("messages") and self._window:
+                            payload = json.dumps({"done": ["📥 " + m for m in ad["messages"]], "asked": [], "moves": 0})
+                            self._window.evaluate_js(f"window.onRbAuto && onRbAuto({payload})")
+                    except Exception as e:
+                        config.log(f"mover playlists a la carpeta de BrainOrder: {e!r}")
                 if self._cfg.get("rb_moves") and not self._files.locked() and not rekordbox_sync.rekordbox_running():
                     # cerraste Rekordbox: se mudan los archivos que sacaste de playlists de carpeta
                     try:
@@ -3843,6 +3979,7 @@ class Api:
                 "rekordbox_running": rekordbox_sync.rekordbox_running(), "keep": self._cfg.get("rb_keep") or [],
                 "master": self._rb_master(), "auto": auto, "log": (self._cfg.get("rb_auto_log") or [])[:15],
                 "moves": [{**m, "file": Path(m["src"]).name} for m in self._cfg.get("rb_moves") or []],
+                "adopt": list(self._cfg.get("rb_adopt") or []),
                 "analysis": self._analysis() if auto and auto.get("done") else None}
 
     def rb_apply(self, decisions):

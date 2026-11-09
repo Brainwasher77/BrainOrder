@@ -451,3 +451,83 @@ def root_folders(cfg):
         return out
     finally:
         con.close()
+
+
+def adopt(cfg, jobs, progress=None):
+    """Lleva a la carpeta de BrainOrder las playlists de Rekordbox que agregaste a BrainOrder, para no
+    tenerlas dos veces. jobs: [{"ref": id en Rekordbox, "name": nombre en BrainOrder, "pid", "mode"}]
+      mode "move":   se mueve a la carpeta (y toma el nombre de BrainOrder). Si ahí ya hay una con ese
+                     nombre, se le suman las canciones que no tenga y la original se quita.
+      mode "delete": ya la sumaste a otra playlist: la original se quita (las canciones siguen en tu
+                     colección, con sus cues; solo se quita la playlist).
+    Rekordbox cerrado y respaldo antes. -> {"moved", "deleted", "merged", "missing", "baseline", "backup"}"""
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo para mover tus playlists a la carpeta de BrainOrder.")
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"moved": 0, "deleted": 0, "merged": 0, "missing": 0, "baseline": {}, "backup": bk.name, "done": []}
+    try:
+        folder_name = cfg.get("rekordbox_folder") or "BrainOrder"
+        root = _find_child(db, "root", folder_name, 1)
+        if root is None:
+            root = db.create_playlist_folder(folder_name)
+        for j in jobs:
+            try:
+                pl = db.get_playlist(ID=str(j["ref"]))
+            except Exception:
+                pl = None
+            if pl is None:
+                out["missing"] += 1
+                out["done"].append(j)  # ya no existe: no hay nada que mover
+                continue
+            if j.get("mode") == "delete":
+                db.delete_playlist(pl)
+                out["deleted"] += 1
+                out["done"].append(j)
+                continue
+            name = j.get("name") or pl.Name
+            target = pl
+            clash = _find_child(db, root.ID, name, 0)
+            if clash is not None and str(clash.ID) != str(pl.ID):
+                have = {str(s.ContentID) for s in clash.Songs}
+                for s in sorted(pl.Songs, key=lambda s: s.TrackNo or 0):
+                    if s.Content is not None and str(s.ContentID) not in have:
+                        db.add_to_playlist(clash, s.Content)
+                        have.add(str(s.ContentID))
+                db.delete_playlist(pl)
+                target = clash
+                out["merged"] += 1
+            else:
+                if str(pl.ParentID) != str(root.ID):
+                    if hasattr(db, "move_playlist"):
+                        db.move_playlist(pl, parent=root)
+                    else:  # pragma: no cover (pyrekordbox viejo)
+                        pl.ParentID = root.ID
+                if pl.Name != name:
+                    db.rename_playlist(pl, name)
+                out["moved"] += 1
+            songs = sorted(target.Songs, key=lambda s: s.TrackNo or 0)
+            out["baseline"][str(target.ID)] = {
+                "pid": j.get("pid"), "name": name,
+                "paths": [plataforma.native(s.Content.FolderPath) for s in songs if s.Content and s.Content.FolderPath]}
+            out["done"].append(j)
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error moviendo playlists a la carpeta de BrainOrder: {e!r}")
+        raise RekordboxError(f"No pude mover las playlists en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    log(f"Rekordbox: playlists llevadas a «{cfg.get('rekordbox_folder')}»: {out['moved']} movidas, "
+        f"{out['merged']} juntadas, {out['deleted']} quitadas (respaldo {bk.name})")
+    return out

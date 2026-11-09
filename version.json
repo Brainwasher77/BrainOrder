@@ -1,5 +1,5 @@
 {
-  "version": "2.29.0",
-  "build": 74,
-  "notes": "Nuevo: «Rekordbox manda»: si mueves o quitas canciones de tus playlists en Rekordbox, pasa solo a BrainOrder y a Spotify, y al Organizar se respeta el orden de Rekordbox. Y en «Playlists nuevas» → «Tus playlists de Rekordbox» ves todas las que están fuera de la carpeta de BrainOrder (también las de antes) y eliges si las agregas, con qué nombre, a cuál sumarlas y en qué grupo."
+  "version": "2.30.0",
+  "build": 75,
+  "notes": "Nuevo: cuando agregas una playlist de Rekordbox a BrainOrder, la original pasa a la carpeta de BrainOrder en Rekordbox (o se quita si la sumaste a otra), así no la tienes dos veces. Con Rekordbox abierto se hace sola al cerrarlo. Las que agregaste antes se mueven con «📥 Mover a BrainOrder las que ya agregué»."
 }

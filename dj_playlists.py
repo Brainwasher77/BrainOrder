@@ -50,8 +50,10 @@ def rekordbox(cfg):
                 out.append(by_id[pid][1])
                 pid, seen = str(by_id[pid][2]), seen + 1
             return " / ".join(reversed(out))
+        # las que agregaste a BrainOrder y se movieron a su carpeta se siguen leyendo (BrainOrder las lee de aquí)
+        linked = {str(e.get("ref")) for e in cfg.get("folder_playlists") or [] if e.get("program") == "rekordbox"}
         lists = {str(r[0]): {"name": r[1], "paths": [], "folder": trail(str(r[2]))} for r in rows
-                 if r[3] == 0 and not inside_ours(str(r[2]))}  # 0 = playlist normal (1 carpeta, 4 inteligente)
+                 if r[3] == 0 and (not inside_ours(str(r[2])) or str(r[0]) in linked)}  # 0 = playlist normal
         if lists:
             marks = ",".join("?" * len(lists))
             q = (f"SELECT sp.PlaylistID, c.FolderPath FROM djmdSongPlaylist sp JOIN djmdContent c ON c.ID = sp.ContentID "
