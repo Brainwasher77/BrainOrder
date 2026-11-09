@@ -1,5 +1,5 @@
 {
-  "version": "2.31.0",
-  "build": 76,
-  "notes": "Nuevo: tu carpeta de música queda igual que en Rekordbox (subcarpetas como Techno › Hard Techno), las subcarpetas ya no cuentan como una playlist grande y las playlists que metiste en subcarpetas ya no se repiten al Organizar. Si le cambias el nombre a tu carpeta de playlists, BrainOrder la reconoce y corrige todas las rutas (nada sale como nuevo)."
+  "version": "2.31.1",
+  "build": 77,
+  "notes": "Arreglo: las carpetas que están dentro de subcarpetas (como en Rekordbox) ya se pueden importar desde «Playlists nuevas» (antes decía «Esa carpeta ya no está dentro de tus carpetas de música») y se quedan en su subcarpeta."
 }

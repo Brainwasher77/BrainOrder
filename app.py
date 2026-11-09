@@ -2026,8 +2026,9 @@ class Api:
             import carpetas_nuevas as CN
             from fuentes import carpetas as FC
             p = Path(path)
-            roots = {CN._key(r) for r in CN.watched_roots(self._cfg)}
-            if not (p.is_dir() and CN._key(p.parent) in roots):
+            roots = CN.watched_roots(self._cfg)
+            # también las que están dentro de subcarpetas (como en Rekordbox: «Latino / Bachata»)
+            if not (p.is_dir() and any(estructura.inside(p, r) and CN._key(p) != CN._key(r) for r in roots)):
                 raise unificar.UnifyError("Esa carpeta ya no está dentro de tus carpetas de música.")
             files = FC.audio_files(p)
             entry = {"name": p.name, "path": str(p)}
@@ -2298,7 +2299,12 @@ class Api:
         (<carpeta de playlists>/<nombre>). Corrige rutas en Rekordbox y tus otros programas, queda en
         Historial y, si era una carpeta, se quita la carpeta vieja si quedó vacía. -> (archivos, resumen)"""
         import carpetas_nuevas as CN
-        dest = biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)
+        root = Path(self._cfg["dest_root"])
+        if src_folder is not None and estructura.inside(src_folder, root) and \
+                CN._key(Path(src_folder).parent) != CN._key(root):
+            dest = Path(src_folder)  # ya está en tu carpeta de playlists, dentro de una subcarpeta: ahí se queda
+        else:
+            dest = biblioteca.resolve_folder(root, name)
         # la crea BrainOrder para esta playlist: no es una «carpeta nueva» por la que haya que preguntar
         CN.mark(dest, known=True, imported=True)
         # las que ya son de OTRA playlist de BrainOrder se quedan en su carpeta (no se le quitan a esa playlist)
