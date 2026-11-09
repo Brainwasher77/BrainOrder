@@ -58,7 +58,8 @@ def _write_json(p, data):
 
 UI_DEFAULTS = {"pl_sort": "spotify",       # orden de la lista de playlists
                "rg_remember": False,       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
-               "cmp_sort": "list"}         # Comparar: orden de las playlists para elegir
+               "cmp_sort": "list",         # Comparar: orden de las playlists para elegir
+               "grp_closed": []}           # grupos de playlists cerrados en la lista de la izquierda
 UI_CHOICES = {"pl_sort": {"spotify", "missing_desc", "missing_asc", "complete", "incomplete", "organize",
                           "name", "size", "created_desc", "created_asc", "updated_desc"},
               "cmp_sort": {"list", "name", "name_desc", "created_desc", "created_asc", "updated_desc",
@@ -359,6 +360,7 @@ class Api:
             "spotify_queue": len(__import__("cola_spotify").load()),
             "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
             "stats_hidden": list(self._cfg.get("stats_hidden") or []),
+            "pl_groups": dict(self._cfg.get("pl_groups") or {}),
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -1555,6 +1557,8 @@ class Api:
                 continue
             if k in UI_CHOICES and v not in UI_CHOICES[k]:
                 continue
+            if isinstance(UI_DEFAULTS[k], list):
+                v = [str(x)[:40] for x in v][:200] if isinstance(v, list) else []
             cur[k] = bool(v) if isinstance(UI_DEFAULTS[k], bool) else v
         self._cfg["ui"] = cur
         config.save(self._cfg)
@@ -1571,6 +1575,39 @@ class Api:
         self._cfg["stats_hidden"] = cur
         config.save(self._cfg)
         return {"ok": True, "stats_hidden": cur}
+
+    # ---------- grupos de playlists (solo para ordenarlas y encontrarlas en BrainOrder) ----------
+    @staticmethod
+    def _group_name(g):
+        return " ".join(str(g or "").split())[:40]
+
+    def set_pl_group(self, pids, group=""):
+        """Pone una o varias playlists en un grupo («Techno», «Para eventos»…). Grupo vacío = sin grupo.
+        Solo cambia cómo se ven en BrainOrder: no toca carpetas, Spotify ni programas de DJ."""
+        g = self._group_name(group)
+        cur = dict(self._cfg.get("pl_groups") or {})
+        g = next((v for v in cur.values() if g and v.casefold() == g.casefold()), g)  # «techno» = «Techno»
+        for pid in ([pids] if isinstance(pids, str) else list(pids or [])):
+            if g:
+                cur[pid] = g
+            else:
+                cur.pop(pid, None)
+        self._cfg["pl_groups"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "pl_groups": cur}
+
+    def rename_pl_group(self, old, new=""):
+        """Renombra un grupo en todas sus playlists (o lo deshace si el nombre nuevo está vacío).
+        Si ya existe un grupo con ese nombre, quedan juntos."""
+        old, g = self._group_name(old), self._group_name(new)
+        if not old:
+            return {"ok": False, "error": "Falta el grupo."}
+        cur = dict(self._cfg.get("pl_groups") or {})
+        same = next((v for v in cur.values() if g and v.casefold() == g.casefold()), g)
+        cur = {k: (same if v == old else v) for k, v in cur.items() if v != old or g}
+        self._cfg["pl_groups"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "pl_groups": cur}
 
     def pin(self, paths):
         """Fijar archivos donde están: Reorganizar no los vuelve a proponer."""
@@ -2654,6 +2691,10 @@ class Api:
             self._cfg["rules"] = rules
         self._cfg["rb_keep"] = [new if x == old else x for x in self._cfg.get("rb_keep") or []]
         self._cfg["stats_hidden"] = [new if x == old else x for x in self._cfg.get("stats_hidden") or []]
+        gr = dict(self._cfg.get("pl_groups") or {})
+        if old in gr:
+            gr[new] = gr.pop(old)
+            self._cfg["pl_groups"] = gr
         po = self._cfg.get("playlist_origin") or {}
         if old in po:
             po[new] = po.pop(old)

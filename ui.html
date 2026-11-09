@@ -254,6 +254,19 @@ body.pv-on .toast{max-height:calc(100vh - var(--pvh,64px) - 48px)}
 .toast{position:fixed;bottom:18px;right:18px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;max-width:420px;display:none;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .toast.show{display:block}
 .toast.err{border-color:var(--miss)}
+.grp{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px 3px;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);cursor:pointer;user-select:none}
+.grp:hover{color:var(--text)}
+.inp{width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+.plq{width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;margin-bottom:5px}
+.pk{max-height:min(330px,45vh);overflow:auto;border:1px solid var(--line);border-radius:8px;margin:6px 0 10px;background:var(--bg)}
+.pk .pg{position:sticky;top:0;z-index:1;background:var(--panel2);padding:4px 10px;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
+.pkr{padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.pkr:hover{background:var(--panel2)}
+.pkr.on{background:var(--panel2);box-shadow:inset 3px 0 0 var(--acid)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip.on{border-color:var(--acid);color:var(--acid)}
+.gtag{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--mute);cursor:pointer;white-space:nowrap}
+.gtag:hover{color:var(--text);border-color:var(--mute)}
 .plsort{width:100%;background:var(--bg);color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px}
 .cmenu{position:fixed;z-index:40;min-width:250px;max-width:380px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.5);display:none}
 .cmenu.show{display:block}
@@ -302,7 +315,8 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
       </div>
       <h4 style="display:flex;align-items:center;justify-content:space-between">Tus playlists
         <button class="ghost ib" id="plReload" onclick="loadPlaylists()" title="Recargar la lista de playlists de Spotify (rápido, sin canciones)"></button></h4>
-      <div style="padding:0 10px 6px"><select class="plsort" id="plSort" title="Ordenar tus playlists" onchange="setPlSort(this.value)"></select></div>
+      <div style="padding:0 10px 6px"><input class="plq" id="plQ" placeholder="🔎 Buscar playlist o grupo…" autocomplete="off" oninput="GRP.q=this.value; paintPlNav()" onkeydown="if(event.key==='Escape'){this.value=''; GRP.q=''; paintPlNav();} if(event.key==='Enter'){ const a=document.querySelector('#plNav a[data-v]'); if(a) a.click(); }">
+        <div style="display:flex;gap:5px"><select class="plsort" id="plSort" title="Ordenar tus playlists" onchange="setPlSort(this.value)"></select><button class="ghost" style="font-size:12px;padding:3px 8px;white-space:nowrap" onclick="show('plgroups')" title="Poner tus playlists en grupos para encontrarlas más fácil">🏷 Grupos</button></div></div>
       <div class="nav" id="plNav"></div>
       <div class="credit">BrainOrder by <b>@BRAINWASHERDJ</b><br>© @BRAINWASHERDJ · Todos los derechos reservados</div>
     </aside>
@@ -938,10 +952,10 @@ function cmpPick(i, keep){
   if(!opts.length){ toast('No hay otra playlist para comparar.', true); return; }
   modal(`<h3>⚖️ Comparar «${esc(pl.name)}» con…</h3>
     <div style="display:flex;gap:8px;align-items:center;margin:6px 0"><span class="art">Ordenar por</span>${cmpSortSel(`cmpPickSort(${i}, this.value)`)}</div>
-    <select id="cmpWith" size="${Math.min(10, opts.length)}" style="width:100%;margin:2px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px;font:inherit" ondblclick="cmpOpen(${jsq(pl.id)}, this.value)">
-      ${opts.map(([p,x],j)=>`<option value="${esc(p.id)}" ${(keep ? p.id===keep : j===0)?'selected':''}>${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' (sin analizar)':''}${esc(x)}</option>`).join('')}</select>
+    ${plPicker('cmpWith', opts.map(([p,x]) => [p, p.id, String(x||'').replace(/^\s*[·—-]\s*/,'')]), keep, () => cmpOpen(pl.id, $('cmpWith').value))}
     <div class="art">Te muestro cuántas canciones tienen en común, cuáles están solo en una y cuál se parece más. No cambia nada.</div>
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="cmpOpen(${jsq(pl.id)}, $('cmpWith').value)">Comparar</button></div>`);
+  pkOpen('cmpWith');
 }
 function cmpOpen(a, b){ closeModal(); CMP = {a, b, tab:'both', q:''}; show('cmp'); }
 function cmpSet(side, id){ CMP[side] = id; CMP.q = ''; renderMain(); }
@@ -990,7 +1004,7 @@ function cmpView(){
   const q = cmpNorm(CMP.q);
   let rows = cmpRows(c);
   if(q) rows = rows.filter(([x,y]) => { const r = x||y; return cmpNorm(r.name+' '+(r.artists||[]).join(' ')).includes(q); });
-  const merge = plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}); setTimeout(()=>{ const s=$('plInto'); if(s){ s.value='${S.analysis.indexOf(B)}'; } },30)">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '';
+  const merge = plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}); setTimeout(()=>pkSet('plInto', '${S.analysis.indexOf(B)}'),40)">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '';
   const tb = rows.slice(0, 600).map(([x,y]) => { const r = x||y, h = x&&x.source ? x : y&&y.source ? y : r;
     return `<tr><td class="mono" style="color:var(--mute)">${x?x.pos+1:'—'}</td><td class="mono" style="color:var(--mute)">${y?y.pos+1:'—'}</td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(h)}<div><div>${esc(r.name)}</div><div class="art">${esc((r.artists||[]).join(', '))}</div></div></div></td>
@@ -1029,6 +1043,7 @@ function plPlace(pl){
 function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='spotify' && !plForeign(p)) || (p.source==='carpetas' && !p.origin)); }
 function plMenu(pl, i){
   const it = [['#', pl.name], ['⚖️ Comparar con…', () => cmpPick(i), false, 'Cuántas canciones tienen en común y cuáles están solo en una'], '-', ['✏️ Renombrar…', () => plRename(i)]];
+  it.push([plGroup(pl) ? `🏷 Grupo: ${plGroup(pl)}…` : '🏷 Poner en un grupo…', () => plGroupPick([pl.id]), false, 'Para tenerla junto a otras parecidas en la lista y encontrarla rápido']);
   it.push(['🔀 Fusionar con otra…', () => plMerge(i), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
   it.push(statHidden(pl) ? ['👁 Volver a contarla en mis estadísticas', () => plStatsHide(pl.id, false)]
                          : ['🙈 Ocultar de mis estadísticas', () => plStatsHide(pl.id, true), false, 'No cuenta en tus números ni en «Faltan por descargar»; se sigue organizando igual']);
@@ -1068,7 +1083,7 @@ function plMerge(i){
   if(!opts.length){ toast('No hay otra playlist donde fusionarla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true); return; }
   const dj = plDjNames();
   modal(`<h3>🔀 Fusionar «${esc(pl.name)}» con…</h3>
-    <select id="plInto" style="width:100%;margin:6px 0 8px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit">${opts.map(([p,j])=>`<option value="${j}">${esc(p.name)}${p.source==='carpetas'?' (carpeta)':''}</option>`).join('')}</select>
+    ${plPicker('plInto', opts.map(([p,j]) => [p, j, p.source==='carpetas' ? 'carpeta' : `${p.tracks.length||p.total||0} canc.`]), null, () => plMergeGo(i))}
     <div class="box" style="line-height:1.6">
       • Las canciones de <b>«${esc(pl.name)}»</b> se agregan al final de la que elijas (solo las que no tenga), también en Spotify.<br>
       • Sus archivos pasan a la carpeta de esa playlist; si ya tenía la canción, la copia repetida va a <code>_duplicados</code>.<br>
@@ -1077,9 +1092,11 @@ function plMerge(i){
     ${plPlace(pl).note?`<div class="art">${esc(plPlace(pl).note)}</div>`:''}
     ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="plMergeDj" checked> Actualizar ya la playlist en mis programas de DJ</label>`:''}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="plMergeGo(${i})">Fusionar</button></div>`);
+  pkOpen('plInto');
 }
 async function plMergeGo(i){
-  const pl = S.analysis[i], into = S.analysis[+$('plInto').value], dj = $('plMergeDj') && $('plMergeDj').checked;
+  const v = $('plInto') ? $('plInto').value : '', pl = S.analysis[i], into = v!=='' ? S.analysis[+v] : null, dj = $('plMergeDj') && $('plMergeDj').checked;
+  if(!pl || !into){ toast('Elige la playlist donde fusionarla.', true); return; }
   closeModal(); toast(`Fusionando «${esc(pl.name)}» con «${esc(into.name)}»…`);
   const r = await api().playlist_merge(pl.id, into.id);
   if(!r.ok){ taskErr(r); return; }
@@ -1143,6 +1160,10 @@ document.addEventListener('contextmenu', e => {
     cmenuOpen(e.clientX, e.clientY, [['#', t.label], t.state==='queued' ? ['✕ Cancelar', () => cancelTask(k)] : ['✕ Cancelar', null, true, 'Ya empezó: no se corta a mitad para no dejar cosas a medias']]); return; }
   const sq = e.target.closest('[data-spq]');
   if(sq){ e.preventDefault(); cmenuOpen(e.clientX, e.clientY, [['#', sq.dataset.name||'Pendiente para Spotify'], ['✕ Cancelar este pendiente', () => spqCancel(sq.dataset.spq)]]); return; }
+  const gh = e.target.closest('#plNav .grp[data-grp]');
+  if(gh){ e.preventDefault(); const g = gh.dataset.grp; if(g) cmenuOpen(e.clientX, e.clientY, grpMenu(g)); return; }
+  const gc = e.target.closest('#main .chip[data-g]');
+  if(gc && S.view==='plgroups'){ e.preventDefault(); cmenuOpen(e.clientX, e.clientY, grpMenu(gc.dataset.g)); return; }
   const nv = e.target.closest('#plNav a[data-v]');
   if(nv){ e.preventDefault(); const i = +nv.dataset.v.split(':')[1], pl = S.analysis && S.analysis[i]; if(pl) cmenuOpen(e.clientX, e.clientY, plMenu(pl, i)); return; }
   const tr = e.target.closest('#tbl tr[data-pos], #tbl tr[data-mid]');
@@ -1218,7 +1239,7 @@ async function ctxPin(src, on){
 }
 
 // ---------- preferencias de la ventana (se guardan en los ajustes) ----------
-let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list'};
+let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[]};
 async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
 // ---------- orden de la lista de playlists ----------
 const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
@@ -1250,6 +1271,163 @@ function plOrder(a){
   done.sort(([x,i],[y,j]) => f(x,y) || i-j);
   if(k==='name') rest.sort(([x],[y]) => name(x).localeCompare(name(y), 'es'));
   return done.concat(rest);
+}
+
+function plNavRow([pl,i]){
+    if(pl.ignored) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Ignorada en Reglas"><div class="row">
+      <span class="name" style="color:var(--mute);text-decoration:line-through">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">ignorada</span></div></a>`;
+    if(pl.pending) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Sin analizar"><div class="row">
+      <span class="name" style="color:var(--mute)">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">${pl.total ?? '—'}</span></div>
+      <div class="bar" style="opacity:.4"></div></a>`;
+    const c = plStats(pl), n = c.total || 1, oc = orgCount(pl.id);
+    return `<a data-v="pl:${i}" onclick="show('pl:${i}')" ${statHidden(pl)?'title="Fuera de tus estadísticas (clic derecho para volver a contarla)" style="opacity:.6"':''}><div class="row"><span class="name">${statHidden(pl)?'🙈 ':''}${pl.liked?'♥ ':''}${esc(pl.name)}</span>
+      <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
+      <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
+}
+
+// ---------- grupos de playlists: tú los pones; solo sirven para ordenarlas y encontrarlas aquí ----------
+// (no cambian carpetas, Spotify ni programas de DJ)
+let GRP = {q:'', pick:[], pq:'', pf:'*', sel:new Set()};
+const fold = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+const plGroup = pl => (pl && (S.plGroups||{})[pl.id]) || '';
+function plGroupList(){ const live = new Set((S.analysis||[]).map(p=>p.id));
+  return [...new Set(Object.entries(S.plGroups||{}).filter(([id])=>live.has(id)).map(([,g])=>g))].sort((a,b)=>a.localeCompare(b,'es')); }
+function plGroupCount(g){ return (S.analysis||[]).filter(p => plGroup(p)===g).length; }
+// cada palabra que escribes tiene que estar en el nombre o en el grupo (sin importar tildes ni mayúsculas)
+function plMatch(pl, q){ const w = fold(q).split(/\s+/).filter(Boolean); if(!w.length) return true;
+  const t = fold((pl.name||'') + ' ' + plGroup(pl)); return w.every(x => t.includes(x)); }
+// [[grupo, [items]]]: grupos en orden alfabético y «Sin grupo» al final; dentro, el orden que traían
+function plBuckets(items, get = it => it[0]){
+  const m = new Map(plGroupList().map(g=>[g,[]])), none = [];
+  for(const it of items){ const g = plGroup(get(it)); (g && m.has(g) ? m.get(g) : none).push(it); }
+  const out = [...m].filter(([,v])=>v.length); if(none.length) out.push(['', none]); return out;
+}
+const grpClosed = () => new Set(PREF.grp_closed || []);
+function grpToggle(g){ const c = grpClosed(); c.has(g) ? c.delete(g) : c.add(g); savePref('grp_closed', [...c]); paintPlNav(); }
+function paintPlNav(){
+  const a = S.analysis||[], q = (GRP.q||'').trim();
+  const items = plOrder(a).filter(([pl]) => plMatch(pl, q)), closed = grpClosed();
+  let h;
+  if(!items.length) h = q ? `<div class="art" style="padding:6px 10px">Ninguna playlist con «${esc(q)}».</div>` : '';
+  else if(!plGroupList().length) h = items.map(plNavRow).join('');
+  else h = plBuckets(items).map(([g, its]) => { const shut = !q && closed.has(g);
+    return `<div class="grp" data-grp="${esc(g)}" onclick="grpToggle(${jsq(g)})" title="${g?'Clic para abrir o cerrar · clic derecho para renombrar el grupo':'Playlists que no están en ningún grupo'}"><span>${shut?'▸':'▾'} ${g?esc(g):'Sin grupo'}</span><span class="mono">${its.length}</span></div>` + (shut ? '' : its.map(plNavRow).join(''));
+  }).join('');
+  $('plNav').innerHTML = h;
+  const sv = S.view.startsWith('reorg:') ? 'pl:'+S.view.split(':')[1] : S.view;
+  document.querySelectorAll('#plNav a').forEach(el => el.classList.toggle('sel', el.dataset.v===sv));
+}
+// poner una o varias playlists en un grupo
+function plGroupPick(ids, title){
+  GRP.pick = [].concat(ids);
+  const one = GRP.pick.length===1 ? (S.analysis||[]).find(p=>p.id===GRP.pick[0]) : null, cur = one ? plGroup(one) : '';
+  const gl = plGroupList();
+  modal(`<h3>🏷 ${esc(title || (one ? `Grupo de «${one.name}»` : `Poner ${GRP.pick.length} playlists en un grupo`))}</h3>
+    <input id="grpName" class="inp" placeholder="Escribe un grupo nuevo (ej. Techno, Bodas, Crossover)…" value="${esc(cur)}" maxlength="40" autocomplete="off" onkeydown="if(event.key==='Enter') grpSetGo()">
+    ${gl.length?`<div class="art" style="margin-top:10px">o elige uno que ya tienes:</div><div class="chips">${gl.map(g=>`<button class="ghost chip ${g===cur?'on':''}" data-g="${esc(g)}" onclick="grpSetGo(this.dataset.g)">${esc(g)} <span class="art">${plGroupCount(g)}</span></button>`).join('')}</div>`:''}
+    <div class="art" style="margin-top:8px">Los grupos solo ordenan tus playlists aquí en BrainOrder (la lista de la izquierda y al elegir una para fusionar o comparar). No cambian carpetas, Spotify ni tus programas de DJ.</div>
+    <div class="actions">${GRP.pick.some(id=>(S.plGroups||{})[id])?`<button onclick="grpSetGo('')">Quitar del grupo</button>`:''}<button onclick="closeModal()">Cancelar</button><button class="primary" onclick="grpSetGo()">Guardar</button></div>`);
+  setTimeout(()=>{ const i=$('grpName'); if(i){ i.focus(); i.select(); } }, 30);
+}
+async function grpSetGo(name){
+  const g = (name===undefined ? ($('grpName')||{}).value : name || '').trim(), ids = GRP.pick||[];
+  if(name===undefined && !g){ toast('Escribe el nombre del grupo (o usa «Quitar del grupo»).', true); return; }
+  const r = await api().set_pl_group(ids, g);
+  if(!r.ok){ toast(esc(r.error||'No se pudo'), true); return; }
+  S.plGroups = r.pl_groups; closeModal(); GRP.sel = new Set();
+  if(g){ const c = grpClosed(); if(c.has(g)){ c.delete(g); savePref('grp_closed', [...c]); } }
+  paintPlNav(); if(S.view==='plgroups') renderMain();
+  const n = ids.length, one = n===1 ? (S.analysis||[]).find(p=>p.id===ids[0]) : null;
+  toast(g ? `🏷 ${one?`«${esc(one.name)}»`:`${n} playlists`} en el grupo <b>«${esc(g)}»</b>.` : `${one?`«${esc(one.name)}»`:`${n} playlists`} sin grupo.`);
+}
+function grpRename(g){
+  modal(`<h3>✏️ Renombrar el grupo «${esc(g)}»</h3>
+    <input id="grpNew" class="inp" value="${esc(g)}" maxlength="40" autocomplete="off" onkeydown="if(event.key==='Enter') grpRenameGo(${jsq(g)})">
+    <div class="art" style="margin-top:8px">Si le pones el nombre de otro grupo que ya tienes, quedan juntos.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="grpRenameGo(${jsq(g)})">Renombrar</button></div>`);
+  setTimeout(()=>{ const i=$('grpNew'); if(i){ i.focus(); i.select(); } }, 30);
+}
+async function grpRenameGo(g, to){
+  const n = to===undefined ? (($('grpNew')||{}).value||'').trim() : to;
+  if(to===undefined && !n){ toast('Escribe el nombre nuevo.', true); return; }
+  const r = await api().rename_pl_group(g, n);
+  if(!r.ok){ toast(esc(r.error||'No se pudo'), true); return; }
+  S.plGroups = r.pl_groups; closeModal(); if(GRP.pf===g) GRP.pf = n || '*';
+  paintPlNav(); if(S.view==='plgroups') renderMain();
+  toast(n ? `✅ El grupo «${esc(g)}» ahora es <b>«${esc(n)}»</b>.` : `Grupo «${esc(g)}» deshecho: sus playlists quedaron sin grupo (no se borró nada).`);
+}
+function grpMenu(g){ return [['#', g], ['✏️ Renombrar grupo…', () => grpRename(g)], ['🏷 Ver y ordenar este grupo', () => { GRP.pf = g; GRP.pq = ''; show('plgroups'); }],
+  ['✕ Deshacer el grupo', () => grpRenameGo(g, ''), false, 'Sus playlists quedan sin grupo; no se borra nada']]; }
+
+// elegir una playlist escribiendo su nombre: filtra por nombre o grupo, la lista va por grupos; ↑ ↓ para moverte y Enter para aceptar
+let PK = {};
+function plPicker(id, opts, sel, go){ // opts: [[playlist, valor, texto extra]]
+  PK[id] = {opts: opts.map(([p,v,x]) => [p, String(v), x||'']), go};
+  const first = PK[id].opts[0];
+  return `<input type="hidden" id="${id}" value="${esc(sel!=null && sel!=='' ? String(sel) : (first ? first[1] : ''))}">
+    <input class="inp" id="${id}Q" placeholder="🔎 Escribe el nombre o el grupo…" autocomplete="off" oninput="pkPaint('${id}')" onkeydown="pkKey(event,'${id}')" style="margin-top:6px">
+    <div class="pk" id="${id}L"></div>`;
+}
+function pkPaint(id){
+  const P = PK[id], L = $(id+'L'); if(!P || !L) return;
+  const q = $(id+'Q').value, vis = P.opts.filter(([p]) => plMatch(p, q));
+  const bk = plGroupList().length ? plBuckets(vis) : [[null, vis]], shown = bk.flatMap(([,its]) => its);
+  let cur = $(id).value;
+  if(shown.length && !shown.some(o => o[1]===cur)){ cur = shown[0][1]; $(id).value = cur; }  // queda marcada la primera que se ve
+  const row = ([p,v,x]) => `<div class="pkr ${v===cur?'on':''}" data-v="${esc(v)}" onclick="pkSet('${id}', this.dataset.v)" ondblclick="pkSet('${id}', this.dataset.v); pkGo('${id}')">
+      <span>${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' <span class="art">(sin analizar)</span>':''}</span><span class="art mono" style="white-space:nowrap">${esc(x)}</span></div>`;
+  L.innerHTML = vis.length ? bk.map(([g, its]) => (g===null ? '' : `<div class="pg">${g?esc(g):'Sin grupo'} · ${its.length}</div>`) + its.map(row).join('')).join('')
+    : `<div class="art" style="padding:10px">Ninguna playlist con «${esc(q)}».</div>`;
+  const on = L.querySelector('.pkr.on'); if(on) on.scrollIntoView({block:'nearest'});
+}
+function pkSet(id, v){ const h = $(id); if(!h) return; h.value = String(v);
+  document.querySelectorAll(`#${id}L .pkr`).forEach(el => el.classList.toggle('on', el.dataset.v===h.value));
+  const on = document.querySelector(`#${id}L .pkr.on`); if(on) on.scrollIntoView({block:'nearest'}); }
+function pkGo(id){ const P = PK[id]; if(P && P.go && $(id).value!=='') P.go(); }
+function pkKey(e, id){
+  const rows = [...document.querySelectorAll(`#${id}L .pkr`)]; if(e.key==='Enter'){ e.preventDefault(); pkGo(id); return; }
+  if(e.key!=='ArrowDown' && e.key!=='ArrowUp') return; e.preventDefault(); if(!rows.length) return;
+  const k = rows.findIndex(r => r.classList.contains('on')), n = Math.max(0, Math.min(rows.length-1, k + (e.key==='ArrowDown'?1:-1)));
+  pkSet(id, rows[n].dataset.v);
+}
+function pkOpen(id){ pkPaint(id); setTimeout(()=>{ const q=$(id+'Q'); if(q) q.focus(); }, 30); }
+
+// ---------- vista «Grupos»: clasificar varias playlists de una ----------
+function pgVisible(){ return plOrder(S.analysis||[]).filter(([p]) =>
+  (GRP.pf==='*' || (GRP.pf==='' ? !plGroup(p) : plGroup(p)===GRP.pf)) && plMatch(p, GRP.pq)); }
+function plGroupsView(){
+  if(!S.analysis) return '<div class="empty"><p>Cargando tus playlists…</p></div>';
+  const gl = plGroupList(), none = S.analysis.filter(p=>!plGroup(p)).length;
+  return `<div class="rules"><h2 style="margin-top:0">🏷 Grupos de playlists</h2>
+    <p class="hint" style="margin-top:-6px">Ponle un grupo a cada playlist (género, evento, lo que te sirva) y en la lista de la izquierda quedan juntas, con un buscador arriba. Al fusionar o comparar también puedes escribir para encontrarla. Solo cambia cómo las ves aquí: no toca carpetas, Spotify ni tus programas de DJ.</p>
+    <div class="chips">
+      <button class="ghost chip ${GRP.pf==='*'?'on':''}" onclick="pgFilter('*')">Todas <span class="art">${S.analysis.length}</span></button>
+      ${gl.map(g=>`<button class="ghost chip ${GRP.pf===g?'on':''}" data-g="${esc(g)}" onclick="pgFilter(this.dataset.g)" title="Clic derecho o ✏️ para renombrarlo">${esc(g)} <span class="art">${plGroupCount(g)}</span></button>`).join('')}
+      <button class="ghost chip ${GRP.pf===''?'on':''}" onclick="pgFilter('')">Sin grupo <span class="art">${none}</span></button>
+      ${GRP.pf && GRP.pf!=='*' ? `<button class="ghost" onclick="grpRename(${jsq(GRP.pf)})">✏️ Renombrar «${esc(GRP.pf)}»</button><button class="ghost" onclick="grpRenameGo(${jsq(GRP.pf)}, '')">✕ Deshacer el grupo</button>` : ''}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 8px">
+      <input class="inp" id="pgQ" style="flex:1;min-width:180px" placeholder="🔎 Buscar por nombre o grupo…" value="${esc(GRP.pq)}" autocomplete="off" oninput="GRP.pq=this.value; pgPaint()" onkeydown="if(event.key==='Escape'){this.value=''; GRP.pq=''; pgPaint();}">
+      <button class="ghost" onclick="pgAll(true)">Marcar todas</button><button class="ghost" onclick="pgAll(false)">Ninguna</button>
+    </div>
+    <div id="pgBar"></div><div id="pgList"></div></div>`;
+}
+function pgFilter(g){ GRP.pf = g; GRP.sel = new Set(); renderMain(); }
+function pgAll(on){ pgVisible().forEach(([p]) => on ? GRP.sel.add(p.id) : GRP.sel.delete(p.id)); pgPaint(); }
+function pgTick(id, on){ on ? GRP.sel.add(id) : GRP.sel.delete(id); pgPaintBar(); }
+function pgPaintBar(){ const b = $('pgBar'); if(!b) return; const n = GRP.sel.size;
+  b.innerHTML = n ? `<div class="box" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${n}</b> marcada${n===1?'':'s'}
+    <button class="primary" onclick="plGroupPick([...GRP.sel])">🏷 Poner en un grupo…</button>
+    <button onclick="GRP.pick=[...GRP.sel]; grpSetGo('')">Quitar de su grupo</button></div>` : ''; }
+function pgPaint(){
+  const L = $('pgList'); if(!L) return; const vis = pgVisible();
+  L.innerHTML = vis.length ? `<table><tr><th style="width:34px"></th><th>Playlist</th><th style="text-align:right">Canciones</th><th>Grupo</th></tr>${vis.map(([p,i]) => `<tr>
+      <td><input type="checkbox" ${GRP.sel.has(p.id)?'checked':''} onchange="pgTick(${jsq(p.id)}, this.checked)"></td>
+      <td><a class="lnk" onclick="show('pl:${i}')">${p.liked?'♥ ':''}${esc(p.name)}</a>${SRC_TAG[p.source]?` <span class="art">${SRC_TAG[p.source]}</span>`:''}</td>
+      <td class="mono" style="text-align:right">${p.tracks.length || p.total || 0}</td>
+      <td><span class="gtag" onclick="plGroupPick([${jsq(p.id)}])" title="Cambiar grupo">${plGroup(p) ? '🏷 '+esc(plGroup(p)) : '+ grupo'}</span></td></tr>`).join('')}</table>`
+    : `<div class="empty"><h3>Nada aquí</h3><p>${GRP.pq?`Ninguna playlist con «${esc(GRP.pq)}».`:'No hay playlists en este grupo.'}</p></div>`;
+  pgPaintBar();
 }
 
 // ---------- render ----------
@@ -1292,17 +1470,7 @@ function renderCore(){
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
   paintPlSort();
-  $('plNav').innerHTML = plOrder(a||[]).map(([pl,i]) => {
-    if(pl.ignored) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Ignorada en Reglas"><div class="row">
-      <span class="name" style="color:var(--mute);text-decoration:line-through">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">ignorada</span></div></a>`;
-    if(pl.pending) return `<a data-v="pl:${i}" onclick="show('pl:${i}')" title="Sin analizar"><div class="row">
-      <span class="name" style="color:var(--mute)">${pl.liked?'♥ ':''}${esc(pl.name)}</span><span class="cnt mono">${pl.total ?? '—'}</span></div>
-      <div class="bar" style="opacity:.4"></div></a>`;
-    const c = plStats(pl), n = c.total || 1, oc = orgCount(pl.id);
-    return `<a data-v="pl:${i}" onclick="show('pl:${i}')" ${statHidden(pl)?'title="Fuera de tus estadísticas (clic derecho para volver a contarla)" style="opacity:.6"':''}><div class="row"><span class="name">${statHidden(pl)?'🙈 ':''}${pl.liked?'♥ ':''}${esc(pl.name)}</span>
-      <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
-      <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
-  }).join('');
+  paintPlNav(false);
   const sv = S.view.startsWith('reorg:') ? 'pl:'+S.view.split(':')[1] : S.view;
   document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('sel', el.dataset.v===sv));
   renderMain();
@@ -1326,6 +1494,7 @@ function renderMain(){
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(S.view==='conn'){ m.innerHTML = connView(); return; }
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
+  if(S.view==='plgroups'){ m.innerHTML = plGroupsView(); pgPaint(); return; }
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
   if(S.view==='rblost'){ m.innerHTML = lostView(); lostSum(); return; }
@@ -3230,7 +3399,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {}; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.plGroups = st.pl_groups || {}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
   try{ api().start_watch(); }catch(e){}

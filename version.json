@@ -1,5 +1,5 @@
 {
-  "version": "2.24.4",
-  "build": 69,
-  "notes": "Arreglado: eliminar una playlist en Spotify fallaba («Missing required field: uris»). Un corte de red ya no cuenta como intento fallido (antes podía descartar una playlist grande con lo ya buscado). Los pendientes pequeños van antes que los grandes, así con la cuota diaria pasan más playlists."
+  "version": "2.25.0",
+  "build": 70,
+  "notes": "Nuevo: buscador arriba de tus playlists y grupos para clasificarlas (Techno, Tropical, Eventos…). En la lista quedan juntas por grupo y al Fusionar o Comparar escribes el nombre para encontrar la playlist en vez de buscarla en una lista larga."
 }
