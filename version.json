@@ -1,5 +1,5 @@
 {
-  "version": "2.31.1",
-  "build": 77,
-  "notes": "Arreglo: las carpetas que están dentro de subcarpetas (como en Rekordbox) ya se pueden importar desde «Playlists nuevas» (antes decía «Esa carpeta ya no está dentro de tus carpetas de música») y se quedan en su subcarpeta."
+  "version": "2.31.2",
+  "build": 78,
+  "notes": "Arreglo: «Importar…» en playlists dentro de subcarpetas (por ejemplo Playlists rekordbox/Crossover/MGNO/Funk) ya no dice «Esa carpeta ya no está dentro de tus carpetas de música». Las carpetas de artistas y álbumes de Apple Music ya no salen como playlists nuevas."
 }

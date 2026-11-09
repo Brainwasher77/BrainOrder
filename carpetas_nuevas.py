@@ -21,6 +21,7 @@ from config import AUDIO_EXT, SUPPORT_DIR, write_atomic
 STATE = SUPPORT_DIR / "carpetas.json"
 _LOCK = threading.Lock()
 SKIP = {"_duplicados", "_Informes", "_organizadas"}
+APPLE = {"iTunes", "iTunes Media", "Music Media", "Media", "Automatically Add to Music", "Automatically Add to iTunes"}
 
 
 def _key(p):
@@ -99,8 +100,9 @@ def unmatched(cfg, analysis):
     out = []
 
     def skip(d):
-        return d.name.startswith((".", "_")) or d.name in SKIP or ex.dir_excluded(str(d)) or _key(d) in rootkeys \
-            or d.suffix.lower() in (".app", ".musiclibrary", ".photoslibrary")
+        # la biblioteca de Apple Music / iTunes (Media.localized, iTunes Media…) es por artista y álbum: no son playlists
+        return d.name.startswith((".", "_")) or d.name in SKIP or d.name in APPLE or ex.dir_excluded(str(d)) \
+            or _key(d) in rootkeys or d.suffix.lower() in (".app", ".musiclibrary", ".photoslibrary", ".localized")
 
     def visit(folder, root, depth):
         try:

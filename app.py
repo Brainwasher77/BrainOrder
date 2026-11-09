@@ -2027,8 +2027,16 @@ class Api:
             from fuentes import carpetas as FC
             p = Path(path)
             roots = CN.watched_roots(self._cfg)
-            # también las que están dentro de subcarpetas (como en Rekordbox: «Latino / Bachata»)
-            if not (p.is_dir() and any(estructura.inside(p, r) and CN._key(p) != CN._key(r) for r in roots)):
+
+            def within(r):
+                # también las que están dentro de subcarpetas (como en Rekordbox: «Latino / Bachata»), y aunque
+                # la carpeta de música sea un acceso directo o esté escrita distinto (mayúsculas, ~, /private…)
+                for a, b in ((p, r), (p.resolve(), Path(r).resolve())):
+                    if estructura.inside(a, b) and CN._key(a) != CN._key(b):
+                        return True
+                return False
+            offered = {CN._key(x["path"]) for x in CN.unmatched(self._cfg, self._analysis() or [])}
+            if not (p.is_dir() and (CN._key(p) in offered or any(within(r) for r in roots))):
                 raise unificar.UnifyError("Esa carpeta ya no está dentro de tus carpetas de música.")
             files = FC.audio_files(p)
             entry = {"name": p.name, "path": str(p)}
