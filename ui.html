@@ -506,20 +506,42 @@ async function fdAsk(f, rest){
   modal(`<h3>${dj?'🎛️':'📁'} ${what}</h3>
     <p>${desc}</p>
     ${dj ? '' : `<div class="art" style="margin:-4px 0 10px">${esc(short(f.path))}</div>`}
-    ${ex ? (f.existing.source==='spotify' ? `<label class="opt" style="display:flex;gap:10px;align-items:center;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="fdSp" checked> Sumarlas también en Spotify (solo las que falten)</label>` : '') : `<div style="font-weight:650;margin:8px 0 6px">¿También en qué plataforma?</div>
+    ${dj ? `<div style="font-weight:650;margin:10px 0 6px">¿Dónde la dejo en BrainOrder?</div>
+      <label class="opt" style="display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="fdw" value="new" ${ex?'':'checked'} onchange="fdWhere()"><span style="flex:1"><b>Como playlist ${ex?'aparte':'nueva'}</b> llamada
+        <input class="inp" id="fdName" value="${esc(f.name)}" oninput="fdWhere()" onfocus="document.querySelector('input[name=fdw][value=new]').checked=true; fdWhere()" style="margin-top:6px"></span></label>
+      <label class="opt" style="display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="fdw" value="into" ${ex?'checked':''} onchange="fdWhere()"><span><b>Sumarla a una playlist que ya tengo</b> <span class="art">(solo entra lo que esa no tenga)</span></span></label>
+      <div id="fdIntoBox" style="display:${ex?'':'none'};margin:0 0 8px 28px">${plPicker('fdInto', (S.analysis||[]).filter(p=>!p.ignored).map(p => [p, p.id, `${(p.tracks||[]).length}`]), ex ? ex.id : null, null, fdWhere)}</div>
+      <div class="art" style="margin:-2px 0 8px">Si el nombre es igual al de una playlist que ya tienes, se suma a esa (nunca se crean dos iguales).</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="white-space:nowrap">🏷 Grupo</b><input class="inp" id="fdGroup" list="fdGroups" placeholder="Sin grupo (opcional)" value="${esc(f.group||'')}"><datalist id="fdGroups">${plGroupList().map(g=>`<option value="${esc(g)}">`).join('')}</datalist></div>` : ''}
+    ${dj ? `<div id="fdIntoOpts" style="display:${ex?'':'none'}"><label class="opt" style="display:flex;gap:10px;align-items:center;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="fdSp" checked> Sumarlas también en Spotify si esa playlist es de Spotify (solo las que falten)</label></div>` :
+      ex ? (f.existing.source==='spotify' ? `<label class="opt" style="display:flex;gap:10px;align-items:center;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="fdSp" checked> Sumarlas también en Spotify (solo las que falten)</label>` : '') : ''}
+    ${(dj || !ex) ? `<div id="fdNewOpts" style="display:${dj && ex ? 'none' : ''}"><div style="font-weight:650;margin:8px 0 6px">¿También en qué plataforma?</div>
     ${opts.map(([v,t,d,dis])=>`<label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:${dis?'not-allowed':'pointer'};opacity:${dis?.5:1}">
       <input type="radio" name="fdp" value="${v}" ${v===def?'checked':''} ${dis?'disabled':''} style="margin-top:3px">
-      <span><b>${t}</b><br><span class="art">${esc(d)}${v==='spotify'&&!n&&!dj?' Se crea vacía: lo que agregues después a la carpeta no pasa solo a Spotify.':''}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}`}
+      <span><b>${t}</b><br><span class="art">${esc(d)}${v==='spotify'&&!n&&!dj?' Se crea vacía: lo que agregues después a la carpeta no pasa solo a Spotify.':''}${dis?` <i>(${esc(dis)})</i>`:''}</span></span></label>`).join('')}</div>` : ''}
     ${fdCanMove(f) ? `<div style="font-weight:650;margin:12px 0 6px">¿Paso sus archivos a tu carpeta de playlists?</div>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
-      <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/${esc(ex ? f.existing.name : f.name)}</code></b><br>
+      <input type="radio" name="fdm" value="1" checked style="margin-top:3px"><span><b>Sí, moverlos a <code>${esc(short(S.settings.dest_root))}/<span id="fdDest">${esc(ex ? f.existing.name : f.name)}</span></code></b><br>
       <span class="art">${ex?'Solo las nuevas; ':''}Quedan junto a tus otras playlists. ${dj?'Las que ya son de otra de tus playlists se quedan en su carpeta. ':''}Se corrigen sus rutas en Rekordbox y tus otros programas (cerrados) y se puede deshacer en Historial.${dj?'':' Si la carpeta vieja queda vacía, se elimina.'}</span></span></label>
     <label class="opt" style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">
       <input type="radio" name="fdm" value="0" style="margin-top:3px"><span><b>No, dejarlos donde están</b></span></label>` : ''}
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="fdDj" ${n?'checked':''}> Pasarla ya a ${dj?'mis otros programas de DJ':'mis programas de DJ (Rekordbox, Traktor…)'}</label>
     ${rest && rest.length ? `<div class="art" style="margin-top:8px">Hay ${rest.length} más por decidir: las ves en «Playlists nuevas».</div>` : ''}
-    <div class="actions"><button class="ghost" onclick="fdNever()">No preguntar por esta</button>
-      <button onclick="closeModal()">Ahora no</button><button class="primary" onclick="fdImport()">${ex?'Sumar lo nuevo':'Importar'}</button></div>`);
+    <div class="actions"><button class="ghost" onclick="fdNever()">${dj?'No agregarla':'No preguntar por esta'}</button>
+      <button onclick="closeModal()">Ahora no</button><button class="primary" id="fdGo" onclick="fdImport()">${ex?'Sumar lo nuevo':'Importar'}</button></div>`);
+  if(dj){ pkPaint('fdInto'); fdWhere(); }
+}
+// diálogo de importar una playlist de DJ: nueva (con nombre) o sumada a una que ya tienes
+function fdWhere(){
+  const into = (document.querySelector('input[name=fdw]:checked')||{}).value === 'into';
+  const show = (id, on) => { const e = $(id); if(e) e.style.display = on ? '' : 'none'; };
+  show('fdIntoBox', into); show('fdIntoOpts', into); show('fdNewOpts', !into);
+  const pick = into && $('fdInto') ? (S.analysis||[]).find(p => p.id === $('fdInto').value) : null;
+  const sp = $('fdSp'); if(sp && sp.parentElement) sp.parentElement.style.display = !pick || pick.source==='spotify' || !pick.source ? '' : 'none';
+  const b = $('fdGo'); if(b) b.textContent = into ? (pick ? `Sumar a «${pick.name}»` : 'Sumar lo nuevo') : 'Importar';
+  const dst = $('fdDest'); if(dst) dst.textContent = into ? (pick ? pick.name : '') : (($('fdName')||{}).value || '').trim();
 }
 function fdCanMove(f){
   if(f.kind === 'dj') return !!(f.count ?? 0);
@@ -550,20 +572,32 @@ async function lkDo(path, add){
 async function fdNever(){
   const f = FD.cur; closeModal();
   if(f.kind === 'dj') await api().dj_dismiss(f.program, f.ref, true); else await api().folder_dismiss(f.path, true);
-  fdLoad(); toast('Listo: no te vuelvo a preguntar por esa. La puedes importar cuando quieras desde «Playlists nuevas».');
+  fdLoad(); if(FD.rb) rbOutLoad(true);
+  toast('Listo: no la agrego ni te vuelvo a preguntar. Si cambias de idea, está en «Playlists nuevas» → Tus playlists de Rekordbox → No agregadas.');
 }
 async function fdDismiss(path, forever){ await api().folder_dismiss(path, !!forever); fdLoad(); }
 async function fdImport(){
   const f = FD.cur;
   const plat = (document.querySelector('input[name=fdp]:checked')||{}).value || 'ninguna';
+  if(f.kind === 'dj' && $('fdName')){
+    const into = (document.querySelector('input[name=fdw]:checked')||{}).value === 'into';
+    FD.where = {into: into ? $('fdInto').value : null, name: $('fdName').value.trim(), group: ($('fdGroup')||{}).value || '',
+                sp: !!($('fdSp') && $('fdSp').checked)};
+  }
   const dj = $('fdDj') && $('fdDj').checked;
   closeModal();
   toast(plat==='spotify' && !(S.spPause && S.spPause*1000 > Date.now()) ? 'Importando: buscando sus canciones en Spotify… puedes seguir usando la app.' : 'Importando…');
   const mv = document.querySelector('input[name=fdm]:checked');
   const o = {spotify: f.existing ? !!($('fdSp') && $('fdSp').checked) : plat==='spotify', csv: !f.existing && plat==='otra', move: !!(mv && mv.value==='1')};
+  if(f.kind === 'dj' && FD.where){  // elegiste dónde dejarla
+    const w = FD.where; o.group = w.group;
+    if(w.into){ o.into = w.into; o.spotify = w.sp; o.csv = false; } else { o.name = w.name; o.spotify = plat==='spotify'; o.csv = plat==='otra'; }
+  }
+  FD.where = null;
   const r = f.kind === 'dj' ? await api().dj_import(f.program, f.ref, o) : await api().folder_import(f.path, o);
   if(!r.ok){ taskErr(r); fdLoad(); return; }
-  await applyAnalysis(r); fdLoad();
+  await applyAnalysis(r); fdLoad(); if(FD.rb) rbOutLoad(true);
+  if(o.group && r.pid){ S.plGroups = {...(S.plGroups||{}), [r.pid]: o.group}; }
   const x = r.result;
   if(x.nothing_new){ render(); toast(`Nada nuevo en «${esc(x.name)}»: todas sus canciones ya están en BrainOrder. No se copió ni se creó nada.`); return; }
   let msg = x.merged_into ? `✅ ${x.files} ${x.files===1?'canción nueva sumada':'canciones nuevas sumadas'} a tu playlist «${esc(x.merged_into)}» (no se creó otra).`
@@ -648,6 +682,38 @@ window.onSpotifyQueue = async (x) => {
   const bad = (x.failed||[]).map(f => `<span style="color:var(--org)">No pude pasar «${esc(f.name)}» a Spotify: ${esc(f.error)}</span>`);
   if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
 };
+// FD.rb: {items:[{program, ref, name, folder, count, state:'new'|'old'|'dismissed', new_count, have_count, existing}], total}
+async function rbOutLoad(quiet){
+  if(FD.rbLoading) return; FD.rbLoading = true; if(!quiet && S.view==='folders') render();
+  try{ const r = await api().rb_outside(); if(r.ok) FD.rb = r; else if(!quiet) taskErr(r); }catch(e){}
+  FD.rbLoading = false; if(S.view==='folders') render();
+}
+function rbOutRows(list, kind){
+  const cnt = n => `${n} ${n===1?'canción':'canciones'}`;
+  return list.map(f => { const i = FD.rb.items.indexOf(f);
+    return `<tr><td><div><b>${esc(f.name)}</b>${f.state==='new'?' <span class="bdg" style="color:var(--org);border-color:var(--org)">nueva</span>':''}</div>
+      <div class="art">🎛️ ${f.folder ? esc(f.folder) + ' / ' : 'Rekordbox / '}${esc(f.name)}</div></td>
+      <td class="mono" style="color:var(--mute);white-space:nowrap">${cnt(f.count)}${f.new_count!==undefined?`<div class="art">${f.new_count ? `<span style="color:var(--org)">${f.new_count} nuevas</span>` : 'nada nuevo'}${f.existing?` · ya está «${esc(f.existing.name)}»`:''}</div>`:''}</td>
+      <td style="text-align:right;white-space:nowrap">${kind==='dismissed'
+        ? `<button class="ghost" onclick="rbOutUndismiss(${i})">Volver a mostrar</button>`
+        : `<button class="primary" onclick="fdAsk(FD.rb.items[${i}], [])">${f.existing?'Sumar lo nuevo…':'Agregar…'}</button>
+           <button class="ghost" onclick="rbOutNo(${i})" title="No agregarla (no vuelve a preguntar; la puedes recuperar abajo)">No agregar</button>`}</td></tr>`; }).join('');
+}
+async function rbOutNo(i){ const f = FD.rb.items[i]; await api().dj_dismiss(f.program, f.ref, true); f.state = 'dismissed'; fdLoad(); render(); }
+async function rbOutUndismiss(i){ const f = FD.rb.items[i]; await api().dj_undismiss(f.program, f.ref); f.state = 'old'; render(); }
+function rbOutBox(){
+  const on = (S.dests||{}).rekordbox === undefined || ((S.dests||{}).rekordbox||{}).enabled !== false;
+  if(!on) return '';
+  const head = `<div class="vhead" style="margin-top:26px"><h2 style="font-size:17px">🎛️ Tus playlists de Rekordbox</h2>
+    <span class="sub">Todas las playlists de Rekordbox que están <b>fuera</b> de la carpeta «${esc(S.settings.rekordbox_folder||'BrainOrder')}» y todavía no están en BrainOrder (también las que ya tenías antes de usar BrainOrder). En cada una eliges si la agregas y dónde: como playlist nueva (con el nombre que quieras), sumada a una que ya tienes, y en qué grupo.</span>
+    <div class="sp"><button onclick="rbOutLoad()" ${FD.rbLoading?'disabled':''}>${FD.rbLoading?'Leyendo…':FD.rb?'⟳ Revisar':'Ver todas'}</button></div></div>`;
+  if(!FD.rb) return head;
+  const its = FD.rb.items, news = its.filter(f => f.state!=='dismissed' && f.new_count), none = its.filter(f => f.state!=='dismissed' && !f.new_count), dis = its.filter(f => f.state==='dismissed');
+  if(!its.length) return head + `<div class="empty"><h3>Todas tus playlists de Rekordbox ya están en BrainOrder 🎉</h3></div>`;
+  return head + (news.length ? `<div class="art" style="margin:4px 0 6px"><b>Con música nueva (${news.length})</b></div><table>${rbOutRows(news)}</table>` : '')
+    + (none.length ? `<details style="margin-top:12px"${news.length?'':' open'}><summary class="art" style="cursor:pointer"><b>Sin nada nuevo (${none.length})</b>: todas sus canciones ya están en tus playlists. Puedes agregarlas igual (no se copia ningún archivo).</summary><table style="margin-top:6px">${rbOutRows(none)}</table></details>` : '')
+    + (dis.length ? `<details style="margin-top:12px"><summary class="art" style="cursor:pointer"><b>No agregadas (${dis.length})</b></summary><table style="margin-top:6px">${rbOutRows(dis, 'dismissed')}</table></details>` : '');
+}
 function foldersView(){
   const d = FD.data;
   if(!d) return `<div class="empty"><h3>Revisando…</h3></div>`;
@@ -672,6 +738,7 @@ function foldersView(){
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>
     ${qBox}${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
+    ${rbOutBox()}
     ${imp.length ? `<h3 style="margin-top:26px">Importadas sin plataforma</h3>
       <table>${imp.map((e,i)=>`<tr><td><b>${esc(e.name)}</b><div class="art ${e.path?'path':''}" ${e.path?`onclick="reveal(${jsq(e.path)})"`:''}>${e.path?'📁 '+esc(short(e.path)):'🎛️ '+esc(e.label)}</div></td>
         <td style="text-align:right"><button class="ghost" onclick="fdUnimport(${i})">Dejar de usarla como playlist</button></td></tr>`).join('')}</table>` : ''}`;
@@ -2399,7 +2466,7 @@ function rbOptions(c){
 }
 async function rbLoad(){
   if(RBC.loading) return; RBC.loading = true;
-  try{ const r = await api().rb_check(); if(r.ok){ RBC.data = r; RBC.dec = {};
+  try{ const r = await api().rb_check(); if(r.ok){ RBC.data = r; RBC.dec = {}; if(r.analysis) setAnalysis(r.analysis);
       r.changes.forEach(c=>{ const o = rbOptions(c).filter(x=>!x[2]); RBC.dec[c.id] = o.length ? o[0][0] : 'keep'; }); }
     else RBC.err = r.error; }
   catch(e){} RBC.loading = false; render();
@@ -2409,20 +2476,40 @@ window.onRbChanges = info => {
   toast(`🎛️ Cambiaste ${info.count} cosa${info.count!==1?'s':''} en Rekordbox (${info.names.map(esc).join(', ')}).<br><a class="lnk" onclick="show('rbchg')">¿Lo hago también en Spotify? → Revisar</a>`);
 };
 async function reconnectSpotify(){ try{ await api().disconnect(); }catch(e){} S.connected=false; await connect(); rbLoad(); }
+function rbMasterBox(d){
+  const m = d.master, log = d.log || [], mv = d.moves || [];
+  const when = t => new Date(t*1000).toLocaleString('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  return `<div class="box" style="margin-bottom:12px;border-color:${m?'var(--ok)':'var(--line)'}">
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${m?'checked':''} onchange="rbMaster(this.checked)" style="margin-top:3px">
+      <span><b>👑 Rekordbox manda</b><br><span class="art">Lo que haces en las playlists de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox pasa solo a BrainOrder: si mueves una canción de una playlist a otra o la quitas, también pasa aquí y en Spotify. Al Organizar se respeta el <b>orden</b> de Rekordbox (lo nuevo de Spotify entra al final) y no vuelve a entrar lo que quitaste allá. Quitar más de ${20} canciones de una vez te lo pregunto antes. Nunca se borra música: si una canción sale de una playlist de carpeta, su archivo se muda a la playlist donde la pusiste o a «_Sin Playlist» (con Rekordbox cerrado).</span></span></label>
+      ${mv.length ? `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">📁 <b>${mv.length}</b> archivo(s) por mudar a su carpeta nueva cuando cierres Rekordbox: ${mv.slice(0,3).map(x=>esc(x.file)).join(', ')}${mv.length>3?'…':''}</span>
+        <button ${running('rb_moves')||d.rekordbox_running?'disabled':''} title="${d.rekordbox_running?'Cierra Rekordbox primero':''}" onclick="rbMoves()">${running('rb_moves')?'Mudando…':'Mudarlos ya'}</button></div>` : ''}
+      ${m && log.length ? `<details style="margin-top:8px"><summary class="art" style="cursor:pointer">Lo último que pasé solo (${log.length})</summary><div class="art" style="margin-top:6px;line-height:1.7">${log.map(x=>`${when(x.t)} · ${esc(x.msg)}`).join('<br>')}</div></details>` : ''}</div>`;
+}
+async function rbMaster(on){ await api().rb_master_set(on); toast(on ? '👑 Rekordbox manda: lo que cambies allá pasa solo a BrainOrder y se respeta su orden.' : 'Listo: los cambios de Rekordbox te los pregunto uno por uno y al Organizar manda la plataforma.'); rbLoad(); }
+async function rbMoves(){ setTimeout(()=>{ if(S.view==='rbchg') render(); }, 150); const r = await api().rb_moves_run(); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist(); toast(`📁 ${r.moved} archivo(s) mudado(s) a su carpeta nueva.` + undoLink(r)); rbLoad(); }
+window.onRbAuto = async x => {
+  try{ const st = await api().get_state(S.rev ?? null); if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev); }catch(e){}
+  if(S.view==='rbchg') rbLoad(); else render();
+  const lines = (x.done||[]).map(t => '👑 ' + esc(t)).concat((x.asked||[]).map(t => `<span style="color:var(--org)">${esc(t)}</span>`));
+  if(lines.length) toast('Rekordbox → BrainOrder:<br>' + lines.slice(0,6).join('<br>') + (lines.length>6?'<br>…':'') + (x.moves?`<br>📁 ${x.moves} archivo(s) se mudan cuando cierres Rekordbox.`:''), !(x.done||[]).length);
+};
 function rbView(){
   const d = RBC.data;
-  const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox. Elige si también va a Spotify.</span>
+  const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox.${d && d.master ? ' Las canciones que agregas o quitas pasan solas; aquí queda lo demás (playlists nuevas, borradas, renombradas o lo que no pude pasar).' : ' Elige si también va a Spotify.'}</span>
     <div class="sp"><button onclick="rbLoad()">⟳ Revisar</button></div></div>`;
   if(!d) return head + `<div class="empty"><p>${RBC.err?esc(RBC.err):'Leyendo Rekordbox…'}</p></div>`;
+  const mbox = rbMasterBox(d);
   const warn = !d.spotify.connected ? `<div class="box warn">Spotify no está conectado. <button onclick="connect()">Conectar Spotify</button></div>`
     : !d.spotify.can_write ? `<div class="box warn">Para pasar cambios a Spotify, BrainOrder necesita permiso de <b>editar tus playlists</b>. <button onclick="reconnectSpotify()">Reconectar Spotify</button></div>` : '';
   const keep = (d.keep||[]).map(pid=>({pid, pl:(S.analysis||[]).find(p=>p.id===pid)}));
   const keepBox = keep.length ? `<div class="vhead" style="margin-top:22px"><h2 style="font-size:16px">Playlists donde manda Rekordbox</h2><span class="sub">BrainOrder no las sobrescribe al Organizar.</span></div>
     ${keep.map(k=>`<div class="cx" style="display:flex;align-items:center;gap:10px"><b style="flex:1">${esc(k.pl?k.pl.name:k.pid)}</b>
       <button onclick="rbUnkeep(${jsq(k.pid)})">Volver a sincronizar desde ${esc(SRC_NAME[(k.pl||{}).source]||'la plataforma')}</button></div>`).join('')}` : '';
-  if(!d.changes.length) return head + warn + `<div class="empty"><h3>Todo en orden</h3><p>No hay cambios tuyos en Rekordbox sin decidir. BrainOrder revisa solo cada pocos segundos y te avisa.</p></div>` + keepBox;
+  if(!d.changes.length) return head + mbox + warn + `<div class="empty"><h3>Todo en orden</h3><p>No hay cambios tuyos en Rekordbox sin decidir. BrainOrder revisa solo cada pocos segundos y te avisa.</p></div>` + keepBox;
   const byPl = {}; d.changes.forEach(c=>{ (byPl[c.name] = byPl[c.name] || []).push(c); });
-  return head + warn + Object.entries(byPl).map(([name, cs]) => `<div class="dg"><div class="dh"><b>🎛️ ${esc(name)}</b>
+  return head + mbox + warn + Object.entries(byPl).map(([name, cs]) => `<div class="dg"><div class="dh"><b>🎛️ ${esc(name)}</b>
       <span class="bdg">${c0src(cs[0])}</span></div>
       ${cs.map(c=>`<div class="df" style="grid-template-columns:1fr auto">
         <div><div>${RB_TXT[c.type](c)}</div>${c.files&&c.files.length&&c.type!=='deleted'?`<div class="meta">${c.files.slice(0,8).map(esc).join(' · ')}${c.files.length>8?' …':''}</div>`:''}

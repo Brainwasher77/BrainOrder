@@ -1,5 +1,5 @@
 {
-  "version": "2.28.0",
-  "build": 73,
-  "notes": "Nuevo: «Grillas dudosas» revisa las grillas de toda tu colección de Rekordbox (sin grilla, BPM al doble o a la mitad, distinto a Mixed In Key, cues corridos, grilla variable) y con «🎧 Medir» comprueba en el audio dónde cae de verdad el kick. Las que estén mal pasan a una playlist en Rekordbox para arreglarlas."
+  "version": "2.29.0",
+  "build": 74,
+  "notes": "Nuevo: «Rekordbox manda»: si mueves o quitas canciones de tus playlists en Rekordbox, pasa solo a BrainOrder y a Spotify, y al Organizar se respeta el orden de Rekordbox. Y en «Playlists nuevas» → «Tus playlists de Rekordbox» ves todas las que están fuera de la carpeta de BrainOrder (también las de antes) y eliges si las agregas, con qué nombre, a cuál sumarlas y en qué grupo."
 }

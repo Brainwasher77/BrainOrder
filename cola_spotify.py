@@ -69,6 +69,28 @@ def remove(job_id):
         _save([j for j in load() if j.get("id") != job_id])
 
 
+def drop_pending(pid, paths=(), local_ids=()):
+    """Canciones que estaban por agregarse a esa playlist (pendientes) y ya no van: las sacaste en Rekordbox."""
+    paths, local_ids = set(paths or ()), set(local_ids or ())
+    if not (paths or local_ids):
+        return 0
+    n = 0
+    with _LOCK:
+        jobs, out = load(), []
+        for j in jobs:
+            if j.get("kind") == "merge_add" and j.get("pid") == pid:
+                before = len(j.get("paths") or []) + len(j.get("local_tracks") or [])
+                j["paths"] = [x for x in j.get("paths") or [] if x not in paths]
+                j["local_tracks"] = [t for t in j.get("local_tracks") or [] if t.get("id") not in local_ids]
+                j["local_ids"] = [i for i in j.get("local_ids") or [] if i not in local_ids]
+                n += before - len(j["paths"]) - len(j["local_tracks"])
+                if not (j["paths"] or j.get("uris") or j.get("queries")):
+                    continue
+            out.append(j)
+        _save(out)
+    return n
+
+
 def update(job_id, **changes):
     with _LOCK:
         jobs = load()

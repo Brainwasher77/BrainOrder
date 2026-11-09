@@ -44,7 +44,13 @@ def rekordbox(cfg):
                 pid = str(by_id[pid][2]) if pid in by_id else None
                 seen += 1
             return False
-        lists = {str(r[0]): {"name": r[1], "paths": []} for r in rows
+        def trail(pid):
+            out, seen = [], 0
+            while pid and pid != "root" and pid in by_id and seen < 50:
+                out.append(by_id[pid][1])
+                pid, seen = str(by_id[pid][2]), seen + 1
+            return " / ".join(reversed(out))
+        lists = {str(r[0]): {"name": r[1], "paths": [], "folder": trail(str(r[2]))} for r in rows
                  if r[3] == 0 and not inside_ours(str(r[2]))}  # 0 = playlist normal (1 carpeta, 4 inteligente)
         if lists:
             marks = ",".join("?" * len(lists))

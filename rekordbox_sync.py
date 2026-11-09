@@ -170,6 +170,48 @@ def _find_child(db, parent_id, name, attribute):
     return None
 
 
+def _k(p):
+    """Clave para comparar rutas (Rekordbox guarda «/» y a veces barras de más; Windows no distingue mayúsculas)."""
+    k = rb_path(p or "")
+    while "//" in k:
+        k = k.replace("//", "/")
+    return k.casefold() if os.name == "nt" else k
+
+
+def merge_plan(current, desired, previous=None):
+    """Rekordbox manda. current: rutas que hay ahora en la playlist de Rekordbox (en su orden); desired: las
+    que BrainOrder quiere; previous: las que dejó BrainOrder la última vez (la foto; None si no hay).
+      - lo que agregaste en Rekordbox se queda, aunque la plataforma no lo tenga;
+      - lo que quitaste en Rekordbox NO vuelve a entrar;
+      - lo que la plataforma quitó (estaba la última vez y ya no) sale;
+      - lo nuevo de la plataforma entra al final;
+      - el orden de Rekordbox no se toca.
+    -> {"remove": [claves], "add": [claves en el orden de desired], "final": [rutas en el orden final]}"""
+    cur_k = [_k(p) for p in current if p]
+    des = {}
+    for p in desired:
+        des.setdefault(_k(p), p)
+    prev = {_k(p) for p in previous} if previous is not None else set(cur_k)
+    cur_set = set(cur_k)
+    remove = {k for k in cur_k if k not in des and k in prev}
+    add = [k for k in des if k not in cur_set and k not in prev]
+    final = [p for p in current if p and _k(p) not in remove] + [des[k] for k in add]
+    return {"remove": sorted(remove), "add": add, "final": final}
+
+
+def _content_for(db, r, artist_id, stats):
+    content = content_by_path(db, r["source"])
+    if content is None:
+        try:
+            content = db.add_content(r["source"], Title=r["name"],
+                                     ArtistID=artist_id(r["artists"][0] if r["artists"] else ""))
+            stats["tracks_added"] += 1
+        except ValueError as e:
+            log(f"Rekordbox no aceptó {r['source']}: {e}")
+            return None
+    return content
+
+
 def sync(analysis, cfg, progress=None):
     try:
         try:
@@ -210,6 +252,8 @@ def sync(analysis, cfg, progress=None):
                 artist_cache[name] = a.ID
             return artist_cache[name]
 
+        master = bool(cfg.get("rb_master", True))
+        base_all = cfg.get("_rb_base") or {}
         analysis = [p for p in analysis if not p.get("pending")]  # sin analizar: no se tocan
         # playlists que manda Rekordbox (elegiste mantener tus cambios) o con cambios tuyos sin decidir
         skip = set(cfg.get("rb_keep") or []) | set(cfg.get("_rb_pending") or [])
@@ -225,28 +269,43 @@ def sync(analysis, cfg, progress=None):
                     seen.add(r["source"])
                     desired.append(r)
             playlist = _find_child(db, root.ID, pl["name"], 0)
-            if playlist is None:
+            created = playlist is None
+            if created:
                 playlist = db.create_playlist(pl["name"], parent=root)
                 stats["playlists_created"] += 1
-            current = [rb_path(s.Content.FolderPath) if s.Content else None
-                       for s in sorted(playlist.Songs, key=lambda s: s.TrackNo or 0)]
+            songs = sorted(playlist.Songs, key=lambda s: s.TrackNo or 0)
+            current = [rb_path(s.Content.FolderPath) if s.Content else None for s in songs]
+            if master and not created:
+                # Rekordbox manda: se conserva su orden y lo que hiciste ahí; solo entra lo nuevo de la
+                # plataforma (al final) y sale lo que la plataforma quitó desde la última vez
+                prev = (base_all.get(str(playlist.ID)) or {}).get("paths")
+                plan = merge_plan(current, [r["source"] for r in desired], prev)
+                baseline[str(playlist.ID)] = {"pid": pl["id"], "name": pl["name"],
+                                              "paths": [plataforma.native(x) for x in plan["final"]]}
+                if not plan["remove"] and not plan["add"]:
+                    continue
+                gone = set(plan["remove"])
+                for song in songs:
+                    if song.Content and _k(song.Content.FolderPath) in gone:
+                        db.remove_from_playlist(playlist, song)
+                by_key = {_k(r["source"]): r for r in desired}
+                for key in plan["add"]:
+                    r = by_key[key]
+                    content = _content_for(db, r, artist_id, stats)
+                    if content is not None:
+                        db.add_to_playlist(playlist, content)
+                stats["playlists_updated"] += 1
+                stats["kept_order"] = stats.get("kept_order", 0) + 1
+                continue
             baseline[str(playlist.ID)] = {"pid": pl["id"], "name": pl["name"], "paths": [r["source"] for r in desired]}
             if current == [rb_path(r["source"]) for r in desired]:
                 continue
             for song in list(playlist.Songs):
                 db.remove_from_playlist(playlist, song)
             for r in desired:
-                content = content_by_path(db, r["source"])
-                if content is None:
-                    try:
-                        content = db.add_content(
-                            r["source"], Title=r["name"],
-                            ArtistID=artist_id(r["artists"][0] if r["artists"] else ""))
-                        stats["tracks_added"] += 1
-                    except ValueError as e:
-                        log(f"Rekordbox no aceptó {r['source']}: {e}")
-                        continue
-                db.add_to_playlist(playlist, content)
+                content = _content_for(db, r, artist_id, stats)
+                if content is not None:
+                    db.add_to_playlist(playlist, content)
             stats["playlists_updated"] += 1
         db.commit()
         stats["baseline"] = baseline

@@ -27,7 +27,7 @@ def _key(p):
     return os.path.normcase(os.path.normpath(str(p)))
 
 
-FIELDS = ("known", "dismissed", "dj_known", "dj_dismissed", "dj_programs", "roots", "imported")
+FIELDS = ("known", "dismissed", "dj_known", "dj_dismissed", "dj_programs", "roots", "imported", "dj_done")
 
 
 def load():
@@ -161,11 +161,22 @@ def dj_new(program, lists, imported_keys=()):
     return {ref: v for ref, v in lists.items() if dj_key(program, ref) not in skip}
 
 
-def dj_mark(program, ref, dismissed=False):
+def dj_mark(program, ref, dismissed=False, done=False):
+    """done=True: ya la pasaste a BrainOrder (importada o sumada a otra playlist)."""
     st = load()
     st["dj_known"].add(dj_key(program, ref))
     if dismissed:
         st["dj_dismissed"].add(dj_key(program, ref))
+    if done:
+        st["dj_done"].add(dj_key(program, ref))
+        st["dj_dismissed"].discard(dj_key(program, ref))
+    save(st)
+
+
+def dj_undismiss(program, ref):
+    """Vuelve a mostrar una playlist que habías dicho que no agregara."""
+    st = load()
+    st["dj_dismissed"].discard(dj_key(program, ref))
     save(st)
 
 

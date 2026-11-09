@@ -107,6 +107,8 @@ Al importar eliges la plataforma:
 
 También te pregunta si **pasa sus archivos a tu carpeta de playlists** (`<carpeta de playlists>/<nombre>`): se mueven con rutas corregidas en Rekordbox y tus otros programas, queda en Historial para deshacer y, si era una carpeta, la vieja se elimina si queda vacía. Lo importado sale de «Playlists nuevas» y la carpeta que crea BrainOrder al mover no se toma como nueva. **En Spotify nunca se duplica**: si ya tienes una playlist con ese nombre se usa esa (solo se agregan las canciones que falten), y si después agregas canciones a una carpeta importada a Spotify, te pregunta si las agrega a esa misma playlist. Opcionalmente la pasa enseguida a tus otros programas de DJ. Una playlist que nació en un programa no se vuelve a copiar a ese mismo programa. «Ahora no» vuelve a preguntar la próxima vez que abras BrainOrder; «No preguntar por esta» no. Lo que ya existía cuando instalaste esta función no genera preguntas, pero aparece en **Playlists nuevas** para importarlo cuando quieras.
 
+**Tus playlists de Rekordbox** (al final de «Playlists nuevas», botón *Ver todas*): lista **todas** las playlists de Rekordbox que están fuera de la carpeta de BrainOrder y todavía no son de BrainOrder, también las que ya tenías antes de instalar BrainOrder, con la carpeta de Rekordbox donde están y cuánta música nueva traen. En cada una eliges **Agregar…** o **No agregar** (las no agregadas quedan abajo y se pueden volver a mostrar). Al agregar eliges **dónde dejarla**: como playlist nueva con el nombre que quieras, o **sumada a una playlist que ya tienes** (solo entra lo que esa no tenga, también en Spotify), y en qué **grupo**.
+
 ## Conexiones: fuentes y programas de DJ
 En la barra lateral, **Conexiones**:
 - **Fuentes de playlists** (se pueden usar varias a la vez; la misma canción en dos fuentes se une por ISRC):
@@ -147,6 +149,14 @@ Se cambia en Conexiones. Al cambiarlo, BrainOrder **renombra la carpeta** en Rek
 
 ## Cancelar
 Lo que está **en cola** (esperando a que termine otra tarea) se cancela con su ✕ en la barra de tareas o con clic derecho. Una tarea que ya empezó no se corta a mitad, para no dejar archivos ni programas a medio cambiar. Los pendientes para Spotify se cancelan igual (✕ o clic derecho) desde «· N pendientes» arriba o desde «Playlists nuevas».
+
+## Rekordbox manda (orden y cambios de canciones)
+Con **👑 Rekordbox manda** (activado por defecto, en «Cambios en Rekordbox») lo que haces en las playlists de la carpeta de BrainOrder en Rekordbox pasa **solo** a BrainOrder, aunque Rekordbox siga abierto (se revisa cada pocos segundos y antes de cada Organizar):
+- **Mueves una canción de una playlist a otra, o la quitas / agregas**: en playlists de Spotify se hace lo mismo en Spotify (si está en pausa, queda en Pendientes y mientras tanto ya se ve en BrainOrder); en playlists de carpeta, la playlist la recuerda o la olvida y, si su archivo estaba en la carpeta de la que la sacaste, **se muda** a la carpeta de la playlist donde la pusiste (o a `_Sin Playlist`) cuando cierres Rekordbox, con rutas corregidas y Deshacer en Historial. Nunca se borra música.
+- **Orden**: al Organizar se respeta el orden de Rekordbox. Lo nuevo de la plataforma entra al final, sale lo que la plataforma quitó y **no vuelve a entrar** lo que quitaste en Rekordbox.
+- Lo que no se puede pasar (Deezer, archivos exportados, playlists de Spotify que no son tuyas, una playlist importada desde otra de Rekordbox) se queda como está en Rekordbox.
+- **Quitar más de 20 canciones de una vez** (y más de la mitad de la playlist) no se hace solo: te lo pregunta en «Cambios en Rekordbox». Crear, borrar o renombrar playlists también se pregunta, como siempre.
+Si lo apagas, vuelve el comportamiento de antes: cada cambio se pregunta y al Organizar manda la plataforma.
 
 ## Cambios en Rekordbox → Spotify
 Si dentro de la carpeta de BrainOrder en Rekordbox **creas, borras o renombras una playlist, o le agregas o quitas canciones**, BrainOrder lo detecta (aunque Rekordbox siga abierto) y pregunta qué hacer con cada cambio:
