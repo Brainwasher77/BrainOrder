@@ -2925,69 +2925,97 @@ class Api:
         return self._task(run, f"pledit:{src_pid}", "Fusionar playlists")
 
     def playlist_common(self, keep_pid, lose_pid, pairs):
-        """Las canciones que dos playlists tienen en común se quedan SOLO en keep_pid y salen de lose_pid
-        (en BrainOrder, su carpeta, Spotify y, al actualizarla, tus programas de DJ). Lo demás no se toca.
-        pairs: [[pos en lose, pos en keep]] (lo que Comparar encontró como la misma canción).
-        Archivos: el de la que suelta la canción, si está en SU carpeta, pasa a la carpeta de la que se queda
-        con ella; si la otra ya tiene su propio archivo de la MISMA grabación, va a _duplicados. Nunca se borra
-        música y se puede deshacer en Historial."""
+        """Una sola playlist se queda con las comunes (ver playlist_common_multi)."""
+        return self.playlist_common_multi(lose_pid, [{"keep": keep_pid, "pairs": pairs}])
+
+    def playlist_common_multi(self, lose_pid, groups):
+        """Desmantelar lose_pid: las canciones que tiene en común con las playlists elegidas se quedan SOLO en
+        esas y salen de lose_pid (en BrainOrder, su carpeta, Spotify y, al actualizarla, tus programas de DJ).
+        Lo que no está en ninguna de las elegidas se queda en lose_pid. Las elegidas no se tocan.
+        groups: [{"keep": pid, "pairs": [[pos en lose, pos en keep]]}] (lo que Comparar encontró como la misma canción).
+        Archivos: el de lose_pid, si está en SU carpeta, pasa a la carpeta de la primera elegida que tiene la
+        canción (según tu prioridad en Reglas); si alguna elegida ya tiene su propio archivo de la MISMA grabación,
+        va a _duplicados. Nunca se borra música y se puede deshacer en Historial."""
         def run():
             from fuentes import carpetas as FC
             import unicodedata
             analysis = self._analysis() or []
-            if keep_pid == lose_pid:
+            keep_ids = list(dict.fromkeys(g.get("keep") for g in groups or [] if g.get("keep")))
+            if not keep_ids or lose_pid in keep_ids:
                 raise unificar.UnifyError("Elige otra playlist.")
             L, sl, el, fl = self._pl_ctx(lose_pid, analysis)
-            K, sk, ek, fk = self._pl_ctx(keep_pid, analysis)
-            if L.get("pending") or K.get("pending"):
-                raise unificar.UnifyError("Analiza las dos playlists primero.")
             if lose_pid == "liked":
                 raise unificar.UnifyError("De «Me gusta» no se quitan canciones desde aquí: elige que se queden ahí.")
             l_folder_pl = sl == "carpetas" and el and el.get("path")
             if not ((sl == "spotify" and not self._is_foreign(lose_pid)) or l_folder_pl):
                 raise unificar.UnifyError(f"A «{L['name']}» no se le pueden quitar canciones desde BrainOrder "
                                           f"(no es tuya o su plataforma no lo deja): elige que las comunes se queden ahí.")
+            ctx = {pid: self._pl_ctx(pid, analysis) for pid in keep_ids}
+            if L.get("pending") or any(c[0].get("pending") for c in ctx.values()):
+                raise unificar.UnifyError("Analiza las playlists primero.")
             byl = {r["pos"]: r for r in L["tracks"]}
-            byk = {r["pos"]: r for r in K["tracks"]}
-            rows = []
-            for pr in pairs or []:
-                try:
-                    lr, kr = byl.get(int(pr[0])), byk.get(int(pr[1]))
-                except (TypeError, ValueError, IndexError):
+            # cada canción de lose -> las elegidas que la tienen, en tu orden de prioridad
+            order = [p["id"] for p in reglas.ordered_playlists([c[0] for c in ctx.values()], reglas.get(self._cfg))]
+            rank = {pid: i for i, pid in enumerate(order)}
+            match = {}  # pos en lose -> [(keep_pid, fila en keep)]
+            for g in groups or []:
+                K = ctx.get(g.get("keep"), (None,))[0]
+                if K is None:
                     continue
-                if lr is not None and kr is not None:
-                    rows.append((lr, kr))
-            if not rows:
+                byk = {r["pos"]: r for r in K["tracks"]}
+                for pr in g.get("pairs") or []:
+                    try:
+                        lr, kr = byl.get(int(pr[0])), byk.get(int(pr[1]))
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                    if lr is not None and kr is not None:
+                        match.setdefault(lr["pos"], []).append((K["id"], kr))
+            for v in match.values():
+                v.sort(key=lambda x: rank.get(x[0], 99))
+            if not match:
                 raise unificar.UnifyError("No hay canciones en común (o cambiaron): vuelve a analizarlas.")
             if sl == "spotify":
                 self._spotify_ready()
             self._dj_closed()
-            res = {"name": L["name"], "keep": K["name"], "count": len(rows)}
-            # 1) archivos que viven en la carpeta de la que suelta las canciones
+            names = [ctx[pid][0]["name"] for pid in keep_ids]
+            res = {"name": L["name"], "keep": names[0] if len(names) == 1 else None, "keeps": names, "count": len(match)}
+            # 1) archivos que viven en la carpeta de la que se desmantela
             nk = (lambda x: os.path.normcase(unicodedata.normalize("NFC", str(x))))
+
+            def folder_of(pid):
+                K, sk, ek, fk = ctx[pid]
+                if sk == "carpetas" and ek and ek.get("path"):
+                    return Path(fk)
+                return Path(K["folder"]) if K.get("folder") else None
             lfolder = Path(fl) if l_folder_pl else (Path(L["folder"]) if L.get("folder") else None)
-            kfolder = Path(fk) if (sk == "carpetas" and ek and ek.get("path")) else (Path(K["folder"]) if K.get("folder") else None)
             dupdir = Path(self._cfg["dest_root"]) / "_duplicados" / config.safe_name(L["name"])
             ops, planned, dup_keep, n = [], set(), {}, {"home": 0, "dup": 0, "kept": 0}
-            if lfolder and kfolder and lfolder.is_dir():
+            per = {}  # carpeta destino -> cuántos archivos
+            if lfolder and lfolder.is_dir():
                 inside = nk(lfolder) + os.sep
                 seen = set()
-                for lr, kr in rows:
-                    src = lr.get("source")
+                for pos, ks in match.items():
+                    src = byl[pos].get("source")
                     if not src or nk(src) in seen or not nk(src).startswith(inside) or not os.path.isfile(src):
                         continue
                     seen.add(nk(src))
-                    ksrc = kr.get("source")
-                    own = ksrc and os.path.isfile(ksrc) and not plataforma.same_file(src, ksrc) and not plataforma.is_dup_dir(ksrc)
+                    # ¿alguna elegida ya tiene su propio archivo de esta canción?
+                    own = [kr["source"] for _, kr in ks if kr.get("source") and os.path.isfile(kr["source"])
+                           and not plataforma.same_file(src, kr["source"]) and not plataforma.is_dup_dir(kr["source"])]
                     if own:
-                        if plataforma.same_recording(src, ksrc):  # la otra ya tiene su copia: esta sobra
+                        same = next((o for o in own if plataforma.same_recording(src, o)), None)
+                        if same:  # ya está su copia: esta sobra
                             d = self._plan_dest(src, dupdir, planned, dupdir)
                             if d:
                                 ops.append((src, d))
-                                dup_keep[src] = ksrc
+                                dup_keep[src] = same
                                 n["dup"] += 1
                         else:
                             n["kept"] += 1  # otra versión: no se aparta nada (ante la duda, nunca)
+                        continue
+                    kfolder = next((f for f in (folder_of(pid) for pid, _ in ks) if f), None)
+                    if not kfolder:
+                        n["kept"] += 1
                         continue
                     d = self._plan_dest(src, kfolder, planned, dupdir)
                     if d and Path(d) != kfolder:  # chocaría por nombre con otro archivo: se deja donde está
@@ -2997,15 +3025,16 @@ class Api:
                     if d:
                         kfolder.mkdir(parents=True, exist_ok=True)
                         ops.append((src, d))
+                        per[str(kfolder)] = per.get(str(kfolder), 0) + 1
                         n["home"] += 1
             self._set_stage(0, 60)
-            mv = self._relocate_ops(ops, f"Dejar en «{K['name']}» lo que tenía en común con «{L['name']}»",
-                                    extra=lambda ch: {"dup_of": {ch[a]: k for a, k in dup_keep.items() if a in ch}})
+            label = f"Desmantelar «{L['name']}» en " + ", ".join(f"«{x}»" for x in names[:4]) + ("…" if len(names) > 4 else "")
+            mv = self._relocate_ops(ops, label, extra=lambda ch: {"dup_of": {ch[a]: k for a, k in dup_keep.items() if a in ch}})
             res["files"] = {**n, "moved": mv.get("moved", 0), "skipped": mv.get("skipped") or [], "op_id": mv.get("op_id"),
-                            "to": str(kfolder) if kfolder else "", "dup_dir": str(dupdir)}
-            # 2) sacarlas de la playlist
+                            "to": next(iter(per), "") if len(per) == 1 else "", "folders": len(per), "dup_dir": str(dupdir)}
+            # 2) sacarlas de la que se desmantela
             self._set_stage(60, 90)
-            lrows = [lr for lr, _ in rows]
+            lrows = [byl[pos] for pos in match]
             if sl == "spotify":
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in lrows if self._SP_ID.fullmatch(r.get("id") or "")))
                 res["no_uri"] = len(lrows) - len(uris)
@@ -3028,23 +3057,26 @@ class Api:
                         if cur is not None:
                             cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
                     self._update_sp(put)
-            if sk == "carpetas" and ek and ek.get("path"):  # la que se queda las relee (con los archivos que llegaron)
-                meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == keep_pid), None)
-                if meta:
-                    tracks = FC.tracks(self._cfg, meta)
+            for pid in keep_ids:  # las de carpeta que se quedan se releen (con los archivos que llegaron)
+                K, sk, ek, fk = ctx[pid]
+                if sk == "carpetas" and ek and ek.get("path"):
+                    meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == pid), None)
+                    if meta:
+                        tracks = FC.tracks(self._cfg, meta)
 
-                    def put(data):
-                        cur = next((x for x in data["playlists"] if x["id"] == keep_pid), None)
-                        if cur is not None:
-                            cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
-                    self._update_sp(put)
+                        def put(data, pid=pid, meta=meta, tracks=tracks):
+                            cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                            if cur is not None:
+                                cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
+                        self._update_sp(put)
             self._set_stage(90, 100)
             analysis = self._build_analysis(light=True)
             lp = next((p for p in analysis if p["id"] == lose_pid), None)
             res["left"] = len(lp["tracks"]) if lp else 0
             idx = next((i for i, a in enumerate(analysis) if a["id"] == lose_pid), None)
-            return {"analysis": analysis, "result": res, "pid": lose_pid, "keep_pid": keep_pid, "index": idx}
-        return self._task(run, f"pledit:{lose_pid}", "Dejar las comunes en una playlist")
+            return {"analysis": analysis, "result": res, "pid": lose_pid, "keep_pid": keep_ids[0], "keep_pids": keep_ids,
+                    "index": idx}
+        return self._task(run, f"pledit:{lose_pid}", "Desmantelar playlist")
 
     def spotify_queue(self):
         import cola_spotify as Q

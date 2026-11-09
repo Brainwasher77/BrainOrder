@@ -1,5 +1,5 @@
 {
-  "version": "2.26.0",
-  "build": 71,
-  "notes": "Nuevo: al fusionar puedes elegir «Solo las que tienen en común»: las canciones que dos playlists comparten se quedan en la que elijas y salen de la otra (también en Spotify), sin tocar lo demás. Las playlists para elegir salen ordenadas por cuántas canciones tienen en común."
+  "version": "2.27.0",
+  "build": 72,
+  "notes": "Nuevo: en «Quitar las que ya están en otra» puedes marcar varias playlists. Con varias, la playlist que estás desmantelando suelta las canciones que estén en alguna de las marcadas y esas se las quedan, todo de una vez."
 }
