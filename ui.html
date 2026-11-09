@@ -2483,6 +2483,7 @@ function rbOptions(c){
 }
 async function rbLoad(){
   if(RBC.loading) return; RBC.loading = true;
+  api().rb_mirror_info().then(m => { MIR = m.ok ? m : null; if(S.view==='rbchg') renderMain(); }).catch(()=>{});
   try{ const r = await api().rb_check(); if(r.ok){ RBC.data = r; RBC.dec = {}; if(r.analysis) setAnalysis(r.analysis);
       r.changes.forEach(c=>{ const o = rbOptions(c).filter(x=>!x[2]); RBC.dec[c.id] = o.length ? o[0][0] : 'keep'; }); }
     else RBC.err = r.error; }
@@ -2493,6 +2494,36 @@ window.onRbChanges = info => {
   toast(`🎛️ Cambiaste ${info.count} cosa${info.count!==1?'s':''} en Rekordbox (${info.names.map(esc).join(', ')}).<br><a class="lnk" onclick="show('rbchg')">¿Lo hago también en Spotify? → Revisar</a>`);
 };
 async function reconnectSpotify(){ try{ await api().disconnect(); }catch(e){} S.connected=false; await connect(); rbLoad(); }
+// ---------- carpetas como en Rekordbox (2.31.0) ----------
+let MIR = null;
+function mirrorBox(){
+  const m = MIR; if(!m) return '';
+  const pend = m.count || 0;
+  return `<div class="box" style="margin-bottom:12px;border-color:${m.on?'var(--ok)':'var(--line)'}">
+    <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${m.on?'checked':''} onchange="mirrorSet(this.checked)" style="margin-top:3px">
+    <span><b>📂 Mis carpetas igual que en Rekordbox</b><br><span class="art">Si dentro de «${esc(S.settings.rekordbox_folder)}» en Rekordbox metes tus playlists en subcarpetas (por ejemplo <i>Techno › Hard</i>), en tu carpeta de música quedan igual: <code>${esc((S.settings.dest_root||'').split(/[\\/]/).pop())}/Techno/Hard/…</code>. Las subcarpetas son solo para agrupar: no cuentan como una playlist con todo lo de adentro. Cada canción vive en una sola carpeta (sin copias). Se hace al Organizar (con Rekordbox cerrado).</span></span></label>
+    ${m.on ? `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">${m.nested ? `${m.nested} playlist(s) en subcarpetas de Rekordbox. ` : 'Todavía no tienes playlists en subcarpetas de Rekordbox. '}
+      ${pend ? `<b>${pend}</b> por mudar (${m.files} archivo(s)): ${m.items.slice(0,3).map(x=>esc(x.name)).join(', ')}${pend>3?'…':''}` : (m.stale ? 'Falta reacomodar el análisis.' : '✅ Tu carpeta ya está como Rekordbox.')}</span>
+      ${pend || m.stale ? `<button ${running('rb_mirror')?'disabled':''} onclick="mirrorRun()">${running('rb_mirror')?'Ordenando…':'Ordenar ya'}</button>` : ''}</div>` : ''}</div>`;
+}
+async function mirrorSet(on){ await api().rb_mirror_set(on); toast(on ? '📂 Tus carpetas van a quedar como en Rekordbox (al Organizar o con «Ordenar ya»).' : 'Listo: las carpetas se quedan sueltas, una por playlist.'); rbLoad(); }
+async function mirrorRun(){ setTimeout(()=>{ if(S.view==='rbchg') render(); }, 150); const r = await api().rb_mirror_run(); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist();
+  toast(r.result ? '📂 ' + mirrorMsg(r.result).replace(/^<br>📂 /, '') + undoLink(r.result) : '📂 Tu carpeta ya estaba como Rekordbox.'); rbLoad(); }
+function mirrorMsg(x){
+  if(!x) return '';
+  if(x.error) return `<br><span style="color:var(--org)">📂 Carpetas como en Rekordbox: ${esc(x.error)}</span>`;
+  return `<br>📂 Carpetas como en Rekordbox: <b>${x.playlists}</b> playlist(s) a su subcarpeta (${x.moved} archivo(s))${(x.skipped||[]).length?`, ${x.skipped.length} no se movieron porque ya había un archivo con ese nombre`:''}.`;
+}
+function rootRenMsg(x){
+  if(!x) return '';
+  return `<br>📁 Reconocí que le cambiaste el nombre a tu carpeta de playlists: <b>${esc(x.old_name)}</b> → <b>${esc(x.new_name)}</b>. Corregí todas las rutas: tus playlists siguen siendo las mismas (nada sale como nuevo).`;
+}
+window.onRootRenamed = async x => {
+  try{ const st = await api().get_state(); S.settings = st.settings; if(st.analysis) setAnalysis(st.analysis, st.rev); }catch(e){}
+  render();
+  toast('✅' + rootRenMsg(x).replace(/^<br>/, ' ') + ' Las rutas en Rekordbox se corrigen solas cuando esté cerrado.');
+};
 function rbMasterBox(d){
   const m = d.master, log = d.log || [], mv = d.moves || [];
   const when = t => new Date(t*1000).toLocaleString('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
@@ -2521,7 +2552,7 @@ function rbView(){
   const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox.${d && d.master ? ' Las canciones que agregas o quitas pasan solas; aquí queda lo demás (playlists nuevas, borradas, renombradas o lo que no pude pasar).' : ' Elige si también va a Spotify.'}</span>
     <div class="sp"><button onclick="rbLoad()">⟳ Revisar</button></div></div>`;
   if(!d) return head + `<div class="empty"><p>${RBC.err?esc(RBC.err):'Leyendo Rekordbox…'}</p></div>`;
-  const mbox = rbMasterBox(d);
+  const mbox = rbMasterBox(d) + mirrorBox();
   const warn = !d.spotify.connected ? `<div class="box warn">Spotify no está conectado. <button onclick="connect()">Conectar Spotify</button></div>`
     : !d.spotify.can_write ? `<div class="box warn">Para pasar cambios a Spotify, BrainOrder necesita permiso de <b>editar tus playlists</b>. <button onclick="reconnectSpotify()">Reconectar Spotify</button></div>` : '';
   const keep = (d.keep||[]).map(pid=>({pid, pl:(S.analysis||[]).find(p=>p.id===pid)}));
@@ -3652,7 +3683,7 @@ async function organize(){
   if((f.kept_similar||[]).length) msg += `<br>🛟 ${f.kept_similar.length} se parecían a una que ya tienes pero duran distinto: <b>no</b> se apartaron (se guardan las dos).`;
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
-  msg += folderRenMsg(r.folder_rename) + djSummary(r.dj);
+  msg += folderRenMsg(r.folder_rename) + mirrorMsg(r.mirror) + djSummary(r.dj);
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
   const skipped = ((r.dj||{}).rekordbox||{}).stats ? r.dj.rekordbox.stats.skipped||[] : [];
   Object.values(r.dj||{}).forEach(x=>{ const s_ = x.stats||{};
@@ -3735,7 +3766,7 @@ async function saveSettings(){
   const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();
-  toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).` + folderRenMsg(r && r.folder_rename));
+  toast(`Ajustes guardados. Descargas: <code>${esc(short(S.settings.inbox))}</code> (${S.inboxCount} archivo${S.inboxCount!==1?'s':''}).` + folderRenMsg(r && r.folder_rename) + rootRenMsg(r && r.root_renamed));
 }
 
 window.addEventListener('pywebviewready', async () => {
@@ -3745,6 +3776,7 @@ window.addEventListener('pywebviewready', async () => {
   PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.plGroups = st.pl_groups || {}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
+  setTimeout(async () => { try{ const ri = await api().root_info(); if(ri.renamed) onRootRenamed(ri.renamed); }catch(e){} }, 1200);
   try{ api().start_watch(); }catch(e){}
   render();
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';

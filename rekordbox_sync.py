@@ -170,6 +170,63 @@ def _find_child(db, parent_id, name, attribute):
     return None
 
 
+def _our_tree(db, cfg, create=True):
+    """La carpeta de BrainOrder (aunque le hayas cambiado el nombre en Rekordbox) y TODAS las playlists que
+    tiene adentro, también las que metiste en subcarpetas. -> (carpeta, {id: {"name", "folder"}}, creada?)"""
+    import rb_arbol
+    import rb_cambios
+    rows = rb_arbol.db_rows(db)
+    name = cfg.get("rekordbox_folder") or "BrainOrder"
+    rid, _n, _ren = rb_arbol.locate(rows, [name], list(rb_cambios.load_baseline()))
+    root = db.get_playlist(ID=rid) if rid else None
+    if root is None:
+        if not create:
+            return None, {}, False
+        return db.create_playlist_folder(name), {}, True
+    return root, rb_arbol.playlists(rows, rid), False
+
+
+def _pick(inside, name, prefer=None):
+    """La playlist con ese nombre dentro del árbol: primero la de la foto (prefer), luego la que esté en una
+    subcarpeta tuya (ahí la pusiste a propósito), luego la suelta."""
+    if prefer and str(prefer) in inside:
+        return str(prefer)
+    hits = [rid for rid, v in inside.items() if v["name"] == name]
+    if not hits:
+        return None
+    return sorted(hits, key=lambda r: (not inside[r]["folder"], r))[0]
+
+
+def _twins(db, root, inside, keep_ids):
+    """Playlists repetidas por el error de antes (las movías a una subcarpeta y Organizar volvía a crear una
+    suelta con el mismo nombre): se queda la de tu subcarpeta; a esa se le suma lo que solo tenía la suelta
+    y la suelta se quita (las canciones siguen en tu colección). -> [ids quitados]"""
+    out = []
+    by_name = {}
+    for rid, v in inside.items():
+        by_name.setdefault(v["name"], []).append(rid)
+    for name, ids in by_name.items():
+        loose = [r for r in ids if not inside[r]["folder"]]
+        nested = [r for r in ids if inside[r]["folder"]]
+        if not loose or not nested:
+            continue
+        keep = next((r for r in nested if r in keep_ids), nested[0])
+        kp = db.get_playlist(ID=keep)
+        have = {str(s.ContentID) for s in kp.Songs}
+        for r in loose:
+            p = db.get_playlist(ID=r)
+            if p is None:
+                continue
+            for s in sorted(p.Songs, key=lambda s: s.TrackNo or 0):
+                if s.Content is not None and str(s.ContentID) not in have:
+                    db.add_to_playlist(kp, s.Content)
+                    have.add(str(s.ContentID))
+            db.delete_playlist(p)
+            out.append(r)
+            inside.pop(r, None)
+    return out
+
+
 def _k(p):
     """Clave para comparar rutas (Rekordbox guarda «/» y a veces barras de más; Windows no distingue mayúsculas)."""
     k = rb_path(p or "")
@@ -234,11 +291,17 @@ def sync(analysis, cfg, progress=None):
 
     stats = {"playlists_created": 0, "playlists_updated": 0, "tracks_added": 0, "backup": bk.name}
     try:
-        folder_name = cfg.get("rekordbox_folder", "Spotify")
-        root = _find_child(db, "root", folder_name, 1)
-        if root is None:
-            root = db.create_playlist_folder(folder_name)
+        root, inside, made = _our_tree(db, cfg)
+        if made:
             stats["playlists_created"] += 1
+        base_ids = {}
+        for rid, b in (cfg.get("_rb_base") or {}).items():
+            if b.get("pid"):
+                base_ids.setdefault(b["pid"], str(rid))
+        gone = _twins(db, root, inside, set(base_ids.values()))
+        if gone:
+            stats["twins_removed"] = len(gone)
+            stats["twins_ids"] = gone
 
         artist_cache = {}
 
@@ -268,10 +331,13 @@ def sync(analysis, cfg, progress=None):
                 if r["status"] in ("ok", "elsewhere") and r["source"] and r["source"] not in seen:
                     seen.add(r["source"])
                     desired.append(r)
-            playlist = _find_child(db, root.ID, pl["name"], 0)
+            # dentro de la carpeta, donde la hayas puesto (también en una subcarpeta tuya): no se crea otra
+            hit = _pick(inside, pl["name"], base_ids.get(pl["id"]))
+            playlist = db.get_playlist(ID=hit) if hit else None
             created = playlist is None
             if created:
                 playlist = db.create_playlist(pl["name"], parent=root)
+                inside[str(playlist.ID)] = {"name": pl["name"], "folder": []}
                 stats["playlists_created"] += 1
             songs = sorted(playlist.Songs, key=lambda s: s.TrackNo or 0)
             current = [rb_path(s.Content.FolderPath) if s.Content else None for s in songs]
@@ -342,9 +408,8 @@ def edit_playlists(cfg, renames=None, deletes=None):
         raise RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a intentarlo.")
     db = Rekordbox6Database(path=RB_DIR / "master.db")
     try:
-        root = _find_child(db, "root", cfg.get("rekordbox_folder") or "BrainOrder", 1)
-        todo = root is not None and (any(_find_child(db, root.ID, o, 0) for o in renames) or
-                                     any(_find_child(db, root.ID, n, 0) for n in deletes))
+        root, inside, _m = _our_tree(db, cfg, create=False)
+        todo = root is not None and (any(_pick(inside, o) for o in renames) or any(_pick(inside, n) for n in deletes))
         if not todo:
             return {"renamed": 0, "deleted": 0, "backup": None}
     except Exception:
@@ -355,21 +420,26 @@ def edit_playlists(cfg, renames=None, deletes=None):
     db = Rekordbox6Database(path=RB_DIR / "master.db")
     out = {"renamed": 0, "deleted": 0, "backup": bk.name}
     try:
-        root = _find_child(db, "root", cfg.get("rekordbox_folder") or "BrainOrder", 1)
+        root, inside, _m = _our_tree(db, cfg, create=False)
         for old, new in renames.items():
-            p = _find_child(db, root.ID, old, 0)
+            hit = _pick(inside, old)
+            p = db.get_playlist(ID=hit) if hit else None
             if p is None:
                 continue
-            if _find_child(db, root.ID, new, 0) is not None:
+            if _pick(inside, new) is not None:
                 db.delete_playlist(p)  # ya hay una con el nombre nuevo (fusionar): queda esa
+                inside.pop(hit, None)
                 out["deleted"] += 1
             else:
-                db.rename_playlist(p, new)
+                db.rename_playlist(p, new)  # se queda en la subcarpeta donde la tengas
+                inside[hit]["name"] = new
                 out["renamed"] += 1
         for name in deletes:
-            p = _find_child(db, root.ID, name, 0)
+            hit = _pick(inside, name)
+            p = db.get_playlist(ID=hit) if hit else None
             if p is not None:
                 db.delete_playlist(p)
+                inside.pop(hit, None)
                 out["deleted"] += 1
         db.commit()
     except Exception as e:
@@ -471,10 +541,7 @@ def adopt(cfg, jobs, progress=None):
     db = Rekordbox6Database(path=RB_DIR / "master.db")
     out = {"moved": 0, "deleted": 0, "merged": 0, "missing": 0, "baseline": {}, "backup": bk.name, "done": []}
     try:
-        folder_name = cfg.get("rekordbox_folder") or "BrainOrder"
-        root = _find_child(db, "root", folder_name, 1)
-        if root is None:
-            root = db.create_playlist_folder(folder_name)
+        root, inside, _m = _our_tree(db, cfg)
         for j in jobs:
             try:
                 pl = db.get_playlist(ID=str(j["ref"]))
@@ -491,7 +558,8 @@ def adopt(cfg, jobs, progress=None):
                 continue
             name = j.get("name") or pl.Name
             target = pl
-            clash = _find_child(db, root.ID, name, 0)
+            hit = _pick(inside, name)
+            clash = db.get_playlist(ID=hit) if hit else None
             if clash is not None and str(clash.ID) != str(pl.ID):
                 have = {str(s.ContentID) for s in clash.Songs}
                 for s in sorted(pl.Songs, key=lambda s: s.TrackNo or 0):
@@ -502,13 +570,14 @@ def adopt(cfg, jobs, progress=None):
                 target = clash
                 out["merged"] += 1
             else:
-                if str(pl.ParentID) != str(root.ID):
+                if str(pl.ID) not in inside and str(pl.ParentID) != str(root.ID):  # si ya está en tu árbol, ahí se queda
                     if hasattr(db, "move_playlist"):
                         db.move_playlist(pl, parent=root)
                     else:  # pragma: no cover (pyrekordbox viejo)
                         pl.ParentID = root.ID
                 if pl.Name != name:
                     db.rename_playlist(pl, name)
+                inside.setdefault(str(pl.ID), {"name": name, "folder": []})["name"] = name
                 out["moved"] += 1
             songs = sorted(target.Songs, key=lambda s: s.TrackNo or 0)
             out["baseline"][str(target.ID)] = {

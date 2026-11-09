@@ -18,6 +18,7 @@ import config  # noqa: E402
 import biblioteca  # noqa: E402
 import reglas  # noqa: E402
 import historial  # noqa: E402
+import estructura  # noqa: E402
 import destinos  # noqa: E402
 import mik_dj  # noqa: E402
 import fuentes  # noqa: E402
@@ -159,6 +160,11 @@ class Api:
         self._inbox_path = None
         self._an = None             # análisis en memoria (el archivo solo se lee una vez)
         self._inbox_n = (0.0, 0)    # (cuándo, cuántos) último conteo de descargas
+        self._root_note = None      # le cambiaste el nombre a la carpeta de playlists (se avisa en la ventana)
+        try:
+            self._root_check()
+        except Exception as e:
+            config.log(f"revisar si renombraste la carpeta de playlists: {e!r}")
 
     # ---------- utilidades ----------
     def _sp(self):
@@ -306,6 +312,12 @@ class Api:
             return data
 
     def _save_analysis(self, analysis):
+        try:
+            from fuentes import carpetas as FC
+            FC.OTHER_DIRS = {FC._nk(a["folder"]) for a in analysis or [] if a.get("folder")} | \
+                {FC._nk(e["path"]) for e in FC.entries(self._cfg) if e.get("path")}
+        except Exception:
+            pass
         with self._state:
             self._rev += 1
             _write_json(CACHE_ANALYSIS, analysis)
@@ -320,6 +332,12 @@ class Api:
             an = _read_json(CACHE_ANALYSIS, None)
             if an is not None:
                 self._an = an
+                try:
+                    from fuentes import carpetas as FC
+                    FC.OTHER_DIRS = {FC._nk(a["folder"]) for a in an if a.get("folder")} | \
+                        {FC._nk(e["path"]) for e in FC.entries(self._cfg) if e.get("path")}
+                except Exception:
+                    pass
         return an
 
     def _inbox_count(self, max_age=5.0):
@@ -693,6 +711,12 @@ class Api:
             pass
         before = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
         old_folder = self._cfg.get("rekordbox_folder") or "BrainOrder"
+        renamed = None
+        old_dest = self._cfg.get("dest_root")
+        if old_dest and s.get("dest_root") and not os.path.isdir(old_dest) and new_dest.is_dir() and \
+                estructura.same_folders(self._pl_folder_names(old_dest), new_dest):
+            # es la misma carpeta con otro nombre (la renombraste): se corrigen todas las rutas, nada sale «nuevo»
+            renamed = self._root_migrate(old_dest, str(new_dest))
         for k in ("client_id", "dest_root", "inbox", "liked_name", "rekordbox_folder"):
             if k in s and isinstance(s[k], str):
                 self._cfg[k] = s[k].strip()
@@ -705,7 +729,7 @@ class Api:
             self._cfg["library_roots"] = roots
         config.save(self._cfg)
         after = (self._cfg.get("inbox"), self._cfg.get("dest_root"), list(self._cfg.get("library_roots", [])))
-        res = {"ok": True, "inbox_count": self._inbox_signature()[1], "analysis": None}
+        res = {"ok": True, "inbox_count": self._inbox_signature()[1], "analysis": None, "root_renamed": renamed}
         if (self._cfg.get("rekordbox_folder") or "BrainOrder") != old_folder:
             res["folder_rename"] = self._folder_renamed(old_folder)
         if after != before:
@@ -825,6 +849,7 @@ class Api:
                   and not reglas.ignored(rules, p["id"])]
         loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
                   for p in loaded] + list(sp_data.get("foreign_ok", []))
+        loaded = self._mirror_folders(loaded)  # subcarpetas como en Rekordbox
         result = biblioteca.analyze(loaded, self._cfg, progress)
         self._prune_folder_members(result)
         deezer.add_links(result, offline=True)  # links ya conocidos
@@ -837,7 +862,8 @@ class Api:
             if a is None:  # todavía sin analizar, o ignorada en Reglas (se trata igual: no se toca)
                 name = self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]
                 a = {"id": p["id"], "name": name, "tracks": [], "pending": True, "liked": p["id"] == "liked",
-                     "folder": p.get("folder") or str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)),
+                     "folder": p.get("folder") or self._mirror_folders([{"id": p["id"], "name": name}])[0].get("folder")
+                     or str(biblioteca.resolve_folder(Path(self._cfg["dest_root"]), name)),
                      "ignored": reglas.ignored(rules, p["id"])}
             a["snapshot"] = p.get("snapshot")
             a["source"] = p.get("source") or fuentes.source_of(p["id"])
@@ -1256,6 +1282,22 @@ class Api:
                 self._set_stage(0, 50)
                 sp_data = self._load_sp()
                 analysis = self._analysis() or []
+                mirror = None
+                if not pid and analysis:
+                    # primero las carpetas quedan como en Rekordbox (así lo nuevo ya cae en su subcarpeta)
+                    try:
+                        if self._cfg.get("root_repoint"):
+                            self._root_repoint(have_lock=True)
+                        changed = self._rb_tree_refresh()
+                        if changed or self._mirror_stale(analysis):
+                            analysis = self._build_analysis(light=True)
+                        if self._cfg.get("rb_mirror", True):
+                            mirror = self._mirror_apply(analysis)
+                            if mirror:
+                                analysis = self._build_analysis(light=True)
+                    except Exception as e:
+                        config.log(f"carpetas como en Rekordbox: {e!r}")
+                        mirror = {"error": str(e)}
                 subset = [p for p in analysis if p["id"] == pid] if pid else analysis
                 if pid and not subset:
                     raise SpotifyError("No encontré esa playlist.")
@@ -1310,7 +1352,7 @@ class Api:
                     self._inbox_sig = None
                     self._inbox_n = (0.0, 0)
                     return {"files": files, "extra": extra_res, "rekordbox": None, "rekordbox_error": None,
-                            "analysis": analysis or None, "op_id": op_id}
+                            "analysis": analysis or None, "op_id": op_id, "mirror": mirror}
                 self._progress("Re-escaneando tu música…")
                 self._set_stage(50, 85)
                 analysis = self._build_analysis(light=True)
@@ -1349,6 +1391,7 @@ class Api:
                     if k == "rekordbox" and isinstance(st, dict):
                         import rb_cambios
                         base = st.pop("baseline", None)
+                        rb_cambios.drop_ids(st.pop("twins_ids", None))  # repetidas quitadas: fuera de la foto
                         rb_cambios.merge_baseline(base)
                         self._cfg["dj_folder_confirmed"] = self._cfg.get("rekordbox_folder")
                         synced = {v["pid"] for v in (base or {}).values()}
@@ -1378,7 +1421,7 @@ class Api:
             self._progress("Organización terminada.", 1)
             return {"folder_rename": ren if ren and ren["done"] else None,
                     "files": files, "extra": extra_res, "rekordbox": rb, "rekordbox_error": rb_error,
-                    "dj": dj, "analysis": analysis, "op_id": op_id, "rb_auto": rb_auto}
+                    "dj": dj, "analysis": analysis, "op_id": op_id, "rb_auto": rb_auto, "mirror": mirror}
         return self._task(run, f"organize:{pid or 'all'}", label, files=True)
 
     # ---------- historial y deshacer ----------
@@ -3592,6 +3635,10 @@ class Api:
             return [], None
         state = rb_cambios.read_state(self._cfg)
         analysis = self._analysis() or []
+        try:
+            self._rb_tree_refresh(state)  # subcarpetas de Rekordbox -> carpetas en el disco
+        except Exception as e:
+            config.log(f"árbol de Rekordbox: {e!r}")
         if not rb_cambios.BASELINE.exists():
             by_name = {p["name"]: p["id"] for p in analysis}
             rb_cambios.save_baseline({rid: {"pid": by_name.get(v["name"]), "name": v["name"], "paths": v["paths"]}
@@ -3629,6 +3676,302 @@ class Api:
             self._cfg["dj_folder_confirmed"] = rb_cambios.FOUND["name"]  # Rekordbox y BrainOrder están de acuerdo
             config.save(self._cfg)
         return rb_cambios.diff(rb_cambios.load_baseline(), state, analysis), state
+
+    # ---------- carpeta de playlists renombrada / carpetas como en Rekordbox (2.31.0) ----------
+    def _pl_folder_names(self, root):
+        """Nombres de las carpetas (de primer nivel) de tus playlists dentro de root, según el último análisis."""
+        an = self._an if self._an is not None else _read_json(CACHE_ANALYSIS, None)
+        names = set()
+        for p in an or []:
+            f = p.get("folder")
+            if f and estructura.inside(f, root) and estructura._norm(f) != estructura._norm(root):
+                rel = os.path.relpath(f, root)
+                names.add(rel.split(os.sep)[0])
+        for e in self._cfg.get("folder_playlists") or []:
+            f = e.get("path")
+            if f and estructura.inside(f, root) and estructura._norm(f) != estructura._norm(root):
+                names.add(os.path.relpath(f, root).split(os.sep)[0])
+        return names
+
+    def _root_check(self):
+        """¿La carpeta de playlists ya no está porque le cambiaste el nombre? Se reconoce y se adopta sola."""
+        old = self._cfg.get("dest_root")
+        if not old:
+            return None
+        if not os.path.isdir(old):
+            new = estructura.find_renamed(old, self._pl_folder_names(old))
+            return self._root_migrate(old, str(new)) if new else None
+        # ya pusiste el nombre nuevo en Ajustes, pero lo guardado sigue apuntando a la carpeta vieja
+        # (por eso todo salía como «nuevo»): se busca esa carpeta vieja y se corrigen las rutas
+        an = self._an if self._an is not None else _read_json(CACHE_ANALYSIS, None)
+        count = {}
+        for f in [p.get("folder") for p in an or []] + [e.get("path") for e in self._cfg.get("folder_playlists") or []]:
+            if not f or estructura.inside(f, old):
+                continue
+            par = str(Path(f).parent)
+            if not os.path.isdir(par) and Path(par).parent == Path(old).parent:
+                count[par] = count.get(par, 0) + 1
+        for par in sorted(count, key=count.get, reverse=True)[:3]:
+            if count[par] >= 3 and estructura.same_folders(self._pl_folder_names(par), old):
+                return self._root_migrate(par, old)
+        return None
+
+    def _root_migrate(self, old, new):
+        """La carpeta de playlists pasó de old a new (le cambiaste el nombre): todas las rutas guardadas se
+        corrigen (no aparece nada como «nuevo» ni «perdido») y las de tus programas de DJ quedan pendientes
+        hasta que estén cerrados (_root_repoint)."""
+        from fuentes import carpetas as FC
+        old, new = str(Path(old)), str(Path(new))
+        if estructura._norm(old) == estructura._norm(new):
+            return None
+        prefixes = {old: new}
+        exact = {}
+        for e in self._cfg.get("folder_playlists") or []:
+            p = e.get("path")
+            if p and estructura.inside(p, old):
+                exact[FC.pid_for(p)] = FC.pid_for(estructura._swap(p, old, new, False))
+        new_cfg = estructura.rewrite(self._cfg, prefixes, exact)
+        new_cfg["dest_root"] = new
+        new_cfg["root_repoint"] = [x for x in self._cfg.get("root_repoint") or []] + [[old, new]]
+        self._cfg.clear()
+        self._cfg.update(new_cfg)
+        config.save(self._cfg)
+        changed = estructura.rewrite_support(prefixes, exact)
+        # lo que estaba en memoria se vuelve a leer de los archivos ya corregidos
+        self._an = None
+        biblioteca.load_durations(config.SUPPORT_DIR / "durations.json")
+        import armonia
+        armonia.load(config.SUPPORT_DIR / "armonia.json")
+        import etiquetas
+        etiquetas.load(config.SUPPORT_DIR / "etiquetas.json")
+        import buscar_datos
+        buscar_datos.load(config.SUPPORT_DIR / "busqueda_datos.json")
+        with _SEARCH_LOCK:
+            _SEARCH["data"] = None
+        config.log(f"Carpeta de playlists renombrada: {old} -> {new} (rutas corregidas en {len(changed)} archivo(s) de datos)")
+        res = {"old": old, "new": new, "old_name": Path(old).name, "new_name": Path(new).name}
+        self._root_note = res
+        return res
+
+    def _root_repoint(self, have_lock=False):
+        """Rutas de las canciones en Rekordbox y tus otros programas tras renombrar la carpeta de playlists.
+        Solo con los programas cerrados (antes se respalda Rekordbox)."""
+        todo = [x for x in self._cfg.get("root_repoint") or [] if x and len(x) == 2]
+        if not todo:
+            return None
+        rb_on = destinos.DESTINATIONS["rekordbox"].enabled(self._cfg) or \
+            destinos.DESTINATIONS["rekordbox"].available(self._cfg)
+        if rb_on and rekordbox_sync.rekordbox_running():
+            return {"waiting": "Rekordbox"}
+        for k in destinos.enabled_keys(self._cfg):
+            if k != "rekordbox" and destinos.DESTINATIONS[k].running():
+                return {"waiting": destinos.DESTINATIONS[k].LABEL}
+        if not have_lock and not self._files.acquire(blocking=False):
+            return {"waiting": "otra tarea"}
+        out = {"rekordbox": 0, "dj": {}, "warnings": []}
+        try:
+            for old, new in todo:
+                changes = estructura.file_map(old, new)
+                rb = (unificar.rb_paths() or set()) if rb_on else set()
+                rbc = {k: v for k, v in changes.items() if k in rb}
+                if rbc:
+                    rekordbox_sync.backup()
+                    st = unificar._rb_apply(rbc, {})
+                    out["rekordbox"] += (st or {}).get("paths", 0) + (st or {}).get("repointed", 0)
+                d, w = self._dj_fix(changes)
+                out["dj"].update({k: v for k, v in d.items()})
+                out["warnings"] += w
+            self._cfg["root_repoint"] = []
+            config.save(self._cfg)
+            config.log(f"Rutas corregidas en tus programas tras renombrar la carpeta de playlists: {out}")
+        finally:
+            if not have_lock:
+                self._files.release()
+        return out
+
+    def root_info(self):
+        """Para la ventana: si se detectó que renombraste la carpeta de playlists y si falta corregir rutas."""
+        note = getattr(self, "_root_note", None)
+        self._root_note = None
+        return {"ok": True, "renamed": note, "pending": bool(self._cfg.get("root_repoint")),
+                "dest_root": self._cfg.get("dest_root")}
+
+    def _rb_tree_refresh(self, state=None):
+        """Ruta de subcarpetas de cada playlist en Rekordbox (cfg rb_tree). -> True si cambió."""
+        import rb_cambios
+        tree = {}
+        if self._cfg.get("rb_mirror", True) and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+            if state is None:
+                try:
+                    state = rb_cambios.read_state(self._cfg)
+                except Exception as e:
+                    config.log(f"árbol de Rekordbox: {e!r}")
+                    return False
+            if state is None or (not state and rb_cambios.FOUND.get("name") is None):
+                return False  # sin librería o sin encontrar la carpeta: no se decide nada
+            tree = estructura.trails(state, rb_cambios.load_baseline(), self._analysis() or [])
+        if tree != (self._cfg.get("rb_tree") or {}):
+            self._cfg["rb_tree"] = tree
+            config.save(self._cfg)
+            return True
+        return False
+
+    def _mirror_folders(self, loaded):
+        """Carpeta hogar de cada playlist: la ruta de subcarpetas que tiene en Rekordbox."""
+        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        if not tree:
+            return loaded
+        dest = Path(self._cfg["dest_root"])
+        return [{**p, "folder": str(biblioteca.resolve_folder(estructura.parent_for(dest, tree[p["id"]]), p["name"]))}
+                if p["id"] in tree and not p.get("folder") else p for p in loaded]
+
+    def _mirror_stale(self, analysis):
+        from fuentes import carpetas as FC
+        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        dest = Path(self._cfg["dest_root"])
+        dir_pids = {FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("path")}
+        for a in analysis or []:
+            if a["id"] in dir_pids:
+                continue  # su carpeta es la suya (se muda con _mirror_apply)
+            t = tree.get(a["id"])
+            want = estructura.parent_for(dest, t or [])
+            f = a.get("folder")
+            if f and estructura.inside(f, dest) and estructura._norm(Path(f).parent) != estructura._norm(want):
+                return True
+        return False
+
+    def _mirror_plan(self, analysis):
+        from fuentes import carpetas as FC
+        dest = Path(self._cfg["dest_root"])
+        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        dir_entries = [e for e in FC.entries(self._cfg) if e.get("path")]
+        dir_pids = {FC.entry_pid(e) for e in dir_entries}
+        moves, settled = estructura.plan(analysis, self._cfg, dir_pids, biblioteca.resolve_folder)
+        others = {estructura._norm(a["folder"]) for a in analysis or [] if a.get("folder")} | \
+            {estructura._norm(e["path"]) for e in dir_entries}
+        for e in dir_entries:
+            pid, src = FC.entry_pid(e), e["path"]
+            trail = tree.get(pid)
+            if not trail or not estructura.inside(src, dest) or not os.path.isdir(src):
+                continue
+            to = estructura.parent_for(dest, trail) / Path(src).name
+            if estructura._norm(to) == estructura._norm(src) or estructura.inside(to, src):
+                continue
+            files = []
+            for d, ds, fs in os.walk(src):
+                ds[:] = [x for x in ds if not x.startswith(".") and estructura._norm(Path(d) / x) not in others]
+                files += [str(Path(d) / f) for f in fs if not f.startswith(".") and f not in estructura.JUNK]
+            if files:
+                moves.append({"pid": pid, "name": e.get("name") or Path(src).name, "from": src, "to": str(to),
+                              "files": sorted(files), "entry": e})
+        return moves, settled
+
+    def rb_mirror_info(self):
+        """Cuántas playlists hay que mudar para que tu carpeta quede como Rekordbox."""
+        try:
+            self._rb_tree_refresh()
+            analysis = self._analysis() or []
+            moves, _ = self._mirror_plan(analysis)
+            stale = self._mirror_stale(analysis)
+            return {"ok": True, "on": bool(self._cfg.get("rb_mirror", True)),
+                    "count": len(moves), "files": sum(len(m["files"]) for m in moves), "stale": stale,
+                    "nested": len(self._cfg.get("rb_tree") or {}),
+                    "items": [{"name": m["name"], "from": m["from"], "to": m["to"], "files": len(m["files"])}
+                              for m in moves[:40]]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def rb_mirror_set(self, on=True):
+        self._cfg["rb_mirror"] = bool(on)
+        config.save(self._cfg)
+        return {"ok": True, "on": bool(on)}
+
+    def _mirror_apply(self, analysis):
+        """Muda las playlists a su carpeta como en Rekordbox. Llamar con _files tomado (Organizar o la tarea
+        de abajo). Solo se mueven archivos que están directamente en la carpeta vieja (sus subcarpetas son
+        otras playlists); nunca se pisa nada: si en la nueva ya hay un archivo con ese nombre, se deja."""
+        from fuentes import carpetas as FC
+        import carpetas_nuevas as CN
+        moves, settled = self._mirror_plan(analysis)
+        dirs = dict(self._cfg.get("pl_dirs") or {})
+        dirs.update(settled)
+        if not moves:
+            if dirs != (self._cfg.get("pl_dirs") or {}):
+                self._cfg["pl_dirs"] = dirs
+                config.save(self._cfg)
+            return None
+        ops = []
+        for m in moves:
+            Path(m["to"]).mkdir(parents=True, exist_ok=True)
+            CN.mark(m["to"], known=True)
+            for f in m["files"]:
+                rel = os.path.relpath(str(Path(f).parent), m["from"]) if m.get("entry") else "."
+                ops.append((f, str(Path(m["to"]) / rel) if rel != "." else m["to"]))
+        self._dj_precheck()
+        res = organizador.relocate(ops, self._cfg, self._progress)  # Rekordbox abierto -> error, no se mueve nada
+        changes = res.get("changes") or {}
+        op_id = None
+        if changes:
+            self._dj_fix(changes)
+            op_id = historial.record("relocate", "Carpetas como en Rekordbox", list(changes.items()))
+            pinned = set(self._cfg.get("pinned_paths") or [])
+            if pinned & set(changes):
+                self._cfg["pinned_paths"] = sorted((pinned - set(changes)) | {changes[p] for p in pinned & set(changes)})
+        skipped_dirs = {estructura._norm(Path(o[0]).parent) for o in ops if o[0] not in changes}
+        for m in moves:
+            ok = estructura._norm(m["from"]) not in skipped_dirs
+            if m.get("entry") and ok:
+                # playlist de carpeta: ahora vive en la carpeta nueva (su id cambia con la ruta)
+                e = m["entry"]
+                new_e = {**e, "path": m["to"]}
+                old_pid, new_pid = FC.entry_pid(e), FC.entry_pid(new_e)
+                fixed = estructura.rewrite(self._cfg, {m["from"]: m["to"]}, {old_pid: new_pid})
+                self._cfg.clear()
+                self._cfg.update(fixed)
+                estructura.rewrite_support({m["from"]: m["to"]}, {old_pid: new_pid})
+                dirs.pop(old_pid, None)
+                dirs[new_pid] = m["to"]
+            elif ok:
+                # carpeta vinculada a Spotify u otras rutas guardadas de esa carpeta (solo ella, no sus subcarpetas)
+                fixed = estructura.rewrite(self._cfg, {m["from"]: m["to"]}, None, direct_only=True)
+                self._cfg.clear()
+                self._cfg.update(fixed)
+                dirs[m["pid"]] = m["to"]
+            src = Path(m["from"])
+            if src.is_dir():
+                self._remove_if_empty(src)
+            # subcarpetas que quedaron vacías (la sacaste de «Techno / Hard» en Rekordbox): fuera también
+            dest, up = Path(self._cfg["dest_root"]), src.parent
+            while not src.exists() and up.is_dir() and estructura.inside(up, dest) and \
+                    estructura._norm(up) != estructura._norm(dest):
+                self._remove_if_empty(up)
+                if up.exists():
+                    break
+                src, up = up, up.parent
+        self._cfg["pl_dirs"] = dirs
+        config.save(self._cfg)
+        self._an = None  # las rutas cambiaron: el análisis se rehace
+        out = {"playlists": len(moves), "moved": res.get("moved", 0), "skipped": res.get("skipped") or [],
+               "op_id": op_id, "names": [m["name"] for m in moves][:10]}
+        config.log(f"Carpetas como en Rekordbox: {out['moved']} archivo(s) de {out['playlists']} playlist(s)")
+        return out
+
+    def rb_mirror_run(self):
+        """Botón «Ordenar mis carpetas como Rekordbox» (Rekordbox cerrado)."""
+        def run():
+            with self._state:
+                self._set_stage(0, 20)
+                self._progress("Leyendo tus subcarpetas de Rekordbox…")
+                self._rb_tree_refresh()
+                analysis = self._analysis() or []
+                if self._mirror_stale(analysis):
+                    analysis = self._build_analysis(light=True)
+                self._set_stage(20, 80)
+                res = self._mirror_apply(analysis)
+                self._set_stage(80, 100)
+                analysis = self._build_analysis(light=True) if res else analysis
+            return {"result": res, "analysis": analysis}
+        return self._task(run, "rb_mirror", "Carpetas como en Rekordbox", files=True)
 
     # ---------- Rekordbox manda: lo que haces en sus playlists pasa a BrainOrder ----------
     RB_BIG = 20  # quitar más de esto (y más de la mitad de la playlist) de una vez se pregunta antes
@@ -3859,6 +4202,20 @@ class Api:
         while True:
             time.sleep(15)
             try:
+                if not self._files.locked():
+                    # le cambiaste el nombre a la carpeta de playlists mientras BrainOrder estaba abierto
+                    rr = self._root_check()
+                    if rr and self._window:
+                        self._window.evaluate_js(f"window.onRootRenamed && onRootRenamed({json.dumps(rr)})")
+                if self._cfg.get("root_repoint") and not self._files.locked():
+                    try:
+                        rp = self._root_repoint()
+                        if rp and not rp.get("waiting") and self._window:
+                            payload = json.dumps({"done": [f"🔗 Rutas corregidas en Rekordbox tras renombrar tu carpeta "
+                                                           f"({rp.get('rekordbox', 0)} canciones)"], "asked": [], "moves": 0})
+                            self._window.evaluate_js(f"window.onRbAuto && onRbAuto({payload})")
+                    except Exception as e:
+                        config.log(f"corregir rutas tras renombrar la carpeta: {e!r}")
                 if self._cfg.get("rb_adopt") and not self._files.locked() and not rekordbox_sync.rekordbox_running():
                     # cerraste Rekordbox: las playlists que agregaste pasan a la carpeta de BrainOrder
                     try:

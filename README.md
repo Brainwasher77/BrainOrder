@@ -147,6 +147,16 @@ Pasa al **Organizar** y **cada 5 minutos** en cada programa que esté cerrado (c
 ## Nombre de la carpeta de BrainOrder en tus programas
 Se cambia en Conexiones. Al cambiarlo, BrainOrder **renombra la carpeta** en Rekordbox, Traktor, Serato, Engine DJ y M3U: son las mismas playlists, no se duplican, no aparecen en «Playlists nuevas» ni como borradas en «Cambios en Rekordbox». Un programa abierto se renombra al cerrarlo (Organizar no le crea otra carpeta mientras tanto). Si la renombras dentro de Rekordbox, BrainOrder usa ese nombre y lo pasa a los demás; si la cambiaste en una versión anterior, encuentra la carpeta vieja por sus playlists y la arregla.
 
+## Tu carpeta de música igual que en Rekordbox (subcarpetas)
+Si dentro de la carpeta de BrainOrder en Rekordbox organizas tus playlists en **subcarpetas** (por ejemplo *Techno › Hard Techno*, *Latino › Salsa*), con **📂 Mis carpetas igual que en Rekordbox** (activado por defecto, en «Cambios en Rekordbox») tu carpeta de playlists queda igual: `…/Techno/Hard Techno/<canciones>`.
+- Se hace al **Organizar** (o con **Ordenar ya**), con Rekordbox cerrado: las canciones se mudan a su subcarpeta, se corrigen sus rutas en Rekordbox y tus otros programas, y queda en Historial con Deshacer. Si después cambias una playlist de subcarpeta en Rekordbox, en el siguiente Organizar se muda sola; las subcarpetas que quedan vacías se quitan.
+- Las subcarpetas son **solo para agrupar**: no cuentan como una playlist grande con todo lo de adentro, ni salen en «Playlists nuevas». Las que tengan música sin playlist sí salen, cada una por separado.
+- Las playlists que tienes en subcarpetas de Rekordbox **ya no se vuelven a crear sueltas** al Organizar. Si un Organizar anterior ya las había repetido, se queda la de tu subcarpeta (con lo que solo tenía la suelta) y la suelta se quita.
+- Cada canción vive en una sola carpeta (la de su primera playlist según tu prioridad): no se hacen copias. Nunca se pisa un archivo: si en la carpeta nueva ya hay uno con ese nombre, no se mueve y te lo digo.
+
+## Le cambiaste el nombre a tu carpeta de playlists
+Si renombras la carpeta de playlists en Finder / Explorador (por ejemplo «Spotify playlists» → «BRAIN LIBRARY»), BrainOrder la reconoce sola (al abrir o en segundos) porque tiene tus mismas carpetas, toma el nombre nuevo y corrige **todas** las rutas guardadas: tus playlists siguen siendo las mismas y nada sale como «nuevo». Las rutas de las canciones en Rekordbox (y tus otros programas) se corrigen solas cuando estén cerrados, con respaldo antes. Si ya habías puesto el nombre nuevo en Ajustes, también se arregla.
+
 ## Cancelar
 Lo que está **en cola** (esperando a que termine otra tarea) se cancela con su ✕ en la barra de tareas o con clic derecho. Una tarea que ya empezó no se corta a mitad, para no dejar archivos ni programas a medio cambiar. Los pendientes para Spotify se cancelan igual (✕ o clic derecho) desde «· N pendientes» arriba o desde «Playlists nuevas».
 

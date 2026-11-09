@@ -67,7 +67,11 @@ class FakeDB:
     def __init__(self, *a, **k):
         self.pls, self.contents, self.n = DB_STATE["pls"], DB_STATE["contents"], 100
 
-    def get_playlist(self, ParentID=None, Name=None):
+    def get_playlist(self, ID=None, ParentID=None, Name=None):
+        if ID is not None:
+            return next((p for p in self.pls if str(p.ID) == str(ID)), None)
+        if ParentID is None and Name is None:
+            return Q(self.pls)  # como pyrekordbox: sin filtros, todas
         return Q([p for p in self.pls if p.ParentID == ParentID and p.Name == Name])
 
     def create_playlist_folder(self, name):

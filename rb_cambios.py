@@ -60,44 +60,43 @@ def db_mtime():
         return None
 
 
+def _locate(cfg, rows):
+    """Carpeta de BrainOrder entre las filas de Rekordbox (también si le cambiaste el nombre y metiste
+    las playlists en subcarpetas)."""
+    import carpeta_dj
+    import rb_arbol
+    folder = carpeta_dj.for_program(cfg, "rekordbox")
+    rid, name, _ = rb_arbol.locate(rows, [folder], list(load_baseline()))
+    FOUND.update(name=name, renamed=bool(name) and name != folder)
+    return rid
+
+
+def _paths_for(con, out):
+    if out:
+        marks = ",".join("?" * len(out))
+        q = (f"SELECT sp.PlaylistID, c.FolderPath FROM djmdSongPlaylist sp JOIN djmdContent c ON c.ID = sp.ContentID "
+             f"WHERE sp.PlaylistID IN ({marks}) AND COALESCE(sp.rb_local_deleted, 0) = 0 "
+             f"ORDER BY sp.PlaylistID, COALESCE(sp.TrackNo, 0)")
+        for pid, fp in con.execute(q, list(out)):
+            if fp:
+                out[str(pid)]["paths"].append(native(fp))
+    return out
+
+
 def _read_direct(cfg, src):
-    """Lectura directa de solo lectura (rápida: no copia la librería)."""
+    """Lectura directa de solo lectura (rápida: no copia la librería). Incluye las playlists que
+    metiste en subcarpetas dentro de la carpeta de BrainOrder ("folder" = esas subcarpetas)."""
+    import rb_arbol
     import rekordbox_sync
     con = rekordbox_sync.connect_ro(src)
     try:
-        alive = "COALESCE(rb_local_deleted, 0) = 0"
-        import carpeta_dj
-        folder = carpeta_dj.for_program(cfg, "rekordbox")
-        row = con.execute(f"SELECT ID FROM djmdPlaylist WHERE ParentID = 'root' AND Name = ? AND Attribute = 1 AND {alive} "
-                          "ORDER BY Seq LIMIT 1", (folder,)).fetchone()
-        FOUND.update(name=folder, renamed=False)
-        if row is None:
-            # ¿le cambiaste el nombre a la carpeta en Rekordbox? se reconoce por sus playlists (mismos id)
-            ids = list(load_baseline())
-            if ids:
-                marks = ",".join("?" * len(ids))
-                cand = con.execute(f"SELECT p.ParentID, f.Name, COUNT(*) n FROM djmdPlaylist p JOIN djmdPlaylist f ON f.ID = p.ParentID "
-                                   f"WHERE p.ID IN ({marks}) AND f.ParentID = 'root' AND f.Attribute = 1 "
-                                   f"AND COALESCE(f.rb_local_deleted, 0) = 0 GROUP BY p.ParentID ORDER BY n DESC LIMIT 1",
-                                   ids).fetchone()
-                if cand and cand[2] >= max(1, len(ids) // 2):
-                    row = (cand[0],)
-                    FOUND.update(name=cand[1], renamed=True)
-        if row is None:
-            FOUND.update(name=None)
+        rows = rb_arbol.sql_rows(con)
+        root = _locate(cfg, rows)
+        if root is None:
             return {}
-        pls = con.execute(f"SELECT ID, Name FROM djmdPlaylist WHERE ParentID = ? AND COALESCE(Attribute, 0) = 0 AND {alive}",
-                          (row[0],)).fetchall()
-        out = {str(pid): {"name": name, "paths": []} for pid, name in pls}
-        if out:
-            marks = ",".join("?" * len(out))
-            q = (f"SELECT sp.PlaylistID, c.FolderPath FROM djmdSongPlaylist sp JOIN djmdContent c ON c.ID = sp.ContentID "
-                 f"WHERE sp.PlaylistID IN ({marks}) AND COALESCE(sp.rb_local_deleted, 0) = 0 "
-                 f"ORDER BY sp.PlaylistID, COALESCE(sp.TrackNo, 0)")
-            for pid, fp in con.execute(q, list(out)):
-                if fp:
-                    out[str(pid)]["paths"].append(native(fp))
-        return out
+        out = {rid: {"name": v["name"], "folder": v["folder"], "paths": []}
+               for rid, v in rb_arbol.playlists(rows, root).items()}
+        return _paths_for(con, out)
     finally:
         con.close()
 
@@ -132,18 +131,17 @@ def _read_copy(cfg, path=None):
                 shutil.copy2(f, Path(tmpdir) / ("master.db" + suffix))
         db = DB(path=Path(tmpdir) / "master.db")
         try:
-            import carpeta_dj
-            folder = carpeta_dj.for_program(cfg, "rekordbox")
-            root = next((p for p in db.get_playlist(ParentID="root", Name=folder) if (p.Attribute or 0) == 1), None)
+            import rb_arbol
+            rows = rb_arbol.db_rows(db)
+            root = _locate(cfg, rows)
             if root is None:
                 return {}
             out = {}
-            for p in db.get_playlist(ParentID=root.ID):
-                if (p.Attribute or 0) != 0:
-                    continue  # subcarpetas / listas inteligentes: no se tocan
-                songs = sorted(p.Songs, key=lambda s: s.TrackNo or 0)
-                out[str(p.ID)] = {"name": p.Name,
-                                  "paths": [native(s.Content.FolderPath) for s in songs if s.Content and s.Content.FolderPath]}
+            for rid, v in rb_arbol.playlists(rows, root).items():
+                p = db.get_playlist(ID=rid)
+                songs = sorted(p.Songs, key=lambda s: s.TrackNo or 0) if p is not None else []
+                out[rid] = {"name": v["name"], "folder": v["folder"],
+                            "paths": [native(s.Content.FolderPath) for s in songs if s.Content and s.Content.FolderPath]}
             return out
         finally:
             try:

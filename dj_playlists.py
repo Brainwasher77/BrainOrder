@@ -35,6 +35,12 @@ def rekordbox(cfg):
         rows = con.execute(f"SELECT ID, Name, ParentID, COALESCE(Attribute, 0) FROM djmdPlaylist WHERE {alive}").fetchall()
         by_id = {str(r[0]): r for r in rows}
         ours = {str(r[0]) for r in rows if r[2] == "root" and r[1] in _ours(cfg) and r[3] == 1}
+        # si le cambiaste el nombre en Rekordbox (y aún no lo sé), se reconoce por sus playlists: no son «nuevas»
+        import rb_arbol
+        import rb_cambios
+        found, _n, _r = rb_arbol.locate(rows, list(_ours(cfg)), list(rb_cambios.load_baseline()))
+        if found:
+            ours.add(str(found))
 
         def inside_ours(pid):
             seen = 0

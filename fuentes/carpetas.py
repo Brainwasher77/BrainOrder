@@ -117,13 +117,27 @@ def pid_for(path):
     return PREFIX + hashlib.sha1(os.path.normcase(os.path.normpath(str(path))).encode("utf-8")).hexdigest()[:14]
 
 
+# carpetas de OTRAS playlists (las pone app tras cada análisis): si están dentro de una playlist de carpeta
+# (subcarpetas como en Rekordbox) no se cuentan como parte de ella
+OTHER_DIRS = set()
+
+
+def _nk(p):
+    return os.path.normcase(os.path.normpath(str(p)))
+
+
 def audio_files(folder, excluder=None):
-    """Audios de la carpeta (incluye subcarpetas), en orden alfabético."""
+    """Audios de la carpeta (incluye subcarpetas que no sean de otra playlist), en orden alfabético."""
     import biblioteca
     try:
-        return sorted(biblioteca.walk_audio(folder, excluder), key=lambda p: p.lower())
+        files = biblioteca.walk_audio(folder, excluder)
     except OSError:
         return []
+    me = _nk(folder)
+    skip = [d for d in OTHER_DIRS if d != me and d.startswith(me.rstrip(os.sep) + os.sep)]
+    if skip:
+        files = [f for f in files if not any(_nk(f).startswith(d + os.sep) for d in skip)]
+    return sorted(files, key=lambda p: p.lower())
 
 
 def _snapshot(files):

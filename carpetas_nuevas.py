@@ -69,25 +69,64 @@ def watched_roots(cfg):
     return out
 
 
+def _has_audio_here(d):
+    try:
+        return any(f.is_file() and not f.name.startswith(".") and f.suffix.lower() in AUDIO_EXT for f in d.iterdir())
+    except OSError:
+        return False
+
+
 def unmatched(cfg, analysis):
-    """Subcarpetas (directas) de tus carpetas de música que no son de ninguna playlist. -> [{path, name, root}]"""
+    """Carpetas de tus carpetas de música que no son de ninguna playlist. -> [{path, name, root}]
+    Con subcarpetas (como en Rekordbox: «Techno / Hard Techno»): la de afuera es solo un contenedor (no se
+    ofrece como una playlist grande con todo lo de adentro); se ofrecen las de adentro que no tengan playlist."""
     ex = reglas.Excluder(reglas.get(cfg))
     used = {_key(p.get("folder")) for p in analysis or [] if p.get("folder")}
     used |= {_key(e.get("path")) for e in cfg.get("folder_playlists") or [] if e.get("path")}
     used |= load()["imported"]  # ya importadas (por ejemplo a Spotify, aunque la carpeta siga existiendo)
     roots = watched_roots(cfg)
     rootkeys = {_key(r) for r in roots} | {_key(cfg.get("inbox") or "")}
+    # carpetas que contienen carpetas de playlists: contenedores
+    containers = set()
+    for u in used:
+        p = Path(u).parent
+        for _ in range(8):
+            k = _key(p)
+            if k in rootkeys or k == _key(p.parent):
+                break
+            containers.add(k)
+            p = p.parent
     out = []
-    for root in roots:
+
+    def skip(d):
+        return d.name.startswith((".", "_")) or d.name in SKIP or ex.dir_excluded(str(d)) or _key(d) in rootkeys \
+            or d.suffix.lower() in (".app", ".musiclibrary", ".photoslibrary")
+
+    def visit(folder, root, depth):
         try:
-            subs = sorted(d for d in root.iterdir() if d.is_dir())
+            subs = sorted(d for d in folder.iterdir() if d.is_dir())
         except OSError:
-            continue
+            return
         for d in subs:
-            if d.name.startswith((".", "_")) or d.name in SKIP or ex.dir_excluded(str(d)) or _key(d) in used \
-                    or _key(d) in rootkeys or d.suffix.lower() in (".app", ".musiclibrary", ".photoslibrary"):
+            if skip(d):
                 continue
-            out.append({"path": str(d), "name": d.name, "root": str(root)})
+            k = _key(d)
+            if k in used or k in containers:
+                if depth < 6:
+                    visit(d, root, depth + 1)  # adentro puede haber playlists sin agregar
+                continue
+            try:
+                group = depth < 6 and not _has_audio_here(d) and any(x.is_dir() and not skip(x) for x in d.iterdir())
+            except OSError:
+                group = False
+            if group:
+                visit(d, root, depth + 1)  # carpeta tuya que solo agrupa otras: se ofrecen las de adentro
+                continue
+            out.append({"path": str(d), "name": d.name, "root": str(root),
+                        "parent": str(d.parent.relative_to(root)) if d.parent != root else ""})
+
+    for root in roots:
+        visit(root, root, 0)
     return out
 
 
