@@ -457,6 +457,28 @@ const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2
 
 // ---------- carpetas nuevas en tu carpeta de playlists -> ¿importarlas como playlist? ----------
 let FD = {data:null};
+// ---------- carpetas de accesos directos (2.32.0) ----------
+let SC = {items:[]};
+async function scLoad(){ try{ const r = await api().shortcut_roots(); if(r.ok){ SC = r; if(S.view==='folders') render(); } }catch(e){} }
+function scBox(){
+  return (SC.items||[]).map(x => `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
+    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:260px"><b>📎 «${esc(x.name)}» son accesos directos</b>
+      <div class="art" style="margin-top:4px">${x.links} acceso(s) directo(s) a canciones que ya tienes${x.broken?`, ${x.broken} roto(s)`:''}${x.audio?` y ${x.audio} canción(es) de verdad`:''}. No es música propia: por eso salían sus carpetas como playlists nuevas repetidas (no aparecen abajo).<br>
+      Al quitarla: lo que en Rekordbox apuntaba a un acceso directo pasa a tu archivo real (sin perder cues)${x.audio?`, las ${x.audio} canciones de verdad se mudan a «_Sin Playlist»`:''}, los accesos directos van a la <b>Papelera</b> (se pueden recuperar) y la carpeta sale de tus carpetas de música. Rekordbox tiene que estar cerrado.</div></div>
+      <button class="primary" ${running('shortcuts')?'disabled':''} onclick="scRemove(${jsq(x.path)})">${running('shortcuts')?'Quitando…':'Quitar accesos directos'}</button></div></div>`).join('');
+}
+async function scRemove(p){
+  setTimeout(()=>{ if(S.view==='folders') render(); }, 150);
+  const r = await api().shortcuts_remove(p); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist();
+  const x = r.result || {};
+  toast(`📎 Listo: ${x.links} acceso(s) directo(s) a la Papelera${x.rekordbox?' y Rekordbox ya apunta a tus archivos reales':''}.`
+    + (x.audio_moved?`<br>${x.audio_moved} canción(es) de verdad mudadas a «_Sin Playlist».`:'')
+    + (x.root_removed?'<br>La carpeta ya no está en tus carpetas de música.':'')
+    + ((x.kept_playlists||[]).length?`<br><span style="color:var(--org)">Dejé ${x.kept_playlists.map(esc).join(', ')}: son playlists que importaste desde ahí.</span>`:'')
+    + undoLink(x));
+  SC = {items:[]}; scLoad(); fdLoad();
+}
 async function fdLoad(){ try{ const r = await api().folders(); if(r.ok){ FD.data = r; S.spQueue = (r.queue||[]).length; if(S.view==='folders') render(); else renderCore(); } }catch(e){} }
 window.onNewFolders = list => {
   fdLoad();
@@ -669,7 +691,7 @@ async function spqModal(jobs){
   let blocked = null;
   if(!jobs){ const r = await api().spotify_queue(); jobs = r.jobs || []; blocked = r.blocked; }
   if(!jobs.length){ if($('spqList')) closeModal(); toast('No hay nada pendiente para Spotify.'); return; }
-  const what = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
+  const what = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify', reorder:'Ponerla en el orden de Rekordbox'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
   modal(`<h3>⏳ Pendientes para Spotify</h3>
     <div class="art" style="margin-bottom:8px">Se hacen solos en cuanto Spotify lo permita, y siempre <b>antes</b> de volver a leer tus playlists. Cancela los que ya no quieras (con ✕ o clic derecho).</div>
     ${blocked ? `<div class="box warn" style="margin-bottom:8px">⏸ Ahora no se pueden hacer: ${esc(blocked)}.</div>` : ''}
@@ -686,6 +708,7 @@ window.onSpotifyQueue = async (x) => {
       ? `✅ «${esc(d.name)}» ya está en Spotify (${d.found} canciones${d.reused?', en tu playlist que ya existía':''})${d.unresolved?` · no encontré ${d.unresolved}`:''}.`
       : d.kind==='rename' ? `✅ En Spotify ya se llama «${esc(d.name)}».`
       : d.kind==='delete' ? `✅ «${esc(d.name)}» ya se eliminó en Spotify.`
+      : d.kind==='reorder' ? `✅ «${esc(d.name)}» ya está en Spotify en el orden de Rekordbox.`
       : `✅ ${d.found} canción(es) agregadas a «${esc(d.name)}» en Spotify.`);
   const bad = (x.failed||[]).map(f => `<span style="color:var(--org)">No pude pasar «${esc(f.name)}» a Spotify: ${esc(f.error)}</span>`);
   if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
@@ -740,7 +763,8 @@ function foldersView(){
       <td class="mono" style="color:var(--mute)">${cnt(f.count)}${f.new_count!==undefined?`<div class="art">${f.new_count} nuevas${f.existing?` · ya existe en BrainOrder`:''}</div>`:''}</td>
       <td style="text-align:right;white-space:nowrap"><button class="primary" onclick="fdOpen('dj',${i})">${f.existing?'Sumar lo nuevo…':'Importar…'}</button>
       <button class="ghost" onclick="fdHide('dj',${i})" title="Que no aparezca más aquí">Ocultar</button></td></tr>`).join('');
-  const fRows = d.folders.map((f,i) => `<tr><td><div><b>${esc(f.name)}</b>${nueva(f)}</div>
+  const scIn = p => (SC.items||[]).some(x => p===x.path || p.startsWith(x.path.replace(/[\\/]$/,'') + (p.includes('\\')?'\\':'/')));
+  const fRows = d.folders.map((f,i) => scIn(f.path) ? '' : `<tr><td><div><b>${esc(f.name)}</b>${nueva(f)}</div>
       <div class="art path" onclick="reveal(${jsq(f.path)})">📁 ${esc(short(f.path))}</div></td>
       <td class="mono" style="color:var(--mute)">${f.count ? cnt(f.count) : 'vacía'}</td>
       <td style="text-align:right;white-space:nowrap"><button class="primary" onclick="fdOpen('folder',${i})">Importar…</button>
@@ -750,11 +774,11 @@ function foldersView(){
   const qBox = q.length ? `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="flex:1">⏳ Pendientes para Spotify (${q.length})</b>
         ${qp ? `<span class="art">Spotify en pausa hasta las ${new Date(d.spotify.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}: se hacen solas después.</span>` : `<button onclick="spqRun()">Pasarlas ya</button>`}</div>
-      <table style="margin-top:8px">${q.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+      <table style="margin-top:8px">${q.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify', reorder:'Ponerla en el orden de Rekordbox'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
         <td style="text-align:right;width:40px"><button class="spq-x ib" onclick="spqCancel(${jsq(j.id)})" title="Cancelar este pendiente (en BrainOrder se queda como está)">${IC.x}</button></td></tr>`).join('')}</table></div>` : '';
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>
-    ${qBox}${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
+    ${qBox}${scBox()}${(djRows||fRows) ? `<table>${djRows}${fRows}</table>` : '<div class="empty"><h3>Nada nuevo por ahora 🎉</h3></div>'}
     ${rbOutBox()}
     ${imp.length ? `<h3 style="margin-top:26px">Importadas sin plataforma</h3>
       <table>${imp.map((e,i)=>`<tr><td><b>${esc(e.name)}</b><div class="art ${e.path?'path':''}" ${e.path?`onclick="reveal(${jsq(e.path)})"`:''}>${e.path?'📁 '+esc(short(e.path)):'🎛️ '+esc(e.label)}</div></td>
@@ -2528,8 +2552,11 @@ function rbMasterBox(d){
   const m = d.master, log = d.log || [], mv = d.moves || [];
   const when = t => new Date(t*1000).toLocaleString('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
   return `<div class="box" style="margin-bottom:12px;border-color:${m?'var(--ok)':'var(--line)'}">
-      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${m?'checked':''} onchange="rbMaster(this.checked)" style="margin-top:3px">
-      <span><b>👑 Rekordbox manda</b><br><span class="art">Lo que haces en las playlists de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox pasa solo a BrainOrder: si mueves una canción de una playlist a otra o la quitas, también pasa aquí y en Spotify. Al Organizar se respeta el <b>orden</b> de Rekordbox (lo nuevo de Spotify entra al final) y no vuelve a entrar lo que quitaste allá. Quitar más de ${20} canciones de una vez te lo pregunto antes. Nunca se borra música: si una canción sale de una playlist de carpeta, su archivo se muda a la playlist donde la pusiste o a «_Sin Playlist» (con Rekordbox cerrado).</span></span></label>
+      <div><b>🎚️ ¿Qué orden manda?</b> <span class="art">Uno solo para todo: BrainOrder, Rekordbox y tus programas, la lista <code>_nombre.m3u8</code> de cada carpeta${m?' y Spotify':''}.</span></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0 6px">
+        <label style="cursor:pointer"><input type="radio" name="ordm" ${m?'checked':''} onchange="rbMaster(true)"> <b>👑 Rekordbox</b></label>
+        <label style="cursor:pointer"><input type="radio" name="ordm" ${m?'':'checked'} onchange="rbMaster(false)"> <b>La plataforma</b> <span class="art">(Spotify, Deezer o el archivo de cada playlist)</span></label></div>
+      <span class="art">${m ? `Lo que haces en las playlists de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox pasa solo a BrainOrder: agregar, quitar, mover una canción de una playlist a otra y <b>cambiar el orden</b>. Ese orden queda en BrainOrder, en la lista de cada carpeta y en tus playlists de Spotify (si Spotify está en pausa, queda en Pendientes). Lo nuevo de Spotify entra al final y no vuelve a entrar lo que quitaste en Rekordbox. Quitar más de ${20} canciones de una vez te lo pregunto antes. Nunca se borra música.` : 'Cada playlist sigue el orden de su plataforma: al Organizar, Rekordbox y tus programas quedan en ese orden, y los cambios que hagas en Rekordbox te los pregunto uno por uno.'}</span>
       ${mv.length ? `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">📁 <b>${mv.length}</b> archivo(s) por mudar a su carpeta nueva cuando cierres Rekordbox: ${mv.slice(0,3).map(x=>esc(x.file)).join(', ')}${mv.length>3?'…':''}</span>
         <button ${running('rb_moves')||d.rekordbox_running?'disabled':''} title="${d.rekordbox_running?'Cierra Rekordbox primero':''}" onclick="rbMoves()">${running('rb_moves')?'Mudando…':'Mudarlos ya'}</button></div>` : ''}
       ${(d.adopt||[]).length ? `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">🎛️ <b>${d.adopt.length}</b> playlist(s) por pasar a la carpeta «${esc(S.settings.rekordbox_folder)}» cuando cierres Rekordbox: ${d.adopt.slice(0,3).map(x=>esc(x.name)).join(', ')}${d.adopt.length>3?'…':''}</span>
@@ -2538,7 +2565,8 @@ function rbMasterBox(d){
 }
 async function rbAdoptNow(){ setTimeout(()=>{ if(S.view==='rbchg') render(); }, 150); const r = await api().rb_adopt_run(); if(!r.ok){ taskErr(r); return; }
   if(r.analysis) setAnalysis(r.analysis); toast('🎛️ ' + esc(((r.result||{}).messages||['Listo']).join('. ')) + '.'); rbLoad(); }
-async function rbMaster(on){ await api().rb_master_set(on); toast(on ? '👑 Rekordbox manda: lo que cambies allá pasa solo a BrainOrder y se respeta su orden.' : 'Listo: los cambios de Rekordbox te los pregunto uno por uno y al Organizar manda la plataforma.'); rbLoad(); }
+async function rbMaster(on){ const r = await api().rb_master_set(on); if(r && r.analysis) setAnalysis(r.analysis);
+  toast(on ? '👑 Manda el orden de Rekordbox: en BrainOrder, en la lista de cada carpeta y en Spotify (al Organizar o cuando lo cambies allá).' : 'Listo: manda el orden de cada plataforma. Al Organizar, Rekordbox queda en ese orden.'); rbLoad(); }
 async function rbMoves(){ setTimeout(()=>{ if(S.view==='rbchg') render(); }, 150); const r = await api().rb_moves_run(); if(!r.ok){ taskErr(r); return; }
   if(r.analysis) setAnalysis(r.analysis); loadHist(); toast(`📁 ${r.moved} archivo(s) mudado(s) a su carpeta nueva.` + undoLink(r)); rbLoad(); }
 window.onRbAuto = async x => {
@@ -3684,6 +3712,8 @@ async function organize(){
   if(r.extra) msg += `<br><b>${r.extra.moved}</b> sin playlist movidas a la carpeta elegida` + (r.extra.duplicates?`, ${r.extra.duplicates} ya existían (a _duplicados)`:'');
   if(f.errors.length) msg += `, <span style="color:var(--miss)">${f.errors.length} errores</span>`;
   msg += folderRenMsg(r.folder_rename) + mirrorMsg(r.mirror) + djSummary(r.dj);
+  const osp = Object.values(r.order_spotify||{}), oOk = osp.filter(x=>x==='ok').length, oQ = osp.filter(x=>x==='queued').length;
+  if(oOk || oQ) msg += `<br>🎚️ Orden de Rekordbox en Spotify: ${oOk} playlist(s) reordenada(s)${oQ?`, ${oQ} en Pendientes (Spotify en pausa)`:''}.`;
   if(Object.values(r.dj||{}).some(x=>x.stats&&x.stats.tracks_added)) msg += '<br>Al abrir tu programa de DJ, analiza las pistas nuevas.';
   const skipped = ((r.dj||{}).rekordbox||{}).stats ? r.dj.rekordbox.stats.skipped||[] : [];
   Object.values(r.dj||{}).forEach(x=>{ const s_ = x.stats||{};
@@ -3775,7 +3805,7 @@ window.addEventListener('pywebviewready', async () => {
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
   PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.plGroups = st.pl_groups || {}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
-  loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000);
+  loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000); setTimeout(scLoad, 3500);
   setTimeout(async () => { try{ const ri = await api().root_info(); if(ri.renamed) onRootRenamed(ri.renamed); }catch(e){} }, 1200);
   try{ api().start_watch(); }catch(e){}
   render();

@@ -17,7 +17,18 @@ def _label(r):
 
 
 def write_reports(analysis, cfg):
-    """Crea/actualiza el .txt de cada playlist. Si no le falta nada, borra el .txt viejo."""
+    """Crea/actualiza el .txt de cada playlist (si no le falta nada, borra el .txt viejo) y la lista
+    ordenada «_<nombre>.m3u8» con el orden común (orden.py)."""
+    try:
+        import orden
+        orden.write_lists(analysis, "Rekordbox" if cfg.get("rb_master", True) else "la plataforma")
+    except Exception as e:
+        from config import log
+        log(f"listas ordenadas: {e!r}")
+    return _write_txt(analysis, cfg)
+
+
+def _write_txt(analysis, cfg):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     written = 0
     for pl in analysis:

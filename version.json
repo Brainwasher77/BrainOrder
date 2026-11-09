@@ -1,5 +1,5 @@
 {
-  "version": "2.31.2",
-  "build": 78,
-  "notes": "Arreglo: «Importar…» en playlists dentro de subcarpetas (por ejemplo Playlists rekordbox/Crossover/MGNO/Funk) ya no dice «Esa carpeta ya no está dentro de tus carpetas de música». Las carpetas de artistas y álbumes de Apple Music ya no salen como playlists nuevas."
+  "version": "2.32.0",
+  "build": 79,
+  "notes": "Nuevo: eliges qué orden manda (Rekordbox o la plataforma) y ese orden queda en todo: BrainOrder, Rekordbox, una lista .m3u8 en cada carpeta y Spotify (si manda Rekordbox, también cuando cambias el orden allá). Al pasar una canción de una playlist a otra en Rekordbox, su archivo se muda también. Nuevo «Quitar accesos directos» para carpetas como «Playlists rekordbox» (Rekordbox pasa a tus archivos reales y los accesos van a la Papelera)."
 }

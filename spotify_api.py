@@ -460,6 +460,15 @@ class Spotify:
             snap = (r or {}).get("snapshot_id") or snap
         return snap
 
+    def replace_items(self, pid, uris):
+        """Deja la playlist con EXACTAMENTE estas canciones en este orden (para copiar el orden de Rekordbox).
+        Las primeras 100 reemplazan todo; el resto se agrega al final. -> snapshot_id nuevo."""
+        r = self.send("PUT", f"/playlists/{pid}/items", {"uris": uris[:100]})
+        snap = (r or {}).get("snapshot_id")
+        if len(uris) > 100:
+            snap = self.add_items(pid, uris[100:]) or snap
+        return snap
+
     def remove_items(self, pid, uris):
         """Quita esas canciones de la playlist (todas sus apariciones). -> snapshot_id nuevo."""
         snap = None

@@ -54,8 +54,10 @@ def parent_for(dest_root, trail):
 def direct_files(folder):
     """Archivos que están directamente en la carpeta (no los de sus subcarpetas, que son otras playlists)."""
     try:
+        import orden
         return sorted((f for f in Path(folder).iterdir() if f.is_file() and not f.name.startswith(".")
-                       and f.name not in JUNK), key=lambda f: f.name.lower())
+                       and f.name not in JUNK and not (orden.is_list_file(f.name) and orden.is_ours(f))),
+                      key=lambda f: f.name.lower())
     except OSError:
         return []
 

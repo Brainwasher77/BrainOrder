@@ -147,6 +147,15 @@ Pasa al **Organizar** y **cada 5 minutos** en cada programa que esté cerrado (c
 ## Nombre de la carpeta de BrainOrder en tus programas
 Se cambia en Conexiones. Al cambiarlo, BrainOrder **renombra la carpeta** en Rekordbox, Traktor, Serato, Engine DJ y M3U: son las mismas playlists, no se duplican, no aparecen en «Playlists nuevas» ni como borradas en «Cambios en Rekordbox». Un programa abierto se renombra al cerrarlo (Organizar no le crea otra carpeta mientras tanto). Si la renombras dentro de Rekordbox, BrainOrder usa ese nombre y lo pasa a los demás; si la cambiaste en una versión anterior, encuentra la carpeta vieja por sus playlists y la arregla.
 
+## Un solo orden para todo
+En «Cambios en Rekordbox» → **🎚️ ¿Qué orden manda?** eliges una vez y se mantiene:
+- **👑 Rekordbox**: el orden de cada playlist en Rekordbox es el de todo. BrainOrder muestra las canciones en ese orden, cada carpeta lleva la lista `_<nombre>.m3u8` en ese orden y tus playlists de Spotify se reordenan igual (nunca se agrega ni se quita nada; lo que Spotify tenga y Rekordbox no queda al final). Si cambias el orden, agregas, quitas o pasas una canción de una playlist a otra en Rekordbox, se hace solo en BrainOrder, en la lista de la carpeta, en Spotify y el archivo se muda a su carpeta nueva (con Rekordbox cerrado). Si Spotify está en pausa, queda en Pendientes.
+- **La plataforma** (Spotify, Deezer o el archivo de cada playlist): al Organizar, Rekordbox, tus programas y las listas quedan en el orden de la plataforma.
+La lista `_<nombre>.m3u8` la abre cualquier programa (Música, VLC, Rekordbox, Traktor…) y usa rutas relativas, así sirve aunque muevas la carpeta. Una canción que vive en la carpeta de otra playlist aparece igual en la lista, en su lugar.
+
+## Carpetas de accesos directos
+Si una de tus carpetas de música es de accesos directos (por ejemplo `Playlists rekordbox`), «Playlists nuevas» lo avisa y ya no muestra sus carpetas como playlists repetidas. Con **Quitar accesos directos** (Rekordbox cerrado): lo que en Rekordbox y tus programas apuntaba a un acceso directo pasa a apuntar al archivo real (si ya estaba en la colección se unen, con sus cues), la música de verdad que hubiera ahí se muda a `_Sin Playlist`, los accesos directos van a la **Papelera** y la carpeta sale de tus carpetas de música. Las playlists que hayas importado desde esa carpeta se dejan.
+
 ## Tu carpeta de música igual que en Rekordbox (subcarpetas)
 Si dentro de la carpeta de BrainOrder en Rekordbox organizas tus playlists en **subcarpetas** (por ejemplo *Techno › Hard Techno*, *Latino › Salsa*), con **📂 Mis carpetas igual que en Rekordbox** (activado por defecto, en «Cambios en Rekordbox») tu carpeta de playlists queda igual: `…/Techno/Hard Techno/<canciones>`.
 - Se hace al **Organizar** (o con **Ordenar ya**), con Rekordbox cerrado: las canciones se mudan a su subcarpeta, se corrigen sus rutas en Rekordbox y tus otros programas, y queda en Historial con Deshacer. Si después cambias una playlist de subcarpeta en Rekordbox, en el siguiente Organizar se muda sola; las subcarpetas que quedan vacías se quitan.
