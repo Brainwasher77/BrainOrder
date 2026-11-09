@@ -1,5 +1,5 @@
 {
-  "version": "2.25.0",
-  "build": 70,
-  "notes": "Nuevo: buscador arriba de tus playlists y grupos para clasificarlas (Techno, Tropical, Eventos…). En la lista quedan juntas por grupo y al Fusionar o Comparar escribes el nombre para encontrar la playlist en vez de buscarla en una lista larga."
+  "version": "2.26.0",
+  "build": 71,
+  "notes": "Nuevo: al fusionar puedes elegir «Solo las que tienen en común»: las canciones que dos playlists comparten se quedan en la que elijas y salen de la otra (también en Spotify), sin tocar lo demás. Las playlists para elegir salen ordenadas por cuántas canciones tienen en común."
 }

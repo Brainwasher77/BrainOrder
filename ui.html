@@ -1004,7 +1004,8 @@ function cmpView(){
   const q = cmpNorm(CMP.q);
   let rows = cmpRows(c);
   if(q) rows = rows.filter(([x,y]) => { const r = x||y; return cmpNorm(r.name+' '+(r.artists||[]).join(' ')).includes(q); });
-  const merge = plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}); setTimeout(()=>pkSet('plInto', '${S.analysis.indexOf(B)}'),40)">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '';
+  const merge = (plCanMergeInto(B) && A.id!==B.id && !A.liked ? `<button onclick="plMerge(${S.analysis.indexOf(A)}, 'all', '${S.analysis.indexOf(B)}')">🔀 Fusionar «${esc(A.name)}» dentro de «${esc(B.name)}»…</button>` : '')
+    + (A.id!==B.id && (plCanTrim(A) || plCanTrim(B)) && mgCommon(A, B) ? ` <button onclick="plMerge(${S.analysis.indexOf(A)}, 'common', '${S.analysis.indexOf(B)}')" title="Las canciones en común se quedan solo en una de las dos">🔁 Dejar las ${mgCommon(A, B)} comunes en una sola…</button>` : '');
   const tb = rows.slice(0, 600).map(([x,y]) => { const r = x||y, h = x&&x.source ? x : y&&y.source ? y : r;
     return `<tr><td class="mono" style="color:var(--mute)">${x?x.pos+1:'—'}</td><td class="mono" style="color:var(--mute)">${y?y.pos+1:'—'}</td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(h)}<div><div>${esc(r.name)}</div><div class="art">${esc((r.artists||[]).join(', '))}</div></div></div></td>
@@ -1044,7 +1045,8 @@ function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='
 function plMenu(pl, i){
   const it = [['#', pl.name], ['⚖️ Comparar con…', () => cmpPick(i), false, 'Cuántas canciones tienen en común y cuáles están solo en una'], '-', ['✏️ Renombrar…', () => plRename(i)]];
   it.push([plGroup(pl) ? `🏷 Grupo: ${plGroup(pl)}…` : '🏷 Poner en un grupo…', () => plGroupPick([pl.id]), false, 'Para tenerla junto a otras parecidas en la lista y encontrarla rápido']);
-  it.push(['🔀 Fusionar con otra…', () => plMerge(i), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
+  it.push(['🔁 Quitar las que ya están en otra…', () => plMerge(i, 'common'), !!pl.pending, pl.pending ? 'Analízala primero' : 'Elige otra playlist: las canciones en común se quedan solo en una de las dos']);
+  it.push(['🔀 Fusionar con otra…', () => plMerge(i, 'all'), !!(pl.liked || pl.pending), pl.liked ? '«Me gusta» no se puede fusionar' : pl.pending ? 'Analízala primero' : 'Junta sus canciones dentro de otra playlist']);
   it.push(statHidden(pl) ? ['👁 Volver a contarla en mis estadísticas', () => plStatsHide(pl.id, false)]
                          : ['🙈 Ocultar de mis estadísticas', () => plStatsHide(pl.id, true), false, 'No cuenta en tus números ni en «Faltan por descargar»; se sigue organizando igual']);
   it.push('-');
@@ -1077,22 +1079,91 @@ async function plRenameGo(i){
   if(r.analysis){ await applyAnalysis(r); if(r.index!==null && r.index!==undefined) S.view = 'pl:' + r.index; render(); }
   toast(`✅ «${esc(r.result.old)}» ahora se llama <b>«${esc(r.result.name)}»</b>.` + plResult(r.result));
 }
-function plMerge(i){
+// Fusionar: «todo» (la playlist se disuelve en la otra y se elimina) o «solo las comunes» (las canciones que
+// tienen en común se quedan solo en una de las dos; lo demás no se toca). Las candidatas van por más en común.
+let MG = {i:null, mode:'all', keep:'into', sel:''};
+const mgCommon = (A, B) => (A && B && !A.pending && !B.pending) ? cmpRun(A, B).both.length : 0;
+const plCanTrim = p => plCanMergeInto(p);  // a la que suelta las comunes hay que poder quitarle canciones
+function plMerge(i, mode, sel){
   const pl = S.analysis[i]; if(!pl) return;
-  const opts = S.analysis.map((p,j)=>[p,j]).filter(([p,j]) => j!==i && plCanMergeInto(p));
-  if(!opts.length){ toast('No hay otra playlist donde fusionarla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true); return; }
+  if(MG.i !== i || mode){ MG = {i, mode: mode || 'all', keep: plCanTrim(pl) ? 'into' : 'self', sel: sel != null ? String(sel) : ''}; }
+  const common = MG.mode === 'common';
+  let opts = S.analysis.map((p,j)=>[p,j]).filter(([p,j]) => j!==i && (common ? !p.pending && !p.ignored && mgCommon(pl, p) > 0 : plCanMergeInto(p)));
+  opts = opts.map(([p,j]) => [p, j, mgCommon(pl, p)]).sort((x,y) => y[2]-x[2] || 0);
+  if(!opts.length){
+    toast(common ? `«${esc(pl.name)}» no tiene canciones en común con ninguna otra playlist analizada.` : 'No hay otra playlist donde fusionarla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true);
+    return;
+  }
+  const n = pl.tracks.length || 1;
+  const extra = ([p,j,c]) => (c ? `${c} en común · ${Math.round(c/n*100)}%` : 'nada en común') + (p.source==='carpetas' ? ' · carpeta' : '');
   const dj = plDjNames();
+  const seg = (m, t, tip) => `<button class="${MG.mode===m?'primary':'ghost'}" title="${tip}" onclick="plMerge(${i}, '${m}', $('plInto').value)">${t}</button>`;
   modal(`<h3>🔀 Fusionar «${esc(pl.name)}» con…</h3>
-    ${plPicker('plInto', opts.map(([p,j]) => [p, j, p.source==='carpetas' ? 'carpeta' : `${p.tracks.length||p.total||0} canc.`]), null, () => plMergeGo(i))}
-    <div class="box" style="line-height:1.6">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px">${seg('all','🔀 Todo','Sus canciones pasan a la otra y «'+esc(pl.name)+'» se elimina')}${seg('common','🔁 Solo las que tienen en común','Las comunes se quedan solo en una de las dos; lo demás no se toca')}</div>
+    <div class="art">Ordenadas por cuántas canciones tienen en común con «${esc(pl.name)}» (${pl.tracks.length}).</div>
+    ${plPicker('plInto', opts.map(o => [o[0], o[1], extra(o)]), MG.sel || null, () => common ? plCommonGo() : plMergeGo(i), v => { MG.sel = v; if(common) mgInfoPaint(); })}
+    <div id="mgInfo">${common ? '' : `<div class="box" style="line-height:1.6">
       • Las canciones de <b>«${esc(pl.name)}»</b> se agregan al final de la que elijas (solo las que no tenga), también en Spotify.<br>
       • Sus archivos pasan a la carpeta de esa playlist; si ya tenía la canción, la copia repetida va a <code>_duplicados</code>.<br>
       • Después <b>«${esc(pl.name)}»</b> se elimina en BrainOrder${dj.length?', '+dj.map(esc).join(', '):''}${plPlace(pl).edit&&!pl.liked?' y '+esc(plPlace(pl).label):''}.<br>
       • Se puede deshacer el movimiento de archivos en Historial.</div>
-    ${plPlace(pl).note?`<div class="art">${esc(plPlace(pl).note)}</div>`:''}
-    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="plMergeDj" checked> Actualizar ya la playlist en mis programas de DJ</label>`:''}
-    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="plMergeGo(${i})">Fusionar</button></div>`);
+    ${plPlace(pl).note?`<div class="art">${esc(plPlace(pl).note)}</div>`:''}`}</div>
+    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="plMergeDj" checked> Actualizar ya ${common?'las dos playlists':'la playlist'} en mis programas de DJ</label>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="mgGo" onclick="${common ? 'plCommonGo()' : `plMergeGo(${i})`}">${common ? 'Dejar las comunes' : 'Fusionar'}</button></div>`);
   pkOpen('plInto');
+  if(common) mgInfoPaint();
+}
+function mgInfoPaint(){
+  const el = $('mgInfo'); if(!el || MG.mode!=='common') return;
+  const A = S.analysis[MG.i], v = $('plInto') ? $('plInto').value : '', B = v!=='' ? S.analysis[+v] : null, go = $('mgGo');
+  if(!A || !B){ el.innerHTML = ''; if(go) go.disabled = true; return; }
+  const c = cmpRun(A, B), n = c.both.length, canA = plCanTrim(A), canB = plCanTrim(B);
+  if(MG.keep==='into' && !canA && canB) MG.keep = 'self';
+  if(MG.keep==='self' && !canB && canA) MG.keep = 'into';
+  const ok = MG.keep==='into' ? canA : canB, lose = MG.keep==='into' ? A : B, keep = MG.keep==='into' ? B : A;
+  const left = MG.keep==='into' ? c.onlyA.length : c.onlyB.length;
+  const why = p => p.liked ? '«Me gusta» no se toca desde aquí' : 'no se le pueden quitar canciones desde BrainOrder (no es tuya o su plataforma no lo deja)';
+  const opt = (k, K, L, can, rest) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;cursor:${can?'pointer':'default'};${can?'':'opacity:.5'}" title="${can?'':esc(why(L))}">
+      <input type="radio" name="mgKeep" ${MG.keep===k&&can?'checked':''} ${can?'':'disabled'} onchange="MG.keep='${k}'; mgInfoPaint()" style="margin-top:3px">
+      <span>Que se queden en <b>«${esc(K.name)}»</b> y salgan de «${esc(L.name)}» <span class="art">(a «${esc(L.name)}» le quedan ${rest})</span></span></label>`;
+  el.innerHTML = `<div style="margin:6px 0 2px">Tienen <b>${n}</b> en común: el ${c.pA}% de «${esc(A.name)}» y el ${c.pB}% de «${esc(B.name)}». ¿Dónde las dejo?</div>
+    ${opt('into', B, A, canA, c.onlyA.length)}${opt('self', A, B, canB, c.onlyB.length)}
+    ${ok ? `<div class="box" style="line-height:1.6;margin-top:8px">
+      • Las <b>${n}</b> comunes salen de <b>«${esc(lose.name)}»</b>${plPlace(lose).edit?' (también en '+esc(plPlace(lose).label)+')':''} y siguen en «${esc(keep.name)}». Lo demás de las dos no se toca.<br>
+      • Sus archivos que están en la carpeta de «${esc(lose.name)}» pasan a la de «${esc(keep.name)}»; si «${esc(keep.name)}» ya tiene su propia copia de la misma grabación, la otra va a <code>_duplicados</code>. Nunca se borra música.<br>
+      • Se puede deshacer el movimiento de archivos en Historial.</div>
+      ${left===0 ? `<div class="art" style="color:var(--org);margin-top:6px">A «${esc(lose.name)}» no le quedaría nada: si quieres que desaparezca, usa <a class="lnk" onclick="plMerge(${S.analysis.indexOf(lose)}, 'all', '${S.analysis.indexOf(keep)}')">🔀 Todo</a> (pasa lo mismo y además la elimina).</div>` : ''}`
+    : `<div class="art" style="color:var(--org);margin-top:6px">A ninguna de las dos se le pueden quitar canciones desde BrainOrder (${esc(why(A))}).</div>`}`;
+  if(go){ go.disabled = !ok; go.textContent = ok ? `Dejarlas solo en «${keep.name}»` : 'Dejar las comunes'; }
+}
+async function plCommonGo(){
+  const A = S.analysis[MG.i], v = $('plInto') ? $('plInto').value : '', B = v!=='' ? S.analysis[+v] : null;
+  if(!A || !B){ toast('Elige la otra playlist.', true); return; }
+  const intoB = MG.keep==='into', lose = intoB ? A : B, keep = intoB ? B : A;
+  if(!plCanTrim(lose)){ toast(`A «${esc(lose.name)}» no se le pueden quitar canciones desde BrainOrder.`, true); return; }
+  const dj = $('plMergeDj') && $('plMergeDj').checked;
+  const pairs = cmpRun(A, B).both.map(([x,y]) => intoB ? [x.pos, y.pos] : [y.pos, x.pos]);
+  closeModal(); toast(`Dejando ${pairs.length} canciones solo en «${esc(keep.name)}»…`);
+  const r = await api().playlist_common(keep.id, lose.id, pairs);
+  if(!r.ok){ taskErr(r); return; }
+  await applyAnalysis(r); render(); loadHist();
+  const x = r.result, f = x.files || {};
+  let msg = `✅ ${x.count} canciones quedaron solo en <b>«${esc(x.keep)}»</b>. A «${esc(x.name)}» le quedan <b>${x.left}</b>.`;
+  if(f.moved) msg += `<br>📁 ${f.home} archivo(s) a <code>${esc(short(f.to))}</code>${f.dup?` · ${f.dup} copia(s) repetida(s) a <code>${esc(short(f.dup_dir))}</code>`:''}.` + undoLink(f);
+  if(f.kept) msg += `<br><span class="art">${f.kept} archivo(s) se quedaron donde estaban (otra versión o chocaban por nombre).</span>`;
+  if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">${f.skipped.length} no se movieron: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
+  if(x.spotify) msg += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: se quitan allá solas en cuanto lo permita (aquí ya no aparecen).` : `<br>🟢 Spotify: listo.`;
+  if(x.no_uri) msg += `<br><span style="color:var(--org)">${x.no_uri} eran archivos locales de Spotify y no se pudieron quitar allá: quítalas a mano en Spotify.</span>`;
+  if(x.still) msg += `<br><span style="color:var(--org)">${x.still} siguen en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
+  toast(msg);
+  if(dj){
+    let out = '';
+    for(const pid of [r.pid, r.keep_pid]){
+      const g = await api().organize(true, pid, null);
+      if(g.ok){ await applyAnalysis(g); out += djSummary(g.dj); } else out += `<br><span style="color:var(--org)">Programas de DJ: ${esc(g.error)}</span>`;
+    }
+    render(); toast(msg + out);
+  }
 }
 async function plMergeGo(i){
   const v = $('plInto') ? $('plInto').value : '', pl = S.analysis[i], into = v!=='' ? S.analysis[+v] : null, dj = $('plMergeDj') && $('plMergeDj').checked;
@@ -1361,8 +1432,8 @@ function grpMenu(g){ return [['#', g], ['✏️ Renombrar grupo…', () => grpRe
 
 // elegir una playlist escribiendo su nombre: filtra por nombre o grupo, la lista va por grupos; ↑ ↓ para moverte y Enter para aceptar
 let PK = {};
-function plPicker(id, opts, sel, go){ // opts: [[playlist, valor, texto extra]]
-  PK[id] = {opts: opts.map(([p,v,x]) => [p, String(v), x||'']), go};
+function plPicker(id, opts, sel, go, change){ // opts: [[playlist, valor, texto extra]]; change(valor) al cambiar la elegida
+  PK[id] = {opts: opts.map(([p,v,x]) => [p, String(v), x||'']), go, change};
   const first = PK[id].opts[0];
   return `<input type="hidden" id="${id}" value="${esc(sel!=null && sel!=='' ? String(sel) : (first ? first[1] : ''))}">
     <input class="inp" id="${id}Q" placeholder="🔎 Escribe el nombre o el grupo…" autocomplete="off" oninput="pkPaint('${id}')" onkeydown="pkKey(event,'${id}')" style="margin-top:6px">
@@ -1373,14 +1444,14 @@ function pkPaint(id){
   const q = $(id+'Q').value, vis = P.opts.filter(([p]) => plMatch(p, q));
   const bk = plGroupList().length ? plBuckets(vis) : [[null, vis]], shown = bk.flatMap(([,its]) => its);
   let cur = $(id).value;
-  if(shown.length && !shown.some(o => o[1]===cur)){ cur = shown[0][1]; $(id).value = cur; }  // queda marcada la primera que se ve
+  if(shown.length && !shown.some(o => o[1]===cur)){ cur = shown[0][1]; $(id).value = cur; if(P.change) P.change(cur); }  // queda marcada la primera que se ve
   const row = ([p,v,x]) => `<div class="pkr ${v===cur?'on':''}" data-v="${esc(v)}" onclick="pkSet('${id}', this.dataset.v)" ondblclick="pkSet('${id}', this.dataset.v); pkGo('${id}')">
       <span>${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' <span class="art">(sin analizar)</span>':''}</span><span class="art mono" style="white-space:nowrap">${esc(x)}</span></div>`;
   L.innerHTML = vis.length ? bk.map(([g, its]) => (g===null ? '' : `<div class="pg">${g?esc(g):'Sin grupo'} · ${its.length}</div>`) + its.map(row).join('')).join('')
     : `<div class="art" style="padding:10px">Ninguna playlist con «${esc(q)}».</div>`;
   const on = L.querySelector('.pkr.on'); if(on) on.scrollIntoView({block:'nearest'});
 }
-function pkSet(id, v){ const h = $(id); if(!h) return; h.value = String(v);
+function pkSet(id, v){ const h = $(id); if(!h) return; const was = h.value; h.value = String(v); if(was !== h.value && PK[id] && PK[id].change) PK[id].change(h.value);
   document.querySelectorAll(`#${id}L .pkr`).forEach(el => el.classList.toggle('on', el.dataset.v===h.value));
   const on = document.querySelector(`#${id}L .pkr.on`); if(on) on.scrollIntoView({block:'nearest'}); }
 function pkGo(id){ const P = PK[id]; if(P && P.go && $(id).value!=='') P.go(); }

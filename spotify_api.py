@@ -461,8 +461,12 @@ class Spotify:
         return snap
 
     def remove_items(self, pid, uris):
+        """Quita esas canciones de la playlist (todas sus apariciones). -> snapshot_id nuevo."""
+        snap = None
         for i in range(0, len(uris), 100):
-            self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in uris[i:i + 100]]})
+            r = self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in uris[i:i + 100]]})
+            snap = (r or {}).get("snapshot_id") or snap
+        return snap
 
     def save_to_library(self, uris):
         # /me/library recibe las uris en la dirección (?uris=a,b), no en el cuerpo
