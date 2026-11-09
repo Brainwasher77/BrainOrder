@@ -29,7 +29,7 @@ def _norm(p):
 
 
 # ------------------------------------------------------------------ árbol de Rekordbox -> carpetas
-def trails(state, baseline, analysis):
+def trails(state, baseline, analysis, ref_pids=None):
     """{pid: [subcarpetas]} de las playlists que están dentro de subcarpetas en Rekordbox.
     state = rb_cambios.read_state (con "folder"); baseline = foto {rid: {pid}}; analysis para casar por nombre."""
     by_name = {}
@@ -38,7 +38,7 @@ def trails(state, baseline, analysis):
     out = {}
     for rid, v in (state or {}).items():
         trail = [x for x in v.get("folder") or [] if x]
-        pid = (baseline.get(rid) or {}).get("pid") or by_name.get(v.get("name"))
+        pid = (baseline.get(rid) or {}).get("pid") or (ref_pids or {}).get(rid) or by_name.get(v.get("name"))
         if pid and trail and pid not in out:
             out[pid] = trail
     return out

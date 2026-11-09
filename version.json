@@ -1,5 +1,5 @@
 {
-  "version": "2.32.1",
-  "build": 80,
-  "notes": "Al actualizar, BrainOrder te pregunta qué orden manda (Rekordbox o Spotify / tu plataforma). Lo eliges una vez y se mantiene; se cambia cuando quieras en «Cambios en Rekordbox»."
+  "version": "2.33.0",
+  "build": 81,
+  "notes": "Nuevo: desarmar las playlists que se tragaron una carpeta de Rekordbox (por ejemplo Crossover o Brainwasher): cada playlist de la carpeta vuelve a tener su música y su carpeta, como en Rekordbox. Está en «Cambios en Rekordbox» → 🧩."
 }

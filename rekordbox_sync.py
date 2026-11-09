@@ -600,3 +600,48 @@ def adopt(cfg, jobs, progress=None):
     log(f"Rekordbox: playlists llevadas a «{cfg.get('rekordbox_folder')}»: {out['moved']} movidas, "
         f"{out['merged']} juntadas, {out['deleted']} quitadas (respaldo {bk.name})")
     return out
+
+
+def lift_folders(cfg, folder_ids, drop_ids):
+    """Desarmar playlists que se tragaron una carpeta: la carpeta (con sus subcarpetas y playlists, tal cual)
+    pasa dentro de la carpeta de BrainOrder y la playlist global se quita (sus canciones siguen en la
+    colección). Rekordbox cerrado y respaldo antes. -> {"moved", "deleted", "backup"}"""
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo para desarmar la playlist.")
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"moved": 0, "deleted": 0, "backup": bk.name}
+    try:
+        root, _inside, _m = _our_tree(db, cfg)
+        for pid in drop_ids or []:
+            p = db.get_playlist(ID=str(pid))
+            if p is not None and (p.Attribute or 0) == 0:
+                db.delete_playlist(p)
+                out["deleted"] += 1
+        for fid in folder_ids or []:
+            f = db.get_playlist(ID=str(fid))
+            if f is None or str(f.ParentID) == str(root.ID):
+                continue
+            if _find_child(db, root.ID, f.Name, 1) is not None:
+                raise RekordboxError(f"Ya hay una carpeta «{f.Name}» dentro de «{root.Name}».")
+            db.move_playlist(f, parent=root)
+            out["moved"] += 1
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error desarmando en Rekordbox: {e!r}")
+        raise RekordboxError(f"No pude hacerlo en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    log(f"Rekordbox: carpetas pasadas a la de BrainOrder {out}")
+    return out

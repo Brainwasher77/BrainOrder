@@ -2528,6 +2528,7 @@ function rbOptions(c){
 async function rbLoad(){
   if(RBC.loading) return; RBC.loading = true;
   api().rb_mirror_info().then(m => { MIR = m.ok ? m : null; if(S.view==='rbchg') renderMain(); }).catch(()=>{});
+  api().absorbed_scan().then(m => { ABS = m.ok ? m.items : []; if(S.view==='rbchg') renderMain(); }).catch(()=>{});
   try{ const r = await api().rb_check(); if(r.ok){ RBC.data = r; RBC.dec = {}; if(r.analysis) setAnalysis(r.analysis);
       r.changes.forEach(c=>{ const o = rbOptions(c).filter(x=>!x[2]); RBC.dec[c.id] = o.length ? o[0][0] : 'keep'; }); }
     else RBC.err = r.error; }
@@ -2538,6 +2539,27 @@ window.onRbChanges = info => {
   toast(`🎛️ Cambiaste ${info.count} cosa${info.count!==1?'s':''} en Rekordbox (${info.names.map(esc).join(', ')}).<br><a class="lnk" onclick="show('rbchg')">¿Lo hago también en Spotify? → Revisar</a>`);
 };
 async function reconnectSpotify(){ try{ await api().disconnect(); }catch(e){} S.connected=false; await connect(); rbLoad(); }
+// ---------- playlists que se tragaron una carpeta de Rekordbox (2.33.0) ----------
+let ABS = [];
+function absBox(){
+  if(!(ABS||[]).length) return '';
+  return `<div class="box" style="margin-bottom:12px;border-color:var(--org)">
+    <b>🧩 ${ABS.length===1?'Una playlist se tragó':'Playlists que se tragaron'} una carpeta de Rekordbox</b>
+    <div class="art" style="margin:4px 0 8px">En una versión anterior se importó la carpeta entera como <b>una sola playlist</b>, y sus archivos terminaron en la carpeta de esa playlist (las de adentro quedaron vacías). Al desarmarla: en Rekordbox la carpeta pasa <b>tal cual</b> dentro de «${esc(S.settings.rekordbox_folder)}» y se quita la playlist global; en BrainOrder sale la global (en Spotify se queda como está) y cada playlist de la carpeta queda con su música, en su carpeta como en Rekordbox. Rekordbox cerrado, con respaldo y Deshacer. Nunca se borra música.</div>
+    <table>${ABS.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="art">${x.playlists} playlists adentro (${x.subs.map(esc).join(', ')}) · la global tiene ${x.global_songs} canciones</div></td></tr>`).join('')}</table>
+    <div style="text-align:right;margin-top:8px"><button class="primary" ${running('absorbed')?'disabled':''} onclick="absFix()">${running('absorbed')?'Desarmando…':'Desarmar y devolver su música a cada playlist'}</button></div></div>`;
+}
+async function absFix(){
+  setTimeout(()=>{ if(S.view==='rbchg') render(); }, 150);
+  const r = await api().absorbed_fix(null); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist();
+  const x = r.result || {};
+  toast(`🧩 Listo: ${x.names.map(esc).join(' y ')} desarmada${x.names.length>1?'s':''}. ${x.moved} archivo(s) volvieron a la carpeta de su playlist`
+    + (x.added.length?`; ${x.added.length} playlist(s) nuevas en BrainOrder (leídas de Rekordbox)`:'') + '.'
+    + (x.loose?`<br>${x.loose} canción(es) que solo estaban en la global van a «_Sin Playlist».`:'')
+    + (x.queue_dropped?`<br>Quité ${x.queue_dropped} pendiente(s) de Spotify de la global.`:'') + mirrorMsg(x.mirror) + undoLink(x));
+  ABS = []; rbLoad();
+}
 // ---------- carpetas como en Rekordbox (2.31.0) ----------
 let MIR = null;
 function mirrorBox(){
@@ -2600,7 +2622,7 @@ function rbView(){
   const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox.${d && d.master ? ' Las canciones que agregas o quitas pasan solas; aquí queda lo demás (playlists nuevas, borradas, renombradas o lo que no pude pasar).' : ' Elige si también va a Spotify.'}</span>
     <div class="sp"><button onclick="rbLoad()">⟳ Revisar</button></div></div>`;
   if(!d) return head + `<div class="empty"><p>${RBC.err?esc(RBC.err):'Leyendo Rekordbox…'}</p></div>`;
-  const mbox = rbMasterBox(d) + mirrorBox();
+  const mbox = absBox() + rbMasterBox(d) + mirrorBox();
   const warn = !d.spotify.connected ? `<div class="box warn">Spotify no está conectado. <button onclick="connect()">Conectar Spotify</button></div>`
     : !d.spotify.can_write ? `<div class="box warn">Para pasar cambios a Spotify, BrainOrder necesita permiso de <b>editar tus playlists</b>. <button onclick="reconnectSpotify()">Reconectar Spotify</button></div>` : '';
   const keep = (d.keep||[]).map(pid=>({pid, pl:(S.analysis||[]).find(p=>p.id===pid)}));
