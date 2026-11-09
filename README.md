@@ -198,6 +198,18 @@ Rekordbox tiene que estar cerrado; antes se respalda la librería y todo se pued
 
 **Canciones que solo están en `_duplicados`:** si una canción no tiene otra copia en tu música, el aviso de arriba lo dice y **Recuperar** la devuelve a su lugar: donde la espera un acceso directo roto (así vuelve a funcionar), donde estaba antes (Historial), la carpeta de su playlist o `_Recuperadas`. Se corrige Rekordbox y se puede deshacer.
 
+## Grillas dudosas en Rekordbox
+Rekordbox no siempre acierta con el primer kick ni con el BPM. **Grillas dudosas** lee las grillas de toda tu colección (sin cambiar nada) y te muestra las que probablemente están mal:
+- **Sin grilla**: Rekordbox no la ha analizado.
+- **BPM al doble o a la mitad**: comparado con Mixed In Key o, si no hay, con lo normal del género o de la playlist (reguetón 84–106, dembow 108–135, house 112–132, techno 120–152, DnB 158–182…).
+- **Distinto a Mixed In Key**: los dos no están de acuerdo en el BPM.
+- **Cues fuera de la grilla**: tus cues (casi siempre los pones en el kick) caen todos corridos igual respecto a la grilla, o sea que la grilla está corrida.
+- **Grilla variable o BPM con decimales** en estilos hechos en computador (house, techno, reguetón, dembow…): casi siempre es un análisis en modo Dinámico o un BPM que debería ser redondo. En salsa, cumbia y música en vivo no se marca.
+
+**🎧 Medir en el audio** (las marcadas o toda la colección, de a 250 por vuelta): decodifica la canción (en Mac con el decodificador del sistema; en Windows hace falta ffmpeg) y mide dónde cae el kick respecto a la grilla: **grilla corrida** (el kick cae X ms antes o después), **se va corriendo** (al final se descuadra: el BPM no es exacto), **el 1 no está en el primer kick** y **grilla en el contratiempo**. Si no hay un kick claro (o el bajo pesa igual), no se juzga. El pequeño desfase propio de cada decodificador (sobre todo en MP3) se calcula con todas las canciones medidas y se descuenta solo; con pocas medidas solo marca lo evidente (≥35 ms). Lo medido queda guardado y se vuelve a medir solo si cambias la grilla.
+
+**Pasar a Rekordbox** arma la playlist «BrainOrder · Grillas por revisar» (en la raíz de tu colección, con Rekordbox cerrado y respaldo) para que las arregles una por una: cabezal en el primer kick → fijar el 1 → ajustar el BPM si al final se corre → bloquear la pista. **✓ Está bien** oculta las que ya revisaste; vuelven a salir si cambias su grilla.
+
 ## Duplicados
 Busca archivos repetidos en **toda** tu música: copias idénticas (aunque tengan otro nombre) y la misma canción en otro formato o calidad. Sugiere cuál conservar (cues o playlists en Rekordbox, Mixed In Key, uso en tus playlists, calidad) y tú eliges. Lo apartado va a `_duplicados`, se corrigen las rutas en tus programas de DJ y se puede deshacer en Historial.
 
@@ -270,6 +282,7 @@ Las apps personales de Spotify tienen un límite de consultas. Si se excede, Spo
 | `rescate.py` | Canciones que solo quedaron en `_duplicados` |
 | `papelera.py` | Buscar en la papelera las canciones perdidas o que faltan |
 | `novedades.py` | Qué es nuevo en una playlist de tu programa de DJ (sin duplicar archivos ni playlists) |
+| `grillas.py` | Grillas dudosas de Rekordbox: lee las grillas (ANLZ) y mide en el audio dónde cae el kick |
 
 ---
 

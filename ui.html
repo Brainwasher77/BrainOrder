@@ -308,6 +308,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
         <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
         <a data-v="rblost" onclick="show('rblost')"><div class="row"><span class="name">Perdidas en Rekordbox</span><span class="cnt mono" id="nLost">–</span></div></a>
+        <a data-v="rbgrid" onclick="show('rbgrid')"><div class="row"><span class="name">Grillas dudosas</span><span class="cnt mono" id="nGrid">–</span></div></a>
         <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="folders" onclick="show('folders')"><div class="row"><span class="name">Playlists nuevas</span><span class="cnt mono" id="nFolders">–</span></div></a>
@@ -1580,6 +1581,7 @@ function renderCore(){
   if($('nMeta')) $('nMeta').innerHTML = MD.data ? (MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length ? `<span style="color:var(--org)">${MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length}</span>` : '0') : '–';
   if($('nNoPl')) $('nNoPl').innerHTML = NP.data ? (NP.data.rows.length ? `<span style="color:var(--org)">${NP.data.rows.length}</span>` : '0') : '–';
   if($('nLost')){ const nl = LO.data ? LO.data.items.length + (LO.data.rescue||[]).length : null; $('nLost').innerHTML = nl === null ? '–' : (nl ? `<span style="color:var(--org)">${nl}</span>` : '0'); }
+  if($('nGrid')){ const ng = GR.data ? GR.data.items.length : null; $('nGrid').innerHTML = ng === null ? '–' : (ng ? `<span style="color:var(--org)">${ng}</span>` : '0'); }
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
   { const n = mikRows(false).length; $('nMik').innerHTML = S.analysis ? (n ? `<span style="color:#b48cff">${n}</span>` : '0') : '–'; }
@@ -1616,6 +1618,7 @@ function renderMain(){
   if(S.view==='dups'){ m.innerHTML = dupsView(); dupSum(); return; }
   if(S.view==='rbchg'){ m.innerHTML = rbView(); return; }
   if(S.view==='rblost'){ m.innerHTML = lostView(); lostSum(); return; }
+  if(S.view==='rbgrid'){ m.innerHTML = gridView(); gridSum(); return; }
   if(S.view==='noplaylist'){ m.innerHTML = npView(); npSum(); return; }
   if(S.view==='suggest'){ m.innerHTML = sgView(); sgSum(); return; }
   if(S.view==='meta'){ m.innerHTML = mdView(); mdSum(); return; }
@@ -2111,7 +2114,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
@@ -2483,6 +2486,120 @@ function lostView(){
       <button class="ghost" onclick="lostAll(true)">Marcar las de la lista</button><button class="ghost" onclick="lostAll(false)">Ninguna</button>
       <button id="loGo" class="primary" ${running('rb_lost_replace')?'disabled':''} onclick="lostAsk()">Reparar</button></div>
     ${rows.length ? `<table><tr><th></th><th>En Rekordbox</th><th>¿Dónde está?</th><th>Playlists</th><th>Archivo que queda</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+// ---------- grillas dudosas en Rekordbox ----------
+// GR.data: {items:[{id,path,title,artist,genre,pls,npl,len,bpm,mik_bpm,sig,ext,why:[{c,t,s}],sev,audio}], total, hidden,
+//           measured, to_measure, summary, calib, decoder, rekordbox_running, playlist}
+let GR = {data:null, err:null, loading:false, sel:new Set(), f:'', q:''};
+const GRID_C = {nogrid:['Sin grilla','var(--miss)','Rekordbox no la ha analizado: arrástrala a «Analizar».'],
+  double:['BPM al doble','var(--miss)','Rekordbox le puso el doble del BPM (comparado con Mixed In Key o con lo normal del género).'],
+  half:['BPM a la mitad','var(--miss)','Rekordbox le puso la mitad del BPM.'],
+  offbeat:['En el contratiempo','var(--miss)','Medido en el audio: los kicks caen entre los tiempos de la grilla.'],
+  shift:['Grilla corrida','var(--miss)','Medido en el audio: el kick no cae sobre la grilla.'],
+  drift:['Se va corriendo','var(--miss)','Medido en el audio: al principio cuadra y al final no: el BPM no es exacto.'],
+  mik:['Distinto a MIK','var(--org)','Rekordbox y Mixed In Key no están de acuerdo en el BPM.'],
+  cues:['Cues fuera','var(--org)','Tus cues (casi siempre en el kick) caen todos corridos igual respecto a la grilla.'],
+  down:['El 1 no está en el kick','var(--org)','Medido en el audio: el primer kick no cae en el tiempo 1 del compás.'],
+  var:['Grilla variable','var(--org)','Grilla con BPM que cambia en un estilo de tempo fijo: probablemente se analizó en modo Dinámico.'],
+  cue1:['Un cue fuera','var(--mute)','Tu único cue cae fuera de la grilla.'],
+  dec:['BPM con decimales','var(--mute)','En estilos hechos en computador el BPM casi siempre es redondo.']};
+const GRID_AUDIO = {ok:['🎧 bien','var(--ok)','Medí el audio: el kick cae sobre la grilla.'], unclear:['🎧 sin kick claro','var(--mute)','No hay un kick claro para medir (o el bajo pesa igual que el kick): no se juzga.'],
+  err:['🎧 no se pudo leer','var(--mute)','No pude decodificar el audio.'], issue:['🎧 medida','var(--org)','Medí el audio.']};
+async function gridLoad(){
+  if(GR.loading) return; GR.loading = true; GR.err = null; if(S.view==='rbgrid') renderMain();
+  try{ const r = await api().grid_scan(); if(r.ok) gridSet(r); else GR.err = r.error; }
+  catch(e){ GR.err = String(e); }
+  GR.loading = false; render();
+}
+function gridSet(r){ GR.data = r; GR.sel = new Set(r.items.filter(x => x.sev >= 2).map(x => x.id)); }
+function gridVisible(){
+  const q = (GR.q||'').toLowerCase();
+  return (GR.data ? GR.data.items : []).filter(x => (!GR.f || x.why.some(w => w.c===GR.f) || (GR.f==='audio' && x.audio)) &&
+    (!q || (x.title+' '+x.artist+' '+x.genre+' '+x.pls.join(' ')).toLowerCase().includes(q)));
+}
+function gridView(){
+  const d = GR.data, busy = running('grid_audio') || running('grid_scan');
+  const head = `<div class="vhead"><h2>📐 Grillas dudosas</h2>
+    <span class="sub">Canciones de Rekordbox cuyo BPM o grilla probablemente está mal: sin grilla, BPM al doble o a la mitad, distinto a Mixed In Key, tus cues corridos respecto a la grilla, grilla variable en estilos de tempo fijo… Con <b>🎧 Medir</b> reviso en el audio dónde cae de verdad el kick. Solo leo: no cambio nada en Rekordbox.</span>
+    <div class="sp"><button onclick="gridLoad()" ${GR.loading||busy?'disabled':''}>${GR.loading?'Revisando…':'⟳ Revisar'}</button></div></div>`;
+  if(!d) return head + `<div class="empty"><p>${GR.err ? esc(GR.err) : 'Leyendo las grillas de tu colección…'}</p></div>`;
+  const sm = d.summary, all = d.items, n = c => sm[c]||0;
+  const tempo = n('double') + n('half') + n('mik'), place = n('shift') + n('drift') + n('offbeat') + n('cues') + n('down');
+  const cal = Object.entries(d.calib||{}).map(([e,v]) => `${e} ${v>0?'+':''}${v} ms`).join(', ');
+  const tb = gridVisible().slice(0, 500).map(x => {
+    const au = x.audio ? GRID_AUDIO[x.audio] : null;
+    return `<tr><td style="width:30px"><input type="checkbox" data-i="${esc(x.id)}" ${GR.sel.has(x.id)?'checked':''} onchange="this.checked?GR.sel.add(this.dataset.i):GR.sel.delete(this.dataset.i);gridSum()"></td>
+      <td style="width:34px">${pvBtn({source:x.path, id:'g'+x.id, name:x.title, artists:[x.artist]})}</td>
+      <td><div>${esc(x.title)}</div><div class="art">${esc(x.artist)}${x.genre?` · ${esc(x.genre)}`:''}${x.len?` · ${pvFmt(x.len)}`:''}</div>
+        <div class="art path" title="${esc(x.path)}" style="color:var(--mute)" onclick="reveal(${jsq(x.path)})">${esc(base(x.path))}</div></td>
+      <td class="mono" style="white-space:nowrap">${x.bpm?esc(String(x.bpm)):'—'}${x.mik_bpm?`<div class="art">MIK ${esc(String(x.mik_bpm))}</div>`:''}</td>
+      <td>${x.why.map(w => `<div style="margin-bottom:3px"><span class="chip" style="cursor:default;color:${(GRID_C[w.c]||[])[1]||'var(--text)'}" title="${esc((GRID_C[w.c]||[])[2]||'')}">${(GRID_C[w.c]||[w.c])[0]}</span> <span class="art">${esc(w.t)}</span></div>`).join('')}
+        ${au?`<span class="art" style="color:${au[1]}" title="${esc(au[2])}">${au[0]}</span>`:''}</td>
+      <td style="white-space:nowrap"><button class="ghost" style="font-size:12px;padding:3px 8px" title="Ya la revisé: no mostrarla más (vuelve a salir si cambias su grilla)" onclick="gridOk([${jsq(x.id)}])">✓ Está bien</button></td></tr>`; }).join('');
+  const rows = gridVisible();
+  const opts = Object.keys(GRID_C).filter(c => sm[c]).map(c => `<option value="${c}" ${GR.f===c?'selected':''}>${GRID_C[c][0]} (${sm[c]})</option>`).join('');
+  return head + `<div class="cards" style="grid-template-columns:repeat(4,1fr)">
+      <div class="card"><div class="k">Por revisar</div><div class="v" style="color:${all.length?'var(--org)':'var(--ok)'}">${all.length}</div></div>
+      <div class="card"><div class="k">BPM dudoso</div><div class="v" style="color:${tempo?'var(--miss)':'var(--text)'}">${tempo}</div></div>
+      <div class="card"><div class="k">Grilla corrida</div><div class="v" style="color:${place?'var(--miss)':'var(--text)'}">${place}</div></div>
+      <div class="card"><div class="k">Medidas en el audio</div><div class="v">${d.measured} <span class="art">/ ${d.measured + d.to_measure}</span></div></div></div>
+    <div class="box" style="margin-bottom:10px">
+      <b>🎧 Medir en el audio</b>: decodifico la canción y miro dónde cae el kick respecto a la grilla de Rekordbox (corrida al inicio, se va corriendo, el 1 fuera del kick, en el contratiempo). Tarda 1–2 s por canción; mido de a ${GR.max||250} por vuelta y lo medido queda guardado.
+      ${d.decoder ? '' : '<br><b style="color:var(--org)">En este computador no encontré con qué decodificar el audio (falta ffmpeg).</b> Las revisiones rápidas sí funcionan.'}
+      ${cal ? `<br><span class="art">Ajuste del decodificador (se descuenta solo): ${esc(cal)}.</span>` : (d.measured ? '<br><span class="art">Con pocas canciones medidas por tipo de archivo solo marco lo evidente (≥35 ms); con más medidas se afina.</span>' : '')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button ${busy||!d.decoder||!GR.sel.size?'disabled':''} onclick="gridAudio(false)">${running('grid_audio')?'Midiendo…':`🎧 Medir las marcadas (${GR.sel.size})`}</button>
+        <button class="ghost" ${busy||!d.decoder||!d.to_measure?'disabled':''} onclick="gridAudio(true)" title="Las que aún no están medidas, de a 250">🎧 Medir toda la colección${d.to_measure?` (faltan ${d.to_measure})`:''}</button></div></div>
+    <div class="box" style="margin-bottom:10px"><b>Cómo arreglarlas en Rekordbox:</b> pásalas a una playlist con el botón de abajo; en cada una abre la edición de grilla, pon el cabezal en el primer kick y usa «fijar el 1 aquí»; si al final se corre, ajusta el BPM (en electrónica, redondo); escucha con el metrónomo y <b>bloquea</b> la pista. BPM al doble/mitad: ×2 o ÷2. Sin grilla: «Analizar» (Normal para electrónica, Dinámico solo para música en vivo).
+      ${d.hidden ? `<br><span class="art">${d.hidden} marcada(s) como «Está bien» no se muestran. <a class="lnk" onclick="gridShowHidden()">Mostrarlas otra vez</a></span>` : ''}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select onchange="GR.f=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit">
+        <option value="">Todas (${all.length})</option>${opts}<option value="audio" ${GR.f==='audio'?'selected':''}>Medidas en el audio</option></select>
+      <input placeholder="Buscar…" value="${esc(GR.q)}" oninput="GR.q=this.value; clearTimeout(GR.t); GR.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
+      <button class="ghost" onclick="gridAll(true)">Marcar las de la lista</button><button class="ghost" onclick="gridAll(false)">Ninguna</button>
+      <button class="ghost" ${GR.sel.size?'':'disabled'} onclick="gridOk([...GR.sel])" title="Ya las revisé: no mostrarlas más">✓ Están bien</button>
+      <button id="grGo" class="primary" ${running('grid_playlist')||!GR.sel.size?'disabled':''} onclick="gridAsk()">Pasar a Rekordbox</button></div>
+    ${!all.length ? `<div class="empty"><h3>Ninguna grilla dudosa 🎉</h3><p>Revisé ${d.total} canciones de tu colección.${d.to_measure?' Mide el audio para revisar también dónde cae el kick.':''}</p></div>` :
+      rows.length ? `<table><tr><th></th><th></th><th>Canción</th><th>BPM</th><th>Qué pasa</th><th></th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
+}
+function gridSum(){
+  const b = $('grGo'), n = GR.sel.size;
+  if(b){ b.disabled = !n || running('grid_playlist'); b.textContent = running('grid_playlist') ? 'Pasando…' : n ? `Pasar ${n} a Rekordbox` : 'Pasar a Rekordbox'; }
+}
+function gridAll(on){ gridVisible().forEach(x => on ? GR.sel.add(x.id) : GR.sel.delete(x.id)); renderMain(); }
+async function gridAudio(every){
+  const ids = every ? [] : [...GR.sel];
+  setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
+  const r = await api().grid_audio(ids, !!every);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  const keep = new Set(GR.sel); gridSet(r); GR.sel = new Set([...keep].filter(i => r.items.some(x => x.id===i)));
+  const bad = r.items.filter(x => x.why.some(w => ['shift','drift','down','offbeat'].includes(w.c))).length;
+  toast(`🎧 Medí <b>${r.just_measured}</b> canción(es). ${bad ? `<b>${bad}</b> con la grilla fuera del kick.` : 'Ninguna nueva con la grilla fuera del kick.'}${r.left ? ` Faltan ${r.left}: dale otra vez para seguir.` : ''}`);
+  render();
+}
+async function gridOk(ids){
+  const marks = (GR.data ? GR.data.items : []).filter(x => ids.includes(x.id)).map(x => ({id:x.id, sig:x.sig}));
+  if(!marks.length) return;
+  await api().grid_ok(marks, true);
+  GR.data.items = GR.data.items.filter(x => !ids.includes(x.id)); GR.data.hidden += marks.length;
+  const sm = {}; GR.data.items.forEach(x => x.why.forEach(w => sm[w.c] = (sm[w.c]||0) + 1)); GR.data.summary = sm;
+  ids.forEach(i => GR.sel.delete(i)); render();
+}
+async function gridShowHidden(){ await api().grid_show_hidden(); gridLoad(); }
+function gridAsk(){
+  const n = GR.sel.size; if(!n) return;
+  modal(`<h3>Pasar ${n} ${n===1?'canción':'canciones'} a Rekordbox</h3>
+    <p>Quedan en la playlist <b>${esc(GR.data.playlist)}</b> (en la raíz de tu colección; si ya existía, se reemplaza su contenido) para que las revises una por una.</p>
+    <div class="box">Rekordbox tiene que estar cerrado; respaldo la librería antes. Solo se arma la playlist: no cambio las canciones, sus grillas ni sus cues.</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="gridGo()">Pasar ${n}</button></div>`);
+}
+async function gridGo(){
+  closeModal(); const ids = (GR.data ? GR.data.items : []).filter(x => GR.sel.has(x.id)).map(x => x.id);
+  setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
+  const r = await api().grid_playlist(ids);
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  toast(`✅ <b>${r.added}</b> canción(es) en la playlist «${esc(r.name)}» de Rekordbox. Ábrelo y revísalas; cuando termines, dale ⟳ Revisar aquí.`);
+  renderMain();
 }
 // ---------- canciones sin playlist: elegir a cuál llevarlas ----------
 // NP.data: {rows:[{path, where, artist, title, suggest}], playlists:[{id,name,source}]}

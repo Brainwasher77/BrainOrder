@@ -4048,6 +4048,220 @@ class Api:
             return res
         return self._task(run, "rb_lost", "Revisar perdidas en Rekordbox")
 
+    # ---------- grillas dudosas en Rekordbox ----------
+    _GRID_FILE = config.SUPPORT_DIR / "grillas.json"  # mediciones del audio: {id: {"sig", "m"}}
+    GRID_NAME = "BrainOrder · Grillas por revisar"
+    GRID_MAX = 250  # canciones a medir por vuelta (cada una tarda ~1-2 s)
+
+    def _rb_read(self, fn, tag="grillas"):
+        """Corre fn(con) sobre master.db en solo lectura (o sobre una copia si la lectura directa falla)."""
+        path = rekordbox_sync.RB_DIR / "master.db"
+        if not path.exists():
+            raise rekordbox_sync.RekordboxError("No encontré la librería de Rekordbox en este computador.")
+        try:
+            con = rekordbox_sync.connect_ro()
+        except Exception as e:
+            config.log(f"{tag}: lectura directa falló ({e!r}); uso una copia")
+            con = None
+        if con is not None:
+            try:
+                return fn(con)
+            finally:
+                con.close()
+        import shutil
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="brainorder-rb-"))
+        try:
+            for suf in ("", "-wal", "-shm"):
+                f = path.with_name("master.db" + suf)
+                if f.exists():
+                    shutil.copy2(f, tmp / ("master.db" + suf))
+            con = rekordbox_sync.connect_ro(tmp / "master.db")
+            try:
+                return fn(con)
+            finally:
+                con.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _grid_cache(self):
+        try:
+            data = json.loads(self._GRID_FILE.read_text("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _grid_cache_save(self, data):
+        try:
+            tmp = self._GRID_FILE.with_name("." + self._GRID_FILE.name + ".tmp")
+            tmp.write_text(json.dumps(data), "utf-8")
+            os.replace(tmp, self._GRID_FILE)
+        except OSError as e:
+            config.log(f"grillas: no pude guardar las mediciones: {e!r}")
+
+    def _grid_tracks(self):
+        import grillas
+        return self._rb_read(lambda con: grillas.read_collection(con, rekordbox_sync.RB_DIR / "share"))
+
+    def _grid_data(self, tracks=None):
+        import armonia
+        import grillas
+        if tracks is None:
+            self._progress("Leyendo las grillas de Rekordbox…", 0.02)
+            tracks = self._grid_tracks()
+        oks = self._cfg.get("grid_ok") or {}
+        cache = self._grid_cache()
+        calib = grillas.calibration([(os.path.splitext(t["path"])[1].lower(), cache[t["id"]]["m"])
+                                     for t in tracks if t["id"] in cache and cache[t["id"]].get("sig") == t["sig"]])
+        items, hidden, measured, n = [], 0, 0, len(tracks)
+        for i, t in enumerate(tracks):
+            if i % 250 == 0:
+                self._progress(f"Revisando grillas {i}/{n}…", 0.05 + 0.9 * i / max(1, n))
+            try:
+                mik = armonia.info(plataforma.native(t["path"])).get("bpm")
+            except Exception:
+                mik = None
+            why = grillas.check(t, mik)
+            c = cache.get(t["id"])
+            audio = None
+            if c and c.get("sig") == t["sig"]:
+                measured += 1
+                m = c.get("m") or {}
+                aw = grillas.audio_reasons(m, os.path.splitext(t["path"])[1].lower(), calib)
+                why += aw
+                audio = "err" if m.get("err") else "unclear" if m.get("unclear") else "issue" if aw else "ok"
+            if not why:
+                continue
+            if oks.get(t["id"]) == t["sig"]:
+                hidden += 1
+                continue
+            it = grillas.item(t, why, mik)
+            it["audio"] = audio
+            items.append(it)
+        try:
+            armonia.save()
+        except Exception:
+            pass
+        items.sort(key=lambda x: (-x["sev"], x["artist"].lower(), x["title"].lower()))
+        dec = grillas.decoder()
+        with_grid = sum(1 for t in tracks if t["grid"])
+        return {"items": items, "total": n, "hidden": hidden, "measured": measured,
+                "to_measure": max(0, with_grid - measured),
+                "summary": grillas.summary(items), "calib": calib, "decoder": dec[0] if dec else None,
+                "rekordbox_running": rekordbox_sync.rekordbox_running(), "playlist": self.GRID_NAME}
+
+    def grid_scan(self):
+        """Grillas dudosas: canciones de Rekordbox cuyo BPM o grilla probablemente están mal (solo lee)."""
+        def run():
+            res = self._grid_data()
+            self._progress("Listo.", 1)
+            return res
+        return self._task(run, "grid_scan", "Revisar grillas de Rekordbox")
+
+    def grid_audio(self, ids=None, every=False):
+        """Mide en el audio dónde caen los kicks respecto a la grilla (de a GRID_MAX por vuelta).
+        ids: esas canciones; every=True: toda la colección que aún no está medida."""
+        want = [str(i) for i in dict.fromkeys(ids or [])]
+
+        def run():
+            import grillas
+            dec = grillas.decoder()
+            if dec is None:
+                raise rekordbox_sync.RekordboxError(
+                    "Para medir el audio necesito ffmpeg y no lo encontré en este computador "
+                    "(en Mac no hace falta: se usa el del sistema).")
+            self._progress("Leyendo las grillas de Rekordbox…", 0.01)
+            tracks = self._grid_tracks()
+            by = {t["id"]: t for t in tracks}
+            cache = self._grid_cache()
+            pool = [t["id"] for t in tracks] if every else want
+            todo = [by[i] for i in pool if i in by and by[i]["grid"]
+                    and (cache.get(i) or {}).get("sig") != by[i]["sig"]]
+            left = max(0, len(todo) - self.GRID_MAX)
+            todo = todo[:self.GRID_MAX]
+            for k, t in enumerate(todo, 1):
+                self._progress(f"Midiendo {k}/{len(todo)}: {t['artist']} – {t['title']}"[:140], 0.9 * k / max(1, len(todo)))
+                m = grillas.measure(plataforma.native(t["path"]), t["grid"], dec)
+                cache[t["id"]] = {"sig": t["sig"], "m": m}
+                if k % 20 == 0:
+                    self._grid_cache_save(cache)
+            self._grid_cache_save(cache)
+            res = self._grid_data(tracks)
+            res.update(just_measured=len(todo), left=left)
+            self._progress("Listo.", 1)
+            return res
+        return self._task(run, "grid_audio", "Medir grillas en el audio")
+
+    def grid_ok(self, marks, ok=True):
+        """«Está bien»: oculta esas canciones (marks = [{id, sig}]) mientras su grilla no cambie."""
+        cur = dict(self._cfg.get("grid_ok") or {})
+        for x in marks or []:
+            if not isinstance(x, dict) or not x.get("id"):
+                continue
+            if ok:
+                cur[str(x["id"])] = x.get("sig") or ""
+            else:
+                cur.pop(str(x["id"]), None)
+        self._cfg["grid_ok"] = cur
+        config.save(self._cfg)
+        return {"ok": True, "hidden": len(cur)}
+
+    def grid_show_hidden(self):
+        """Vuelve a mostrar todas las que marcaste como «Está bien»."""
+        self._cfg["grid_ok"] = {}
+        config.save(self._cfg)
+        return {"ok": True}
+
+    def grid_playlist(self, ids):
+        """Playlist «BrainOrder · Grillas por revisar» en Rekordbox con esas canciones (reemplaza la anterior).
+        Solo arma la playlist: no toca las canciones, sus grillas ni sus cues."""
+        ids = [str(i) for i in dict.fromkeys(ids or [])]
+
+        def run():
+            if not ids:
+                return {"added": 0}
+            try:
+                from pyrekordbox import MasterDatabase as Rekordbox6Database
+            except ImportError:
+                from pyrekordbox import Rekordbox6Database
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y vuelve a intentarlo.")
+            self._progress("Respaldando la librería de Rekordbox…", 0.1)
+            bk = rekordbox_sync.backup()
+            db = Rekordbox6Database(path=rekordbox_sync.RB_DIR / "master.db")
+            added = 0
+            try:
+                pl = rekordbox_sync._find_child(db, "root", self.GRID_NAME, 0)
+                if pl is None:
+                    pl = db.create_playlist(self.GRID_NAME)
+                else:
+                    for song in list(pl.Songs):
+                        db.remove_from_playlist(pl, song)
+                for k, i in enumerate(ids, 1):
+                    if k % 100 == 0:
+                        self._progress(f"Rekordbox: {k}/{len(ids)}", 0.2 + 0.7 * k / len(ids))
+                    c = db.get_content(ID=i)
+                    if c is not None:
+                        db.add_to_playlist(pl, c)
+                        added += 1
+                db.commit()
+            except Exception as e:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                config.log(f"grillas: playlist en Rekordbox: {e!r}")
+                raise rekordbox_sync.RekordboxError(f"No pude crear la playlist en Rekordbox (no se guardó nada): {e}")
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            config.log(f"Grillas por revisar: {added} canciones en Rekordbox (respaldo {bk.name})")
+            self._progress("Listo.", 1)
+            return {"added": added, "backup": bk.name, "name": self.GRID_NAME}
+        return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
+
     def _rescue_scan(self):
         import rescate
         try:
