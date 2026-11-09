@@ -457,6 +457,26 @@ const camRank = k => { const m=/^(\d+)([AB])$/.exec(k||''); return m ? (+m[1])*2
 
 // ---------- carpetas nuevas en tu carpeta de playlists -> ¿importarlas como playlist? ----------
 let FD = {data:null};
+// ---------- qué orden manda: se pregunta una vez a cada quien (2.32.1) ----------
+function orderAsk(){
+  if($('mbg').classList.contains('show')){ setTimeout(orderAsk, 4000); return; }  // otro diálogo abierto: después
+  const card = (v, title, txt, rec) => `<label class="box" style="display:flex;gap:12px;align-items:flex-start;cursor:pointer;margin:10px 0">
+      <input type="radio" name="ordAsk" value="${v}" ${rec?'checked':''} style="margin-top:4px"><span><b>${title}</b>${rec?' <span class="bdg" style="color:var(--ok);border-color:var(--ok)">recomendado si armas tus sets en Rekordbox</span>':''}<br><span class="art">${txt}</span></span></label>`;
+  modal(`<h3>🎚️ ¿Qué orden manda en tu música?</h3>
+    <p class="art">Desde esta versión hay <b>un solo orden para todo</b>: BrainOrder, Rekordbox y tus programas de DJ, la lista <code>_nombre.m3u8</code> de cada carpeta y tus playlists. Elige cuál manda; se guarda y se mantiene (lo puedes cambiar cuando quieras en «Cambios en Rekordbox»).</p>
+    ${card('rb', '👑 Rekordbox', 'El orden en que tienes cada playlist en Rekordbox es el de todo. Si lo cambias allá (o pasas una canción a otra playlist), se hace solo en BrainOrder, en la lista de la carpeta y en tus playlists de Spotify, y el archivo se muda a su carpeta. Lo nuevo de Spotify entra al final.', true)}
+    ${card('pl', '🟢 Spotify (u otra plataforma)', 'Cada playlist sigue el orden de donde viene: Spotify, Deezer o el archivo exportado. Al Organizar, Rekordbox y tus programas quedan en ese orden. Lo que cambies en Rekordbox te lo pregunto uno por uno.')}
+    <div class="actions"><button onclick="closeModal();toast('Te lo vuelvo a preguntar la próxima vez que abras BrainOrder.')">Decidir después</button>
+      <button class="primary" onclick="orderPick()">Usar este orden</button></div>`);
+}
+async function orderPick(){
+  const v = (document.querySelector('input[name=ordAsk]:checked')||{}).value; if(!v) return;
+  closeModal();
+  const r = await api().rb_master_set(v==='rb'); if(r && r.analysis) setAnalysis(r.analysis);
+  toast(v==='rb' ? '👑 Listo: manda el orden de Rekordbox. Dale Organizar (con Rekordbox cerrado) para que todo quede así, también Spotify.'
+                 : '🟢 Listo: manda el orden de cada plataforma. Dale Organizar para que Rekordbox y tus programas queden así.');
+  rbLoad();
+}
 // ---------- carpetas de accesos directos (2.32.0) ----------
 let SC = {items:[]};
 async function scLoad(){ try{ const r = await api().shortcut_roots(); if(r.ok){ SC = r; if(S.view==='folders') render(); } }catch(e){} }
@@ -3812,6 +3832,7 @@ window.addEventListener('pywebviewready', async () => {
   if(S.analysis) $('progTxt').textContent = 'Mostrando el último análisis. Toca Analizar para actualizar.';
   S.settings.setup_done = !!st.setup_done;
   if(!st.setup_done){ openWizard(); return; }
+  if(st.order_ask) setTimeout(orderAsk, 900);
   // las playlists de otros ya no salen en una ventana al abrir: quedan en su sección «Playlists de otros»
 });
 $('mbg').addEventListener('click', e => { if(e.target.id==='mbg') closeModal(); });

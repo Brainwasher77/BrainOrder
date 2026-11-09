@@ -375,6 +375,9 @@ class Api:
             "inbox_count": self._inbox_count(),
             "rules": reglas.get(self._cfg),
             "setup_done": bool(self._cfg.get("setup_done")),
+            # cada quien elige qué orden manda (se pregunta una vez, al actualizar o al terminar de instalar)
+            "order_ask": not self._cfg.get("order_chosen") and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg),
+            "rb_master": self._rb_master(),
             "spotify_paused": spotify_api.paused_until(),
             "spotify_queue": len(__import__("cola_spotify").load()),
             "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
@@ -4127,6 +4130,7 @@ class Api:
     def rb_master_set(self, on=True):
         """Qué orden manda (se guarda y se mantiene): Rekordbox (True) o la plataforma de cada playlist."""
         self._cfg["rb_master"] = bool(on)
+        self._cfg["order_chosen"] = True  # ya lo decidiste: no se vuelve a preguntar
         config.save(self._cfg)
         analysis = None
         try:

@@ -1,5 +1,5 @@
 {
-  "version": "2.32.0",
-  "build": 79,
-  "notes": "Nuevo: eliges qué orden manda (Rekordbox o la plataforma) y ese orden queda en todo: BrainOrder, Rekordbox, una lista .m3u8 en cada carpeta y Spotify (si manda Rekordbox, también cuando cambias el orden allá). Al pasar una canción de una playlist a otra en Rekordbox, su archivo se muda también. Nuevo «Quitar accesos directos» para carpetas como «Playlists rekordbox» (Rekordbox pasa a tus archivos reales y los accesos van a la Papelera)."
+  "version": "2.32.1",
+  "build": 80,
+  "notes": "Al actualizar, BrainOrder te pregunta qué orden manda (Rekordbox o Spotify / tu plataforma). Lo eliges una vez y se mantiene; se cambia cuando quieras en «Cambios en Rekordbox»."
 }
