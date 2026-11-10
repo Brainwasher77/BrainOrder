@@ -1,5 +1,5 @@
 {
-  "version": "2.33.2",
-  "build": 83,
-  "notes": "Arreglo: las playlists de tus subcarpetas de Rekordbox que salían vacías en BrainOrder (📁 0/0, por ejemplo las ADC o las de Brainwasher Hard/Soft) aparecen en «🛟 Recuperar playlists de un respaldo» y al recuperarlas quedan con su música."
+  "version": "2.33.3",
+  "build": 84,
+  "notes": "Arreglo: en Reorganizar, el selector «Elegir para todo el grupo…» ahora muestra lo que elegiste (o «Varias opciones» si cambias canciones sueltas)."
 }

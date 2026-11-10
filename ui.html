@@ -2174,7 +2174,14 @@ function rgOptions(pl, r){
   return o;
 }
 function rgDest(pl, r, c){ return c==='home' ? r.dest_dir : c==='here' ? pl.folder : null; }
-function rgSet(src, c){ RG.choice[src]=c; rgCount(); }
+function rgSet(src, c){ RG.choice[src]=c; rgCount(); rgGroupPaint(dirOf(src)); }
+// lo que muestra el selector del grupo: la opción si todas las del grupo tienen la misma; si no, «Varias»
+function rgGroupVal(rs){ const v = new Set(rs.map(r=>RG.choice[r.source]||'keep')); return v.size===1 ? [...v][0] : ''; }
+function rgGroupPaint(dir){
+  const pl=S.analysis[RG.i]; const rs = reorgRows(pl, RG.showPinned).filter(r=>dirOf(r.source)===dir);
+  const el = document.querySelector(`select.rgG[data-dir="${CSS.escape(dir)}"]`); if(!el) return;
+  const v = rgGroupVal(rs); el.value = v; el.options[0].text = v ? 'Elegir para todo el grupo…' : 'Varias opciones';
+}
 function rgGroup(dir, c){
   const pl=S.analysis[RG.i];
   reorgRows(pl, RG.showPinned).filter(r=>dirOf(r.source)===dir).forEach(r=>{
@@ -2207,7 +2214,7 @@ function reorgView(i){
       const opts = [['', 'Elegir para todo el grupo…'], ['keep','Dejar todas donde están'], ['home','Todas a su carpeta'], ['here','Todas a esta playlist']];
       return `<details class="rgg" ${sorted.length<=3?'open':''}><summary>
         <span class="path" onclick="event.preventDefault();reveal(${jsq(d)})">📁 ${esc(short(d))}</span><span class="badge mono">${rs.length}</span>
-        <select class="rg" onclick="event.stopPropagation()" onchange="if(this.value) rgGroup(${jsq(d)},this.value)">${opts.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></summary>
+        ${(()=>{ const gv = rgGroupVal(rs); return `<select class="rg rgG" data-dir="${esc(d)}" onclick="event.stopPropagation()" onchange="if(this.value) rgGroup(${jsq(d)},this.value)">${opts.map(([v,t],k)=>`<option value="${v}" ${v===gv?'selected':''}>${k===0&&!gv?'Varias opciones':t}</option>`).join('')}</select>`; })()}</summary>
         <table>${rs.map(r=>`<tr><td><div>${esc(r.name)}${S.pinned.has(r.source)?' <span class="art">(fijada)</span>':''}</div><div class="art">${esc(r.artists.join(', '))} · ${esc(base(r.source))}</div></td>
           <td style="width:42%">${sel(r)}</td></tr>`).join('')}</table></details>`;}).join('')
       : `<div class="empty"><h3>Nada que reorganizar</h3><p>Todas las canciones que tienes de esta playlist están en su carpeta${pinnedN?' o ya decidiste dejarlas donde están':''}.</p></div>`}
