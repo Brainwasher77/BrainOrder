@@ -2539,6 +2539,45 @@ window.onRbChanges = info => {
   toast(`🎛️ Cambiaste ${info.count} cosa${info.count!==1?'s':''} en Rekordbox (${info.names.map(esc).join(', ')}).<br><a class="lnk" onclick="show('rbchg')">¿Lo hago también en Spotify? → Revisar</a>`);
 };
 async function reconnectSpotify(){ try{ await api().disconnect(); }catch(e){} S.connected=false; await connect(); rbLoad(); }
+// ---------- recuperar playlists de Rekordbox desde un respaldo (2.33.1) ----------
+let RST = {open:false, backups:null, sel:'', scan:null, picks:new Set(), loading:false};
+function restBox(){
+  if(!RST.open) return `<div style="text-align:right;margin:-4px 0 10px"><button onclick="restOpen()">🛟 Recuperar playlists de un respaldo…</button></div>`;
+  const b = RST.backups;
+  const fmt = t => new Date(t*1000).toLocaleString('es-CO',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  const opts = b ? b.items.map(x=>`<option value="${esc(x.name)}" ${x.name===RST.sel?'selected':''}>${fmt(x.time)}${x.recommended?'  ← recomendado':''}</option>`).join('') : '';
+  const sc = RST.scan;
+  const rows = sc && sc.items.length ? `<table><tr><th></th><th>Playlist</th><th>En el respaldo</th><th>Ahora</th></tr>${sc.items.map(x=>`<tr>
+      <td><input type="checkbox" ${RST.picks.has(x.id)?'checked':''} onchange="RST.picks[this.checked?'add':'delete']('${x.id}');paintRest()"></td>
+      <td>${esc(x.trail)}${x.order_only?' <span class="art">(solo el orden)</span>':''}${x.glued?' <span class="art">(estaba unida por el nombre a otra playlist de BrainOrder: se separa)</span>':''}</td><td>${x.before}</td>
+      <td>${x.now}${x.added?` <span style="color:var(--org)">+${x.added}</span>`:''}${x.removed?` <span style="color:var(--org)">−${x.removed}</span>`:''}</td></tr>`).join('')}</table>` : '';
+  return `<div class="box" id="restBox" style="margin-bottom:12px;border-color:var(--ok)">
+    <b>🛟 Recuperar playlists de un respaldo</b>
+    <div class="art" style="margin:4px 0 8px">Rekordbox se respalda antes de cada cambio de BrainOrder. Eliges un respaldo, ves qué playlists cambiaron desde entonces y las dejas como estaban (canciones y orden). Después cada canción vuelve a su carpeta. Rekordbox cerrado; antes se hace otro respaldo de cómo está ahora.</div>
+    ${!b ? '<div class="art">Buscando respaldos…</div>' : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select onchange="RST.sel=this.value;restScan()">${opts}</select>
+      ${RST.loading?'<span class="art">Comparando…</span>':''}</div>`}
+    ${sc ? (sc.items.length ? `<div style="margin-top:10px">${rows}</div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px"><button onclick="RST.picks=new Set(RST.scan.items.map(x=>x.id));paintRest()">Marcar todas</button>
+      <button class="primary" ${!RST.picks.size||running('rb_restore')?'disabled':''} onclick="restRun()">${running('rb_restore')?'Recuperando…':`Recuperar ${RST.picks.size} playlist(s)`}</button></div>`
+      : '<div class="art" style="margin-top:8px">Desde ese respaldo no cambió ninguna playlist.</div>') : ''}
+    <div style="text-align:right;margin-top:6px"><button onclick="RST.open=false;renderMain()">Cerrar</button></div></div>`;
+}
+function paintRest(){ if(S.view==='rbchg') renderMain(); }
+async function restOpen(){ RST.open = true; paintRest();
+  const r = await api().rb_backups(); RST.backups = r;
+  RST.sel = ((r.items||[]).find(x=>x.recommended) || (r.items||[])[0] || {}).name || ''; paintRest(); if(RST.sel) restScan(); }
+async function restScan(){ RST.loading = true; RST.scan = null; paintRest();
+  const r = await api().rb_restore_scan(RST.sel); RST.loading = false;
+  if(!r.ok){ toast(esc(r.error||'No pude leer ese respaldo.')); paintRest(); return; }
+  RST.scan = r; RST.picks = new Set(r.items.filter(x => x.trail.split('/').length > 2).map(x=>x.id)); paintRest(); }
+async function restRun(){
+  setTimeout(paintRest, 150);
+  const r = await api().rb_restore_run(RST.sel, [...RST.picks]); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist();
+  const x = r.result || {};
+  toast(`🛟 Listo: ${x.restored} playlist(s) quedaron como estaban en el respaldo${x.missing?` (${x.missing} canción(es) ya no están en tu colección)`:''}.` + mirrorMsg(x.mirror));
+  RST = {open:false, backups:null, sel:'', scan:null, picks:new Set(), loading:false}; rbLoad();
+}
 // ---------- playlists que se tragaron una carpeta de Rekordbox (2.33.0) ----------
 let ABS = [];
 function absBox(){
@@ -2622,7 +2661,7 @@ function rbView(){
   const head = `<div class="vhead"><h2>Cambios en Rekordbox</h2><span class="sub">Lo que cambiaste a mano dentro de la carpeta «${esc(S.settings.rekordbox_folder)}» de Rekordbox.${d && d.master ? ' Las canciones que agregas o quitas pasan solas; aquí queda lo demás (playlists nuevas, borradas, renombradas o lo que no pude pasar).' : ' Elige si también va a Spotify.'}</span>
     <div class="sp"><button onclick="rbLoad()">⟳ Revisar</button></div></div>`;
   if(!d) return head + `<div class="empty"><p>${RBC.err?esc(RBC.err):'Leyendo Rekordbox…'}</p></div>`;
-  const mbox = absBox() + rbMasterBox(d) + mirrorBox();
+  const mbox = restBox() + absBox() + rbMasterBox(d) + mirrorBox();
   const warn = !d.spotify.connected ? `<div class="box warn">Spotify no está conectado. <button onclick="connect()">Conectar Spotify</button></div>`
     : !d.spotify.can_write ? `<div class="box warn">Para pasar cambios a Spotify, BrainOrder necesita permiso de <b>editar tus playlists</b>. <button onclick="reconnectSpotify()">Reconectar Spotify</button></div>` : '';
   const keep = (d.keep||[]).map(pid=>({pid, pl:(S.analysis||[]).find(p=>p.id===pid)}));

@@ -186,31 +186,31 @@ def _our_tree(db, cfg, create=True):
     return root, rb_arbol.playlists(rows, rid), False
 
 
-def _pick(inside, name, prefer=None):
-    """La playlist con ese nombre dentro del árbol: primero la de la foto (prefer), luego la que esté en una
-    subcarpeta tuya (ahí la pusiste a propósito), luego la suelta."""
+def _pick(inside, name, prefer=None, loose_only=True):
+    """La playlist de BrainOrder dentro del árbol: la de la foto (prefer = su id, esté donde esté, también si la
+    metiste en una subcarpeta) o, si no, una SUELTA con ese nombre. Nunca se casa por nombre con una playlist
+    de tus subcarpetas: puede ser otra distinta que se llama igual (MGNO/Pop latino no es tu «Pop latino»)."""
     if prefer and str(prefer) in inside:
         return str(prefer)
-    hits = [rid for rid, v in inside.items() if v["name"] == name]
-    if not hits:
-        return None
-    return sorted(hits, key=lambda r: (not inside[r]["folder"], r))[0]
+    hits = [rid for rid, v in inside.items() if v["name"] == name and (not loose_only or not v["folder"])]
+    return sorted(hits)[0] if hits else None
 
 
-def _twins(db, root, inside, keep_ids):
-    """Playlists repetidas por el error de antes (las movías a una subcarpeta y Organizar volvía a crear una
-    suelta con el mismo nombre): se queda la de tu subcarpeta; a esa se le suma lo que solo tenía la suelta
-    y la suelta se quita (las canciones siguen en tu colección). -> [ids quitados]"""
+def _twins(db, root, inside, pid_of):
+    """Playlists repetidas por el error de antes (la movías a una subcarpeta y Organizar volvía a crear una
+    suelta): SOLO cuando las dos son la MISMA playlist de BrainOrder (mismo id en la foto). Se queda la de tu
+    subcarpeta, se le suma lo que solo tenía la suelta y la suelta se quita. -> [ids quitados]"""
     out = []
-    by_name = {}
+    by_pid = {}
     for rid, v in inside.items():
-        by_name.setdefault(v["name"], []).append(rid)
-    for name, ids in by_name.items():
+        if pid_of.get(rid):
+            by_pid.setdefault(pid_of[rid], []).append(rid)
+    for _pid, ids in by_pid.items():
         loose = [r for r in ids if not inside[r]["folder"]]
         nested = [r for r in ids if inside[r]["folder"]]
         if not loose or not nested:
             continue
-        keep = next((r for r in nested if r in keep_ids), nested[0])
+        keep = nested[0]
         kp = db.get_playlist(ID=keep)
         have = {str(s.ContentID) for s in kp.Songs}
         for r in loose:
@@ -294,11 +294,14 @@ def sync(analysis, cfg, progress=None):
         root, inside, made = _our_tree(db, cfg)
         if made:
             stats["playlists_created"] += 1
-        base_ids = {}
+        base_ids, pid_of = {}, {}
         for rid, b in (cfg.get("_rb_base") or {}).items():
             if b.get("pid"):
-                base_ids.setdefault(b["pid"], str(rid))
-        gone = _twins(db, root, inside, set(base_ids.values()))
+                pid_of[str(rid)] = b["pid"]
+                # la de una subcarpeta tuya manda sobre una suelta repetida
+                if b["pid"] not in base_ids or (str(rid) in inside and inside[str(rid)]["folder"]):
+                    base_ids[b["pid"]] = str(rid)
+        gone = _twins(db, root, inside, pid_of)
         if gone:
             stats["twins_removed"] = len(gone)
             stats["twins_ids"] = gone
@@ -409,7 +412,7 @@ def edit_playlists(cfg, renames=None, deletes=None):
     db = Rekordbox6Database(path=RB_DIR / "master.db")
     try:
         root, inside, _m = _our_tree(db, cfg, create=False)
-        todo = root is not None and (any(_pick(inside, o) for o in renames) or any(_pick(inside, n) for n in deletes))
+        todo = root is not None and (any(_pick(inside, o, loose_only=False) for o in renames) or any(_pick(inside, n) for n in deletes))
         if not todo:
             return {"renamed": 0, "deleted": 0, "backup": None}
     except Exception:
@@ -644,4 +647,99 @@ def lift_folders(cfg, folder_ids, drop_ids):
         except Exception:
             pass
     log(f"Rekordbox: carpetas pasadas a la de BrainOrder {out}")
+    return out
+
+
+# ------------------------------------------------------------------ recuperar playlists de un respaldo
+def list_backups():
+    """Respaldos de la librería que hay al lado de master.db (los de BrainOrder y los de Rekordbox), más nuevo
+    primero. -> [{"name", "path", "time"}]"""
+    out = []
+    for p in RB_DIR.glob("master.backup*.db"):
+        try:
+            out.append({"name": p.name, "path": str(p), "time": p.stat().st_mtime})
+        except OSError:
+            pass
+    return sorted(out, key=lambda x: x["name"], reverse=True)
+
+
+def _open(path):
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    return Rekordbox6Database(path=path)
+
+
+def playlists_of(path):
+    """{id: {"name", "trail": "Carpeta/Sub/Playlist", "ids": [ContentID en orden]}} de una librería."""
+    db = _open(path)
+    try:
+        import rb_arbol
+        rows = rb_arbol.db_rows(db)
+        by = {str(r[0]): r for r in rows}
+        out = {}
+        for r in rows:
+            if int(r[3] or 0) != 0:
+                continue
+            trail, cur, n = [r[1]], str(r[2]), 0
+            while cur in by and n < 50:
+                trail.append(by[cur][1])
+                cur, n = str(by[cur][2]), n + 1
+            out[str(r[0])] = {"name": r[1], "trail": "/".join(reversed(trail)), "ids": []}
+        from sqlalchemy import text
+        q = text("SELECT PlaylistID, ContentID FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 "
+                 "ORDER BY PlaylistID, COALESCE(TrackNo, 0)")
+        for pid, cid in db.session.execute(q):
+            if str(pid) in out:
+                out[str(pid)]["ids"].append(str(cid))
+        return out
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+def restore_playlists(backup_path, ids):
+    """Deja esas playlists con las canciones y el orden que tenían en el respaldo (las canciones que ya no
+    estén en tu colección se saltan). Rekordbox cerrado y respaldo de ahora antes. -> {"restored", "missing"}"""
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo para recuperar las playlists.")
+    old = playlists_of(backup_path)
+    bk = backup()
+    db = _open(RB_DIR / "master.db")
+    out = {"restored": 0, "missing": 0, "backup": bk.name}
+    try:
+        for pid in ids:
+            want = old.get(str(pid))
+            p = db.get_playlist(ID=str(pid))
+            if want is None or p is None:
+                continue
+            for s in list(p.Songs):
+                db.remove_from_playlist(p, s)
+            for cid in want["ids"]:
+                try:
+                    c = db.get_content(ID=cid)
+                except Exception:
+                    c = None
+                if c is None:
+                    out["missing"] += 1
+                    continue
+                db.add_to_playlist(p, c)
+            out["restored"] += 1
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error recuperando playlists: {e!r}")
+        raise RekordboxError(f"No pude recuperarlas (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    log(f"Rekordbox: playlists recuperadas de {Path(backup_path).name}: {out}")
     return out

@@ -38,7 +38,9 @@ def trails(state, baseline, analysis, ref_pids=None):
     out = {}
     for rid, v in (state or {}).items():
         trail = [x for x in v.get("folder") or [] if x]
-        pid = (baseline.get(rid) or {}).get("pid") or (ref_pids or {}).get(rid) or by_name.get(v.get("name"))
+        # solo por id (foto de Rekordbox o playlist leída de Rekordbox): por nombre podía tomar otra que se
+        # llama igual (tu «Pop latino» de Spotify no es MGNO/Pop latino)
+        pid = (ref_pids or {}).get(rid) or (baseline.get(rid) or {}).get("pid")
         if pid and trail and pid not in out:
             out[pid] = trail
     return out
@@ -67,19 +69,33 @@ def inside(child, parent):
     return c == p or c.startswith(p.rstrip(os.sep) + os.sep)
 
 
-def plan(analysis, cfg, dir_pids=(), resolve=None):
-    """Qué playlists hay que mudar para que el disco quede como Rekordbox.
-    -> [{"pid", "name", "from", "to", "files": [rutas]}] (solo las que tienen algo que mover)
-       y {pid: carpeta} de las que ya están donde van (para recordarlo)."""
+def homes_of(analysis):
+    """{archivo: carpeta hogar} según el análisis (cada canción vive en una sola carpeta)."""
+    out = {}
+    for a in analysis or []:
+        for r in a.get("tracks") or []:
+            if r.get("source") and r.get("dest_dir"):
+                out.setdefault(_norm(r["source"]), r["dest_dir"])
+    return out
+
+
+def plan(analysis, cfg, dir_pids=(), resolve=None, pinned=()):
+    """Qué hay que mudar para que el disco quede como Rekordbox.
+    -> [{"pid", "name", "from", "to", "files": [rutas]}] y {pid: carpeta} de las que ya están donde van.
+    Solo se mueve un archivo a la carpeta de una playlist si su hogar ES esa carpeta: así una carpeta vieja
+    que ahora es de otra playlist no se vacía de lo que es de esa otra."""
     dest = Path(cfg["dest_root"])
     prev = cfg.get("pl_dirs") or {}
     tree = cfg.get("rb_tree") or {}
+    homes = homes_of(analysis)
+    pinned = {_norm(p) for p in pinned or ()}
     moves, settled = [], {}
     targets = {_norm(a["folder"]) for a in analysis if a.get("folder")}
     for a in analysis:
         to = a.get("folder")
         if not to or a.get("ignored") or a["id"] in dir_pids or not inside(to, dest):
             continue
+        files = {}
         cands = []
         old = prev.get(a["id"])
         if old:
@@ -87,19 +103,29 @@ def plan(analysis, cfg, dir_pids=(), resolve=None):
         if a["id"] in tree or old:
             flat = resolve(dest, a["name"]) if resolve else dest / safe_name(a["name"])
             cands.append(str(flat))
-        src = None
         for c in cands:
-            # la carpeta vieja: existe, no es la nueva y no es la carpeta de OTRA playlist
-            if c and _norm(c) != _norm(to) and os.path.isdir(c) and inside(c, dest) and \
-                    (_norm(c) not in targets or _norm(c) == _norm(old or "")):
-                if direct_files(c):
-                    src = c
-                    break
-        if src is None:
+            # la carpeta vieja de esta playlist: lo que tiene y es de esta playlist (o de nadie, si la carpeta
+            # no es de otra playlist) se muda
+            if c and _norm(c) != _norm(to) and os.path.isdir(c) and inside(c, dest):
+                someone = _norm(c) in targets
+                for f in direct_files(c):
+                    h = homes.get(_norm(f))
+                    if (h and _norm(h) == _norm(to)) or (not h and not someone):
+                        files.setdefault(str(f), c)
+        if a["id"] in tree:
+            # playlists de tus subcarpetas de Rekordbox: su música vuelve a su carpeta aunque esté en la de otra
+            for r in a.get("tracks") or []:
+                src = r.get("source")
+                if src and r.get("status") == "elsewhere" and r.get("dest_dir") and \
+                        _norm(r["dest_dir"]) == _norm(to) and inside(src, dest) and _norm(src) not in pinned \
+                        and os.path.isfile(src) and _norm(os.path.dirname(src)) != _norm(to):
+                    files.setdefault(str(src), os.path.dirname(src))
+        if not files:
             settled[a["id"]] = to
             continue
-        moves.append({"pid": a["id"], "name": a["name"], "from": src, "to": to,
-                      "files": [str(f) for f in direct_files(src)]})
+        froms = sorted(set(files.values()))
+        moves.append({"pid": a["id"], "name": a["name"], "from": froms[0], "froms": froms, "to": to,
+                      "files": sorted(files)})
     return moves, settled
 
 

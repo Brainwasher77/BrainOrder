@@ -28,6 +28,8 @@ _ALIAS = {"aif": "aiff", "mp4": "m4a"}
 def get(cfg):
     r = dict(DEFAULTS)
     r.update({k: v for k, v in (cfg.get("rules") or {}).items() if k in DEFAULTS})
+    if cfg.get("rb_mirror", True) and cfg.get("rb_master", True):
+        r["_first"] = list((cfg.get("rb_tree") or {}).keys())
     return r
 
 
@@ -124,12 +126,14 @@ def ordered_playlists(playlists, rules):
     salvo que el usuario la haya ubicado."""
     order = {pid: i for i, pid in enumerate(rules.get("playlist_order") or [])}
     n = len(order)
+    first = set(rules.get("_first") or [])  # las de tus subcarpetas de Rekordbox: su carpeta se queda con su música
 
     def key(ip):
         i, p = ip
+        f = 0 if p["id"] in first else 1
         if p["id"] in order:
-            return (order[p["id"]], 0)
-        return (n + (10_000 if p.get("liked") or p["id"] == "liked" else 0) + i, 0)
+            return (f, order[p["id"]], 0)
+        return (f, n + (10_000 if p.get("liked") or p["id"] == "liked" else 0) + i, 0)
     return [p for _, p in sorted(enumerate(playlists), key=key)]
 
 

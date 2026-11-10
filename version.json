@@ -1,5 +1,5 @@
 {
-  "version": "2.33.0",
-  "build": 81,
-  "notes": "Nuevo: desarmar las playlists que se tragaron una carpeta de Rekordbox (por ejemplo Crossover o Brainwasher): cada playlist de la carpeta vuelve a tener su música y su carpeta, como en Rekordbox. Está en «Cambios en Rekordbox» → 🧩."
+  "version": "2.33.1",
+  "build": 82,
+  "notes": "Arreglo importante: la 2.33.0 juntaba en Rekordbox playlists de tus subcarpetas con otras de BrainOrder que se llamaban igual (por ejemplo MGNO/Pop latino con tu Pop latino de Spotify). Ya no pasa y con «🛟 Recuperar playlists de un respaldo» (en Cambios en Rekordbox) vuelven a quedar como estaban, con su música en su carpeta."
 }

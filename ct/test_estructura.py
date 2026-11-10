@@ -174,11 +174,25 @@ analysis = [{"id": "spH", "name": "Hard Techno", "tracks": [
     {"status": "ok", "source": "/m/a.mp3", "name": "a", "artists": []},
     {"status": "ok", "source": "/m/b.mp3", "name": "b", "artists": []}]}]
 st = RS.sync(analysis, {"rekordbox_folder": "BrainOrder", "rb_master": True,
-                        "_rb_base": {"11": {"pid": "spH", "paths": ["/m/a.mp3", "/m/b.mp3"]}}})
+                        "_rb_base": {"11": {"pid": "spH", "paths": ["/m/a.mp3", "/m/b.mp3"]},
+                                     "40": {"pid": "spH", "paths": ["/m/a.mp3", "/m/c.mp3"]}}})
 assert [p.ID for p in ST["pls"]] == ["1", "2", "11"], [(p.ID, p.Name, p.ParentID) for p in ST["pls"]]
 assert hard.ParentID == "2" and [s.ContentID for s in hard.Songs] == ["b", "a", "c"], [s.ContentID for s in hard.Songs]
 assert st["twins_removed"] == 1 and st["playlists_created"] == 0 and "11" in st["baseline"], st
 print("sync ok")
+
+# una playlist TUYA en una subcarpeta que se llama igual que una de BrainOrder (MGNO/Pop latino vs tu «Pop latino»
+# de Spotify): no se casan por nombre, no se suman y la de BrainOrder queda aparte
+mg = PL("50", "Pop latino", "2")
+mg.Songs = [Song(ca, 1)]
+ST["pls"] = [root, tech, hard, mg]
+st = RS.sync([{"id": "spP", "name": "Pop latino", "tracks": [{"status": "ok", "source": "/m/b.mp3", "name": "b", "artists": []}]}],
+             {"rekordbox_folder": "BrainOrder", "rb_master": True, "_rb_base": {}})
+assert [s.ContentID for s in mg.Songs] == ["a"], [s.ContentID for s in mg.Songs]
+loose = [p for p in ST["pls"] if p.Name == "Pop latino" and p.ParentID == "1"]
+assert len(loose) == 1 and [s.ContentID for s in loose[0].Songs] == ["b"]
+assert not estructura.trails({"50": {"name": "Pop latino", "folder": ["Techno"]}}, {}, [{"id": "spP", "name": "Pop latino"}])
+print("mismo nombre en subcarpeta ok")
 
 # ------------------------------------------------ disco: carpetas como Rekordbox
 music = TMP / "Music"
