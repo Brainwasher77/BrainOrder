@@ -1,5 +1,5 @@
 {
-  "version": "2.33.3",
-  "build": 84,
-  "notes": "Arreglo: en Reorganizar, el selector «Elegir para todo el grupo…» ahora muestra lo que elegiste (o «Varias opciones» si cambias canciones sueltas)."
+  "version": "2.33.4",
+  "build": 85,
+  "notes": "Arreglo: los links de Deezer de las canciones que faltan se comprueban uno por uno (artista, título y duración). Los que llevaban a otra canción se corrigen solos en el próximo Analizar; mientras no estén comprobados se muestra «Deezer (buscar)» en vez de un link equivocado."
 }

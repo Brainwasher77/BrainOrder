@@ -7,6 +7,7 @@ Los resultados se guardan en caché para no repetir consultas.
 """
 import json
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -49,7 +50,53 @@ def search_url(row):
     return "https://www.deezer.com/search/" + urllib.parse.quote(q)
 
 
-V = 2  # versión del criterio de búsqueda (los links buscados con uno anterior se vuelven a buscar)
+V = 3  # versión del criterio: los links guardados con uno anterior (incluidos los de ISRC) se comprueban otra vez
+
+
+def _artist_ok(want, item):
+    """El artista de tu canción está entre los de Deezer (principal o colaboradores)."""
+    w = norm(want)
+    if not w:
+        return True
+    names = [(item.get("artist") or {}).get("name", "")] + [c.get("name", "") for c in item.get("contributors") or []]
+    for n in names:
+        a = norm(n)
+        if a and (w == a or (min(len(w), len(a)) >= 3 and (w in a or a in w))):
+            return True
+    return False
+
+
+def matches(row, item):
+    """¿Ese track de Deezer es la canción de la fila? Mismo título base y mismo artista; si hay duración en
+    los dos, que no esté lejísimos (otra canción con el mismo nombre). Sirve para comprobar cualquier link."""
+    if not item or item.get("error") or not item.get("id"):
+        return False
+    if core_title(item.get("title", "")) != core_title(row.get("name", "")) \
+            and core_title(item.get("title_short", "")) != core_title(row.get("name", "")):
+        return False
+    if not _artist_ok((row.get("artists") or [""])[0], item):
+        return False
+    tdur = (row.get("duration_ms") or 0) / 1000
+    if tdur and item.get("duration") and abs(item["duration"] - tdur) > max(45, 0.25 * tdur):
+        return False
+    return True
+
+
+def track_id(url):
+    """Número del track en un link de Deezer (www.deezer.com/xx/track/123 → 123)."""
+    m = re.search(r"deezer\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?track/(\d+)", url or "")
+    return m.group(1) if m else None
+
+
+def check_link(row, url):
+    """Abre el link en la API de Deezer y dice si lleva a la canción de la fila. -> True/False/None (sin respuesta)"""
+    tid = track_id(url)
+    if not tid:
+        return False
+    try:
+        return matches(row, _get(f"{API}/track/{tid}"))
+    except Exception:
+        return None
 
 
 def _pick(row, items):
@@ -62,7 +109,7 @@ def _pick(row, items):
     cands = []
     for item in items:
         a = norm((item.get("artist") or {}).get("name", ""))
-        if not (want_a and (want_a in a or a in want_a)) or core_title(item.get("title", "")) != want_t:
+        if not (want_a and a and (want_a in a or a in want_a)) or core_title(item.get("title", "")) != want_t:
             continue
         fx = extras(item.get("title", ""))
         same_v = (ex <= fx or fx <= ex) and not version_diff(ex, fx)
@@ -78,19 +125,24 @@ def _pick(row, items):
     return best[2], best[0] < 3
 
 
+def _label(row):
+    return f"{(row.get('artists') or [''])[0]} - {row.get('name', '')}"
+
+
 def _lookup(row):
     isrc = row.get("isrc")
     if isrc:
         d = _get(f"{API}/track/isrc:{urllib.parse.quote(isrc)}")
-        if isinstance(d, dict) and d.get("link") and not d.get("error"):
-            return {"url": d["link"], "exact": True, "v": V}
+        # el ISRC a veces está repetido (sellos que lo reutilizan): solo vale si de verdad es esa canción
+        if isinstance(d, dict) and d.get("link") and not d.get("error") and matches(row, d):
+            return {"url": d["link"], "exact": True, "v": V, "for": _label(row)}
     artist = (row.get("artists") or [""])[0]
     q = f"{artist} {core_title(row['name'])}".strip()
     d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 25}))
     item, same = _pick(row, (d.get("data") or []) if isinstance(d, dict) else [])
     if item is None:
         return None
-    out = {"url": item["link"], "exact": False, "v": V}
+    out = {"url": item["link"], "exact": False, "v": V, "for": _label(row)}
     if not same:  # Deezer no tiene esa versión: el link es de otra (se avisa para que no te confunda)
         dur = item.get("duration") or 0
         out["other"] = f"{item.get('title', '')} ({dur // 60}:{dur % 60:02d})"
@@ -124,18 +176,28 @@ def add_links(analysis, progress=None, offline=False):
             if r["status"] == "missing":
                 missing.setdefault(r["id"], r)
     for i, r in missing.items():  # canciones que vienen de Deezer: ya traen su link
-        if i.startswith("dz:") and r.get("url") and i not in cache:
+        if i.startswith("dz:") and r.get("url") and (i not in cache or cache[i].get("v") != V):
             with _LOCK:
-                cache[i] = {"url": r["url"], "exact": True}
-    stale = (lambda c: not c.get("exact") and c.get("v") != V)  # buscado con el criterio viejo (podía ser otra versión)
-    todo = [] if offline else [r for i, r in missing.items() if i not in cache or stale(cache[i])]
+                cache[i] = {"url": r["url"], "exact": True, "v": V, "for": _label(r)}
+    # guardado con un criterio anterior, o para otra canción (el id se reutilizó): se comprueba otra vez
+    stale = (lambda c, r: c.get("v") != V or (c.get("for") and c.get("url") and norm(c["for"]) != norm(_label(r))))
+    todo = [] if offline else [r for i, r in missing.items() if i not in cache or stale(cache[i], r)]
+    fixed = kept = 0
     for n, r in enumerate(todo, 1):
         if progress:
             progress(f"Buscando links de Deezer: {n}/{len(todo)}", n / len(todo))
-        if r["id"] in cache and not stale(cache[r["id"]]):  # otra tarea ya lo buscó mientras tanto
+        old = cache.get(r["id"])
+        if old and not stale(old, r):  # otra tarea ya lo buscó mientras tanto
             continue
         try:
-            res = _lookup(r)
+            res = None
+            if old and old.get("url") and check_link(r, old["url"]):  # el link viejo sí era: se conserva
+                res = {**old, "v": V, "for": _label(r)}
+                kept += 1
+            if res is None:
+                res = _lookup(r)
+                if old and old.get("url") and (res or {}).get("url") != old["url"]:
+                    fixed += 1
             with _LOCK:
                 cache[r["id"]] = res or {"url": None}
         except Exception as e:
@@ -145,12 +207,14 @@ def add_links(analysis, progress=None, offline=False):
             _save()
     if todo:
         _save()
+    if fixed or kept:
+        log(f"Links de Deezer comprobados: {kept} estaban bien, {fixed} se corrigieron")
     for pl in analysis:
         for r in pl["tracks"]:
             if r["status"] != "missing":
                 continue
             c = cache.get(r["id"]) or {}
-            if c.get("url"):
+            if c.get("url") and not stale(c, r):  # sin comprobar todavía: búsqueda, nunca un link que puede ser de otra
                 r["deezer"] = {"url": c["url"], "found": True, "exact": c.get("exact", False)}
                 if c.get("other"):
                     r["deezer"]["other"] = c["other"]
@@ -183,7 +247,7 @@ def preview(artist, title, isrc=""):
     out = None
     if isrc:
         d = _get(f"{API}/track/isrc:{urllib.parse.quote(isrc)}")
-        if isinstance(d, dict) and d.get("preview") and not d.get("error"):
+        if isinstance(d, dict) and d.get("preview") and not d.get("error") and matches({"name": title, "artists": [artist]}, d):
             out = d
     if out is None:
         q = f"{artist} {core_title(title)}".strip()
