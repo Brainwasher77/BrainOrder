@@ -50,7 +50,7 @@ def search_url(row):
     return "https://www.deezer.com/search/" + urllib.parse.quote(q)
 
 
-V = 3  # versión del criterio: los links guardados con uno anterior (incluidos los de ISRC) se comprueban otra vez
+V = 4  # versión del criterio: los links guardados con uno anterior (incluidos los de ISRC) se comprueban otra vez
 
 
 def _artist_ok(want, item):
@@ -69,8 +69,8 @@ def _artist_ok(want, item):
 def matches(row, item):
     """¿Ese track de Deezer es la canción de la fila? Mismo título base y mismo artista; si hay duración en
     los dos, que no esté lejísimos (otra canción con el mismo nombre). Sirve para comprobar cualquier link."""
-    if not item or item.get("error") or not item.get("id"):
-        return False
+    if not item or item.get("error") or not item.get("id") or item.get("readable") is False:
+        return False  # readable=False: no está disponible en tu país (el link abre «Esta página no existe»)
     if core_title(item.get("title", "")) != core_title(row.get("name", "")) \
             and core_title(item.get("title_short", "")) != core_title(row.get("name", "")):
         return False
@@ -108,6 +108,8 @@ def _pick(row, items):
     tdur = (row.get("duration_ms") or 0) / 1000 or None
     cands = []
     for item in items:
+        if item.get("readable") is False:  # no disponible en tu país: el link da «Esta página no existe»
+            continue
         a = norm((item.get("artist") or {}).get("name", ""))
         if not (want_a and a and (want_a in a or a in want_a)) or core_title(item.get("title", "")) != want_t:
             continue
@@ -136,6 +138,9 @@ def _lookup(row):
         # el ISRC a veces está repetido (sellos que lo reutilizan): solo vale si de verdad es esa canción
         if isinstance(d, dict) and d.get("link") and not d.get("error") and matches(row, d):
             return {"url": d["link"], "exact": True, "v": V, "for": _label(row)}
+        alt = (d.get("alternative") or {}) if isinstance(d, dict) else {}
+        if alt.get("link") and matches(row, alt):  # Deezer ofrece otra copia que sí se puede abrir aquí
+            return {"url": alt["link"], "exact": True, "v": V, "for": _label(row)}
     artist = (row.get("artists") or [""])[0]
     q = f"{artist} {core_title(row['name'])}".strip()
     d = _get(f"{API}/search?" + urllib.parse.urlencode({"q": q, "limit": 25}))

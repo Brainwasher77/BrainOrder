@@ -9,6 +9,7 @@ deezer.CACHE = tmp / "deezer_cache.json"
 TRACKS = {
     "111": {"id": 111, "title": "La Rebelión", "duration": 300, "artist": {"name": "Joe Arroyo"}, "link": "https://www.deezer.com/track/111"},
     "222": {"id": 222, "title": "Otra Cosa", "duration": 200, "artist": {"name": "Otro Artista"}, "link": "https://www.deezer.com/track/222"},
+    "444": {"id": 444, "title": "La Rebelión", "duration": 300, "readable": False, "artist": {"name": "Joe Arroyo"}, "link": "https://www.deezer.com/track/444"},
     "333": {"id": 333, "title": "La Bicicleta", "duration": 230, "artist": {"name": "Carlos Vives"},
             "contributors": [{"name": "Carlos Vives"}, {"name": "Shakira"}], "link": "https://www.deezer.com/track/333"},
 }
@@ -47,6 +48,13 @@ assert b["deezer"]["url"].endswith("/333") and b["deezer"]["found"], b  # el vie
 assert deezer.check_link(rows[0], "https://www.deezer.com/co/track/111")
 assert not deezer.check_link(rows[0], "https://www.deezer.com/track/222")
 assert deezer.track_id("https://www.deezer.com/es/track/42") == "42"
+
+# no disponible en tu país (readable=False): no vale, se busca otra que sí se abra
+deezer._MEM["a"] = {"url": "https://www.deezer.com/track/444", "exact": True, "v": 3}
+an = [{"tracks": [dict(rows[0])]}]
+deezer.add_links(an)
+assert an[0]["tracks"][0]["deezer"]["url"].endswith("/111"), an
+assert not deezer.check_link(rows[0], "https://www.deezer.com/track/444")
 
 # id reutilizado por otra canción: se vuelve a comprobar
 n = len(CALLS)

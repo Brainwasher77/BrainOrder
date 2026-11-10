@@ -1,5 +1,5 @@
 {
-  "version": "2.33.4",
-  "build": 85,
-  "notes": "Arreglo: los links de Deezer de las canciones que faltan se comprueban uno por uno (artista, título y duración). Los que llevaban a otra canción se corrigen solos en el próximo Analizar; mientras no estén comprobados se muestra «Deezer (buscar)» en vez de un link equivocado."
+  "version": "2.33.5",
+  "build": 86,
+  "notes": "Arreglo: los links de Deezer ya no llevan a «Esta página no existe». Se descartan las canciones que Deezer no tiene disponibles en tu país y se busca una copia que sí se pueda abrir; los que llevaban a otra canción se corrigen. Todo se revisa solo en el próximo Analizar."
 }
