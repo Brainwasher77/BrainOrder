@@ -8,15 +8,35 @@ on:
     paths: [version.json, empaquetar/**, .github/workflows/instaladores.yml]
   workflow_dispatch:
 
+# Lo mínimo: armar solo necesita leer; únicamente «publicar» puede escribir en Releases.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: instaladores
   cancel-in-progress: true
 
 jobs:
+  pruebas:
+    # Si una prueba falla no se arma ni se publica ningún instalador.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Componentes
+        run: python -m pip install --disable-pip-version-check -q -r requirements.txt pyflakes
+      - name: Revisar el código
+        run: |
+          python -m compileall -q .
+          python -m pyflakes $(git ls-files '*.py' ':!ct/*')
+      - name: Pruebas
+        run: |
+          for t in ct/test_*.py; do echo "== $t"; python "$t" || exit 1; done
+
   mac:
+    needs: pruebas
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +55,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: pruebas
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -67,8 +88,10 @@ jobs:
 
   publicar:
     needs: [mac, windows]
-    if: ${{ !cancelled() }}   # publica lo que sí se armó aunque otro falle
+    if: ${{ !cancelled() && needs.mac.result != 'skipped' }}   # publica lo que sí se armó aunque otro falle
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

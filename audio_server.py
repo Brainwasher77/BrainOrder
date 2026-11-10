@@ -44,15 +44,24 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        # solo pedidos hechos a esta misma dirección local (no a un nombre de internet que apunte aquí)
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
+        if host not in ("127.0.0.1", "localhost"):
+            self.send_error(403)
+            return
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        if (q.get("k") or [""])[0] != _STATE["key"]:
+        if not secrets.compare_digest((q.get("k") or [""])[0].encode(), _STATE["key"].encode()):
             self.send_error(403)
             return
         path = (q.get("p") or [""])[0]
         if not _allowed(path):
             self.send_error(404)
             return
-        size = os.path.getsize(path)
+        try:
+            size = os.path.getsize(path)
+        except OSError:  # lo movieron justo ahora
+            self.send_error(404)
+            return
         start, end = 0, size - 1
         rng = self.headers.get("Range")
         if rng and rng.startswith("bytes="):
@@ -78,7 +87,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", TYPES.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(end - start + 1))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:

@@ -94,7 +94,8 @@ def reveal(p):
         else:
             _popen(["explorer", str(p)])
     elif IS_MAC:
-        _popen(["open", "-R", str(p)] if p.is_file() else ["open", str(p)])
+        # un programa (.app) es una carpeta para el sistema: se muestra, nunca se ejecuta
+        _popen(["open", "-R", str(p)] if p.is_file() or p.suffix.lower() == ".app" else ["open", str(p)])
     else:
         open_path(p if p.is_dir() else p.parent)
 
@@ -462,7 +463,8 @@ def _win_mik_candidates():
         lnks = [p for m in menus for p in glob.glob(os.path.join(m, "**", "*Mixed*Key*.lnk"), recursive=True)]
         for lnk in lnks[:3]:
             try:
-                ps = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}').TargetPath"
+                safe = lnk.replace("'", "''")  # comilla simple dentro de comillas simples de PowerShell
+                ps = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{safe}').TargetPath"
                 r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=15,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 t = r.stdout.strip()

@@ -45,6 +45,7 @@ El script copia la app a tu carpeta de datos y crea un entorno de Python propio 
 - Si una versión nueva no llegara a arrancar, BrainOrder vuelve sola a la anterior y no reintenta esa versión.
 - Si una versión nueva necesita componentes nuevos, se instalan solos al abrirla (con el instalador quedan en `componentes/` de la carpeta de datos). Si instalas un `.dmg`/`.exe` más nuevo que tu versión, su código reemplaza al anterior; si es más viejo, se sigue usando el actualizado.
 - Solo hace falta volver a correr el instalador si cambias de computador.
+- Antes de instalar una versión descargada se comprueba que el paquete viene de GitHub por HTTPS, que es BrainOrder completo, que es la versión anunciada (o más nueva) y que todo su código compila. Una descarga a medias, mezclada o dañada se descarta y se reintenta después.
 
 Para publicar una versión nueva: sube los cambios a `main` y aumenta `build` en `version.json`.
 
@@ -271,6 +272,10 @@ En la barra lateral, **Reglas**:
 - Los ajustes se guardan de forma atómica con copia anterior (`config.json.bak`): si el archivo se daña, se recupera solo.
 - Rekordbox a veces guarda rutas con barras de más (`//Users/...`). BrainOrder las trata como la misma ruta: al mover un archivo corrige su ruta en Rekordbox (antes esas pistas quedaban perdidas) y al sincronizar no la agrega dos veces. En Windows las rutas se comparan sin distinguir mayúsculas.
 - Los accesos directos (alias / symlinks) se mueven como accesos directos y siguen apuntando al mismo archivo; los rotos no cuentan como canciones que tienes, y un acceso directo a un archivo que ya está en tu biblioteca no cuenta como otra copia.
+- **Una sola BrainOrder abierta a la vez:** si la abres dos veces, la segunda te avisa y no se abre (dos copias a la vez moverían los mismos archivos cada una por su lado).
+- **No se cierra ni se reinicia a mitad de un movimiento:** si cierras la ventana mientras se mueven archivos o se escribe en un programa de DJ, BrainOrder te pide esperar. Si insistes tres veces seguidas se cierra igual (por si algo se quedó colgado).
+- La sesión de Spotify solo viaja a `api.spotify.com`; el inicio de sesión solo escucha en tu computador; la vista previa solo entrega audio de tus carpetas, a la propia app.
+- El Historial (lo que permite Deshacer) se guarda forzando la escritura al disco: un corte de luz no lo deja a medias.
 
 Para restaurar Rekordbox: ciérralo y reemplaza `master.db` por uno de los respaldos.
 - macOS: `~/Library/Pioneer/rekordbox/`

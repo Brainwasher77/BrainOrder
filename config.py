@@ -132,7 +132,20 @@ def write_atomic(path, text, keep_backup=False):
             os.link(path, bak)  # copia instantánea (mismo archivo); se libera al reemplazar
         except OSError:
             pass
-    os.replace(tmp, path)
+    for attempt in range(6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # Windows: un antivirus o el indexador tiene el archivo abierto un instante; se reintenta
+            if attempt == 5:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            import time
+            time.sleep(0.05 * (attempt + 1))
 
 
 def safe_name(name: str) -> str:

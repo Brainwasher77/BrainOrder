@@ -84,6 +84,12 @@ def _pace():
         _PACE["t"] = time.time()
 
 
+def _only_spotify(url):
+    u = urllib.parse.urlparse(url)
+    if u.scheme != "https" or (u.hostname or "").lower() != "api.spotify.com":
+        raise SpotifyError(f"Dirección inesperada para Spotify: {url[:80]}")
+
+
 _TOKEN_LOCK = threading.Lock()  # varias tareas a la vez: un solo refresco del token
 _NET_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, OSError)
 
@@ -272,8 +278,11 @@ class Spotify:
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 if urllib.parse.urlparse(self.path).path != parsed.path:
                     self.send_response(404); self.end_headers(); return
+                if (q.get("state") or [None])[0] != state:
+                    # no es la respuesta a ESTE inicio de sesión (otro programa, una pestaña vieja): se ignora
+                    self.send_response(400); self.end_headers(); return
                 result["code"] = (q.get("code") or [None])[0]
-                result["state"] = (q.get("state") or [None])[0]
+                result["state"] = state
                 result["error"] = (q.get("error") or [None])[0]
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -285,7 +294,14 @@ class Spotify:
             def log_message(self, *a):
                 pass
 
-        server = HTTPServer((parsed.hostname, parsed.port or 80), Handler)
+        if (parsed.hostname or "").lower() not in ("127.0.0.1", "localhost", "::1"):
+            raise SpotifyError("La dirección de retorno (Redirect URI) tiene que ser de este computador, por ejemplo "
+                               "http://127.0.0.1:8888/callback. Corrígela en Ajustes y en tu app de Spotify.")
+        try:
+            server = HTTPServer((parsed.hostname, parsed.port or 80), Handler)
+        except OSError as e:
+            raise SpotifyError(f"No pude abrir el puerto {parsed.port or 80} para recibir la respuesta de Spotify "
+                               f"(¿otro programa lo está usando?). Cierra ese programa o vuelve a intentar. ({e})")
         server.timeout = 1
         url = AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": self.client_id,
@@ -320,6 +336,7 @@ class Spotify:
     # ---------- API ----------
     def get(self, path_or_url, params=None, _retry=3):
         url = path_or_url if path_or_url.startswith("http") else API + path_or_url
+        _only_spotify(url)  # la sesión solo viaja a api.spotify.com (también en los «next» que manda Spotify)
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
         _check_pause()  # en pausa no se consulta: cada consulta extra puede alargar el castigo
@@ -413,6 +430,7 @@ class Spotify:
 
     def send(self, method, path, body=None, _retry=3):
         url = path if path.startswith("http") else API + path
+        _only_spotify(url)
         data = json.dumps(body).encode() if body is not None else None
         _check_pause()
         access = self._access()

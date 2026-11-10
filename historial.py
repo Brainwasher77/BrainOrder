@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from config import SUPPORT_DIR, log
+from config import SUPPORT_DIR, log, write_atomic
 from plataforma import safe_move
 
 DIR = SUPPORT_DIR / "historial"
@@ -28,9 +28,8 @@ def _path(op_id):
 
 def _save(op):
     DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _path(op["id"]).with_suffix(".tmp")
-    tmp.write_text(json.dumps(op, ensure_ascii=False), "utf-8")
-    os.replace(tmp, _path(op["id"]))
+    # temporal + fsync + reemplazo: el Historial es lo que permite Deshacer, no puede quedar a medias
+    write_atomic(_path(op["id"]), json.dumps(op, ensure_ascii=False))
 
 
 def record(kind, label, moves, extra=None):
@@ -83,20 +82,20 @@ def record_tags(label, tags, extra=None):
 
 def add_tags(op_id, tags):
     """Le suma a una operación (p. ej. renombrar) cómo estaban las etiquetas, para deshacer todo junto."""
-    op = get(op_id)
-    if op and tags:
-        op["tags"] = (op.get("tags") or []) + [[str(a), b] for a, b in tags]
-        with _LOCK:
+    with _LOCK:  # leer, cambiar y guardar de una: dos tareas a la vez no se pisan
+        op = get(op_id)
+        if op and tags:
+            op["tags"] = (op.get("tags") or []) + [[str(a), b] for a, b in tags]
             _save(op)
 
 
 def mark_undone(op_id, info=None):
-    op = get(op_id)
-    if op:
-        op["undone"] = datetime.now().isoformat(timespec="seconds")
-        if info:
-            op["undo_info"] = info
-        with _LOCK:
+    with _LOCK:
+        op = get(op_id)
+        if op:
+            op["undone"] = datetime.now().isoformat(timespec="seconds")
+            if info:
+                op["undo_info"] = info
             _save(op)
 
 

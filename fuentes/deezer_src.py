@@ -57,7 +57,12 @@ def _resolve(text):
         return None, None
     if re.fullmatch(r"\d+", t):
         return "user", t
-    if re.search(r"(link\.deezer\.com|deezer\.page\.link)", t):
+    host = (urllib.parse.urlparse(t if "://" in t else "https://" + t).hostname or "").lower()
+    if host in ("link.deezer.com", "deezer.page.link"):
+        if "://" not in t:
+            t = "https://" + t
+        if not t.lower().startswith("https://"):
+            return None, None
         try:
             req = urllib.request.Request(t, headers={"User-Agent": "BrainOrder/1.0"})
             with urllib.request.urlopen(req, timeout=15) as r:

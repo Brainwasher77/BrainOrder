@@ -1,5 +1,5 @@
 {
-  "version": "2.33.5",
-  "build": 86,
-  "notes": "Arreglo: los links de Deezer ya no llevan a «Esta página no existe». Se descartan las canciones que Deezer no tiene disponibles en tu país y se busca una copia que sí se pueda abrir; los que llevaban a otra canción se corrigen. Todo se revisa solo en el próximo Analizar."
+  "version": "2.34.0",
+  "build": 87,
+  "notes": "Seguridad y solidez: una sola BrainOrder abierta a la vez; no se cierra ni se reinicia a mitad de un movimiento de archivos; las actualizaciones se comprueban antes de instalarse (paquete completo, de la versión anunciada y con código sano); la sesión de Spotify solo viaja a Spotify; un error inesperado ya no deja la ventana esperando; el Historial se guarda a prueba de cortes."
 }

@@ -20,7 +20,7 @@ from pathlib import Path
 import biblioteca as b
 import reglas
 from config import AUDIO_EXT, log
-from plataforma import free_name, identical, is_dup_dir, native, rb_path, safe_move, same_file
+from plataforma import free_name, identical, is_dup_dir, native, safe_move, same_file
 
 DUP_DIR = "_duplicados"
 JUNK = {".DS_Store", "Thumbs.db", "desktop.ini"}

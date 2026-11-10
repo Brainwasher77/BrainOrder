@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -3786,8 +3787,6 @@ class Api:
                         "added": len(b - a), "removed": len(a - b), "order_only": a == b})
         # las de tus subcarpetas que 2.33.0 «casó» por el nombre con otra playlist de BrainOrder (por ejemplo
         # MGNO/Pop latino con tu «Pop latino» de Spotify): aunque no hayan cambiado, se separan al recuperarlas
-        import rb_cambios
-        from fuentes import carpetas as FC
         for x in out:
             x["glued"] = bool(self._glued(x["id"], now[x["id"]]))
         listed = {x["id"] for x in out}
@@ -5959,7 +5958,6 @@ class Api:
     def _new_playlist_folder(self, folder, analysis):
         """Carpeta que elegiste para una playlist nueva. No puede ser tu carpeta de playlists entera (ni una que la
         contenga), la de descargas, _SIn Playlist, _duplicados ni la carpeta de otra playlist."""
-        from fuentes import carpetas as FC
         try:
             f = Path(folder).expanduser()
             if not f.is_absolute():
@@ -6685,9 +6683,13 @@ class Api:
         """Cierra y vuelve a abrir BrainOrder (así se instala la actualización descargada)."""
         arr = config.SUPPORT_DIR / "arranque.py"
         bundle = os.environ.get("BRAINORDER_BUNDLE")
+        if self._busy_with_files():
+            return {"ok": False, "error": "BrainOrder está moviendo archivos o escribiendo en un programa de DJ. "
+                                          "Espera a que termine y vuelve a tocar Reiniciar."}
         try:
             if plataforma.IS_MAC and bundle and Path(bundle).exists():
-                subprocess.Popen(["/bin/sh", "-c", f'sleep 1; open -n "{bundle}"'])
+                # la ruta va como argumento ($1), nunca dentro del texto del comando
+                subprocess.Popen(["/bin/sh", "-c", 'sleep 1; exec open -n "$1"', "sh", bundle])
             elif arr.exists():
                 kw = {}
                 if plataforma.IS_WIN:
@@ -6699,6 +6701,13 @@ class Api:
             return {"ok": False, "error": f"No pude reiniciar: {e}"}
         threading.Timer(0.3, lambda: os._exit(0)).start()
         return {"ok": True}
+
+    def _busy_with_files(self):
+        """¿Hay una tarea (tuya o del vigilante) moviendo archivos o escribiendo en un programa de DJ?"""
+        if self._files.acquire(blocking=False):
+            self._files.release()
+            return False
+        return True
 
     def platform(self):
         return {"win": plataforma.IS_WIN, "mac": plataforma.IS_MAC}
@@ -6888,6 +6897,96 @@ class Api:
             return {"result": res, "analysis": analysis}
         return self._task(run, "unify_apply", "Unificar repetidos", files=True)
 
+def _front(api):
+    """Lo que la ventana puede llamar: los métodos públicos de Api, cada uno envuelto para que un error
+    inesperado vuelva como {ok: False, error} (y quede en el registro) en vez de dejar a la ventana
+    esperando una respuesta que nunca llega. Por dentro BrainOrder sigue usando Api directamente."""
+    import functools
+    import inspect
+
+    def wrap(name, fn):
+        @functools.wraps(fn)
+        def call(_self, *a, **k):
+            try:
+                return fn(*a, **k)
+            except Exception as e:
+                config.log(f"{name}: error inesperado\n{traceback.format_exc()}")
+                return {"ok": False, "error": _os_error_text(e) if isinstance(e, OSError) else f"Error inesperado: {e}"}
+        try:  # la ventana ve los mismos parámetros que el método original
+            sig = inspect.signature(fn)
+            call.__signature__ = sig.replace(parameters=[inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                                                         *sig.parameters.values()])
+        except (TypeError, ValueError):
+            pass
+        return call
+
+    body = {}
+    for name in dir(type(api)):
+        if name.startswith("_"):
+            continue
+        fn = getattr(api, name)
+        if callable(fn):
+            body[name] = wrap(name, fn)
+    return type("BrainOrderApi", (), body)()
+
+
+def _alert(msg):
+    """Aviso del sistema antes de que exista la ventana."""
+    try:
+        if plataforma.IS_WIN:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, msg, "BrainOrder", 0x40)
+        elif plataforma.IS_MAC:
+            subprocess.run(["osascript", "-e", "on run argv", "-e",
+                            'display dialog (item 1 of argv) with title "BrainOrder" buttons {"OK"} default button 1',
+                            "-e", "end run", msg], timeout=120, capture_output=True)
+        else:
+            print(msg)
+    except Exception:
+        pass
+
+
+def _only_one():
+    """Una sola BrainOrder abierta a la vez. Al reiniciar, la anterior tarda un momento en cerrarse: se espera."""
+    import instancia
+    lock = config.SUPPORT_DIR / "brainorder.lock"
+    for _ in range(40):
+        if instancia.acquire(lock):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _guard_close(api, win):
+    """Cerrar la ventana a mitad de un movimiento de archivos dejaría cosas a medias: se pide esperar.
+    Si insistes tres veces seguidas se cierra igual (por si una tarea se quedó colgada)."""
+    tries = {"n": 0, "t": 0.0}
+
+    def closing():
+        if not api._busy_with_files():
+            return True
+        now = time.time()
+        tries["n"] = tries["n"] + 1 if now - tries["t"] < 15 else 1
+        tries["t"] = now
+        if tries["n"] >= 3:
+            config.log("cierre forzado con una tarea de archivos en curso")
+            return True
+        msg = ("BrainOrder está moviendo archivos o escribiendo en un programa de DJ. Espera a que termine "
+               "para cerrar (así nada queda a medias).")
+
+        def tell():
+            try:
+                win.evaluate_js(f"window.toast && toast({json.dumps(msg)}, true)")
+            except Exception:
+                pass
+        threading.Thread(target=tell, daemon=True).start()
+        return False
+    try:
+        win.events.closing += closing
+    except Exception as e:
+        config.log(f"no pude vigilar el cierre de la ventana: {e!r}")
+
+
 def main():
     # En Windows (pythonw) no hay consola: los errores van al log
     if sys.stdout is None or sys.stderr is None:
@@ -6898,16 +6997,21 @@ def main():
             sys.stderr = sys.stderr or f
         except Exception:
             pass
+    if not _only_one():
+        config.log("ya hay otra BrainOrder abierta: esta no se abre")
+        _alert("BrainOrder ya está abierta. Búscala en la barra de tareas o en el Dock.")
+        return
     import webview
     plataforma.refresh_launcher(config.log)  # el lanzador de BrainOrder.app también se actualiza
     icon = HERE / "icon.png"
     plataforma.mac_branding("BrainOrder", icon)  # «BrainOrder» junto a la manzana, no «Python»
     api = Api()
     config.log(f"{config.CREDIT} · {config.COPYRIGHT}")
-    win = webview.create_window(f"BrainOrder · by {config.AUTHOR}", str(HERE / "ui.html"), js_api=api,
+    win = webview.create_window(f"BrainOrder · by {config.AUTHOR}", str(HERE / "ui.html"), js_api=_front(api),
                                 width=1280, height=820, min_size=(900, 600),
                                 background_color="#0d0e12")
     api._window = win
+    _guard_close(api, win)
     import inspect
     kw = {}
     try:
@@ -6918,6 +7022,9 @@ def main():
     except (TypeError, ValueError):
         pass
     webview.start(**kw)
+    # la ventana ya se cerró: si quedó algo moviendo archivos (vigilante), se le deja terminar
+    if api._files.acquire(timeout=120):
+        api._files.release()
 
 
 if __name__ == "__main__":
