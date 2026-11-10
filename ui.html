@@ -2549,7 +2549,7 @@ function restBox(){
   const sc = RST.scan;
   const rows = sc && sc.items.length ? `<table><tr><th></th><th>Playlist</th><th>En el respaldo</th><th>Ahora</th></tr>${sc.items.map(x=>`<tr>
       <td><input type="checkbox" ${RST.picks.has(x.id)?'checked':''} onchange="RST.picks[this.checked?'add':'delete']('${x.id}');paintRest()"></td>
-      <td>${esc(x.trail)}${x.order_only?' <span class="art">(solo el orden)</span>':''}${x.glued?' <span class="art">(estaba unida por el nombre a otra playlist de BrainOrder: se separa)</span>':''}</td><td>${x.before}</td>
+      <td>${esc(x.trail)}${x.order_only?' <span class="art">(solo el orden)</span>':''}${x.empty?' <span class="art">(en BrainOrder salía vacía: la reemplaza esta, con su música)</span>':x.glued?' <span class="art">(estaba unida por el nombre a otra playlist de BrainOrder: se separa)</span>':''}</td><td>${x.before}</td>
       <td>${x.now}${x.added?` <span style="color:var(--org)">+${x.added}</span>`:''}${x.removed?` <span style="color:var(--org)">−${x.removed}</span>`:''}</td></tr>`).join('')}</table>` : '';
   return `<div class="box" id="restBox" style="margin-bottom:12px;border-color:var(--ok)">
     <b>🛟 Recuperar playlists de un respaldo</b>
@@ -2575,7 +2575,8 @@ async function restRun(){
   const r = await api().rb_restore_run(RST.sel, [...RST.picks]); if(!r.ok){ taskErr(r); return; }
   if(r.analysis) setAnalysis(r.analysis); loadHist();
   const x = r.result || {};
-  toast(`🛟 Listo: ${x.restored} playlist(s) quedaron como estaban en el respaldo${x.missing?` (${x.missing} canción(es) ya no están en tu colección)`:''}.` + mirrorMsg(x.mirror));
+  toast(`🛟 Listo: ${x.restored} playlist(s) quedaron como estaban en el respaldo${x.missing?` (${x.missing} canción(es) ya no están en tu colección)`:''}.`
+    + ((x.replaced||[]).length?`<br>${x.replaced.length} que salían vacías ahora tienen su música (${x.replaced.slice(0,4).map(esc).join(', ')}${x.replaced.length>4?'…':''}).`:'') + mirrorMsg(x.mirror));
   RST = {open:false, backups:null, sel:'', scan:null, picks:new Set(), loading:false}; rbLoad();
 }
 // ---------- playlists que se tragaron una carpeta de Rekordbox (2.33.0) ----------

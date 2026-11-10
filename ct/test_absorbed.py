@@ -52,3 +52,29 @@ x = r["items"][0]
 assert (x["folder_id"], x["global_rid"], x["pid"], x["playlists"], x["common"]) == ("10", "2", "spX", 3, 6), x
 assert x["subs"] == ["ADC", "MGNO"]
 print("OK")
+
+# --------------------------------------------- 2.33.1: playlists casadas por el nombre
+import carpetas_nuevas as CN  # noqa: E402
+from fuentes import carpetas as FC  # noqa: E402
+CN.STATE = TMP / "carpetas.json"
+empty = TMP / "BRAIN LIBRARY" / "Champeta C ADC"
+empty.mkdir(parents=True)
+full = TMP / "BRAIN LIBRARY" / "Mia"
+full.mkdir()
+(full / "x.mp3").write_bytes(b"x")
+o._cfg = {"folder_playlists": [{"path": str(empty), "name": "Champeta C ADC"}, {"path": str(full), "name": "Salsa"}],
+          "playlist_origin": {"spJ": "rekordbox"}}
+o._an = [{"id": FC.pid_for(empty), "name": "Champeta C ADC"}, {"id": FC.pid_for(full), "name": "Salsa"},
+         {"id": "spP", "name": "Pop latino"}, {"id": "spJ", "name": "Jungle House"}]
+nest = lambda n: {"name": n, "trail": f"BRAINLIBRARY/Crossover/ADC/{n}"}
+assert o._glued("15", nest("Champeta C ADC")) == "empty"
+assert o._glued("16", nest("Pop latino")) is True              # tu Pop latino de Spotify es otra
+assert o._glued("17", nest("Salsa")) is True                   # carpeta con música: otra, se separa
+assert o._glued("18", nest("Nada")) is None
+assert o._glued("19", {"name": "Pop latino", "trail": "BRAINLIBRARY/Pop latino"}) is None  # suelta: no aplica
+CN.dj_mark("rekordbox", "20", done=True)
+assert o._glued("20", nest("Jungle House")) is None             # la pasaste de Rekordbox a Spotify: es la misma
+assert o._glued("21", nest("Jungle House")) is True
+o._cfg["folder_playlists"].append({"program": "rekordbox", "ref": "16", "name": "Pop latino"})
+assert o._glued("16", nest("Pop latino")) is None               # ya es suya
+print("casadas por nombre OK")

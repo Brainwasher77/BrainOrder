@@ -3788,20 +3788,47 @@ class Api:
         # MGNO/Pop latino con tu «Pop latino» de Spotify): aunque no hayan cambiado, se separan al recuperarlas
         import rb_cambios
         from fuentes import carpetas as FC
-        base = rb_cambios.load_baseline()
-        an = {p["id"]: p for p in self._analysis() or []}
+        for x in out:
+            x["glued"] = bool(self._glued(x["id"], now[x["id"]]))
         listed = {x["id"] for x in out}
         for k, v in now.items():
-            pid = (base.get(k) or {}).get("pid")
-            p = an.get(pid)
-            if k in listed or k not in old or v["trail"].count("/") < 2 or not p or p["name"] != v["name"] \
-                    or str(pid).startswith(FC.dj_pid("rekordbox", "")[:4]):
+            if k in listed or k not in old:
                 continue
-            out.append({"id": k, "trail": v["trail"], "before": len(old[k]["ids"]), "now": len(v["ids"]),
-                        "added": 0, "removed": 0, "order_only": False, "glued": True})
+            g = self._glued(k, v)
+            if g:
+                out.append({"id": k, "trail": v["trail"], "before": len(old[k]["ids"]), "now": len(v["ids"]),
+                            "added": 0, "removed": 0, "order_only": False, "glued": True, "empty": g == "empty"})
         out.sort(key=lambda x: x["trail"].casefold())
         gone = sorted(o["trail"] for k, o in old.items() if k not in now)
         return {"ok": True, "items": out, "gone": gone}
+
+    def _glued(self, rid, v):
+        """¿Esa playlist de una subcarpeta de Rekordbox quedó «casada» por el nombre con otra de BrainOrder que NO
+        es ella? -> "empty" (la de BrainOrder es una carpeta vacía que se reemplaza), True (otra distinta, se
+        separan) o None. No cuenta si la de BrainOrder salió de esa misma playlist de Rekordbox (origen
+        rekordbox y la pasaste a BrainOrder desde ahí)."""
+        import carpetas_nuevas as CN
+        import rb_cambios
+        from fuentes import carpetas as FC
+        if v["trail"].count("/") < 2:
+            return None
+        rid = str(rid)
+        if any(e.get("program") == "rekordbox" and str(e.get("ref")) == rid for e in FC.entries(self._cfg)):
+            return None  # ya es suya
+        an = {p["name"]: p for p in self._analysis() or []}
+        p = an.get(v["name"])
+        pid = (rb_cambios.load_baseline().get(rid) or {}).get("pid")
+        if pid and pid != (p or {}).get("id"):
+            p = next((x for x in self._analysis() or [] if x["id"] == pid), p)
+        if not p:
+            return None
+        origin = (self._cfg.get("playlist_origin") or {}).get(p["id"]) or p.get("origin")
+        if origin == "rekordbox" and CN.dj_key("rekordbox", rid) in CN.load()["dj_done"]:
+            return None  # es la misma: la pasaste de Rekordbox a BrainOrder/Spotify
+        e = next((x for x in FC.entries(self._cfg) if FC.entry_pid(x) == p["id"]), None)
+        if e and e.get("path") and not FC.audio_files(e["path"]):
+            return "empty"
+        return True
 
     def rb_restore_run(self, name, ids):
         """Deja esas playlists como estaban en el respaldo (canciones y orden). Rekordbox cerrado."""
@@ -3818,15 +3845,34 @@ class Api:
             state = rb_cambios.read_state(self._cfg) or {}
             rb_cambios.accept(state, [str(i) for i in ids if str(i) in state])
             # las de tus subcarpetas son playlists de BrainOrder leídas de Rekordbox (con su música y su carpeta)
+            from fuentes import carpetas as FC
             entries = list(self._cfg.get("folder_playlists") or [])
             known = {(e.get("program"), str(e.get("ref"))) for e in entries}
-            linked = []
+            linked, replaced = [], []
+            an = {p["name"]: p for p in self._analysis() or []}
             for i in map(str, ids):
                 v = state.get(i)
-                if v and v.get("folder") and ("rekordbox", i) not in known:
-                    entries.append({"program": "rekordbox", "ref": i, "name": v["name"]})
-                    CN.dj_mark("rekordbox", i, done=True)
-                    linked.append(i)
+                if not v or not v.get("folder") or ("rekordbox", i) in known:
+                    continue
+                g = self._glued(i, {**v, "trail": "/".join(["x"] + list(v["folder"]) + [v["name"]])})
+                new_e = {"program": "rekordbox", "ref": i, "name": v["name"]}
+                if g == "empty":
+                    # la de BrainOrder era una carpeta vacía con el mismo nombre: la reemplaza la de Rekordbox
+                    # (con su música); grupos, orden y demás pasan a la nueva
+                    old_pid = an[v["name"]]["id"]
+                    old_dir = next((e.get("path") for e in entries if FC.entry_pid(e) == old_pid), None)
+                    entries = [e for e in entries if FC.entry_pid(e) != old_pid]
+                    if old_dir and os.path.isdir(old_dir):
+                        self._remove_if_empty(Path(old_dir))
+                    entries.append(new_e)
+                    self._cfg["folder_playlists"] = entries
+                    self._migrate_pid(old_pid, FC.entry_pid(new_e))
+                    entries = list(self._cfg.get("folder_playlists") or [])
+                    replaced.append(v["name"])
+                else:
+                    entries.append(new_e)
+                CN.dj_mark("rekordbox", i, done=True)
+                linked.append(i)
             self._cfg["folder_playlists"] = entries
             config.save(self._cfg)
             self._set_stage(70, 100)
@@ -3845,7 +3891,7 @@ class Api:
                 if mirror:
                     analysis = self._build_analysis(light=True)
                 reportes.write_reports(analysis, self._cfg)
-            return {"result": {**res, "linked": len(linked), "mirror": mirror}, "analysis": analysis}
+            return {"result": {**res, "linked": len(linked), "replaced": replaced, "mirror": mirror}, "analysis": analysis}
         return self._task(run, "rb_restore", "Recuperar playlists de Rekordbox", files=True)
 
     # ---------- playlists que se tragaron una carpeta de Rekordbox (2.33.0) ----------
@@ -4008,9 +4054,12 @@ class Api:
             known = {(e.get("program"), str(e.get("ref"))) for e in entries}
             imported = {k for k in self._imported_dj_keys()} if hasattr(self, "_imported_dj_keys") else set()
             added = []
+            done = CN.load()["dj_done"]
+            same = {p["name"] for p in analysis if (self._cfg.get("playlist_origin") or {}).get(p["id"]) == "rekordbox"}
             for rid, v in nested.items():
-                if ("rekordbox", rid) in known or CN.dj_key("rekordbox", rid) in imported:
-                    continue  # ya está en BrainOrder (la importaste de Rekordbox): esa es
+                if ("rekordbox", rid) in known or CN.dj_key("rekordbox", rid) in imported or \
+                        (CN.dj_key("rekordbox", rid) in done and v["name"] in same):
+                    continue  # ya está en BrainOrder (la pasaste de Rekordbox a BrainOrder o Spotify): esa es
                 entries.append({"program": "rekordbox", "ref": rid, "name": v["name"]})
                 CN.dj_mark("rekordbox", rid, done=True)
                 added.append(v["name"])  # (dos con el mismo nombre en subcarpetas distintas: las dos)
