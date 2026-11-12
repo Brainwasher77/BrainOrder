@@ -337,3 +337,66 @@ def root_folders(cfg):
         if parent in names:
             out.setdefault(names[parent], []).append(t)
     return out
+
+
+def edit_by_ref(cfg, ops):
+    """Cambios hechos en BrainOrder sobre playlists que viven en Engine DJ (las que agregaste desde Engine DJ).
+    ops: [{"ref": id de la playlist, "add": [{"source", "name", "artists", "album"}], "remove": [rutas], "rename",
+           "delete"}]
+    Engine DJ cerrado y respaldo antes. -> {"added", "removed", "renamed", "deleted", "missing", "skipped", "backup"}"""
+    ops = [o for o in ops or [] if o.get("ref")]
+    if not ops:
+        return None
+    _open(cfg)
+    bk = backup(cfg)
+    lib = Library(cfg)
+    out = {"added": 0, "removed": 0, "renamed": 0, "deleted": 0, "missing": 0, "skipped": 0, "backup": bk, "refs": {}}
+    try:
+        with lib.db:
+            for o in ops:
+                try:
+                    lid = int(o["ref"])
+                except (TypeError, ValueError):
+                    out["missing"] += 1
+                    continue
+                row = lib.db.execute("SELECT id, title FROM Playlist WHERE id = ?", (lid,)).fetchone()
+                if row is None:
+                    out["missing"] += 1
+                    continue
+                if o.get("delete"):
+                    lib.db.execute("DELETE FROM PlaylistEntity WHERE listId = ?", (lid,))
+                    lib.db.execute("DELETE FROM Playlist WHERE id = ?", (lid,))  # el trigger re-encadena la lista
+                    out["deleted"] += 1
+                    continue
+                cur = lib.entries(lid)
+                gone = set()
+                for p in o.get("remove") or []:
+                    rel = lib.rel(p) if p else None
+                    tid = lib.track_id(rel) if rel else None
+                    if tid is not None:
+                        gone.add(tid)
+                new = [t for t in cur if t not in gone]
+                out["removed"] += len(cur) - len(new)
+                for r in o.get("add") or []:
+                    rel = lib.rel(r["source"]) if r.get("source") else None
+                    if rel is None:
+                        out["skipped"] += 1 if r.get("source") else 0
+                        continue
+                    tid = lib.track_id(rel)
+                    if tid is None:
+                        tid = lib.add_track(r["source"], rel, r.get("name"), ", ".join(r.get("artists") or []),
+                                            r.get("album"), None)
+                    if tid not in new:
+                        new.append(tid)
+                        out["added"] += 1
+                if new != cur:
+                    lib.set_entries(lid, new)
+                if o.get("rename") and row[1] != o["rename"]:
+                    lib.db.execute("UPDATE Playlist SET title = ? WHERE id = ?", (o["rename"], lid))
+                    out["renamed"] += 1
+    except sqlite3.Error as e:
+        raise EngineError(f"No pude hacer el cambio en Engine DJ (no se guardó nada): {e}")
+    finally:
+        lib.db.close()
+    log(f"Engine DJ: cambios desde BrainOrder {out}")
+    return out

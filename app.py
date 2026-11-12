@@ -2960,11 +2960,11 @@ class Api:
         from fuentes import carpetas as FC
         deleted = set(self._cfg.get("deleted_playlists") or [])
         ref = self._rb_ref(pid, pl, entry)
-        if ref:  # nació en Rekordbox: la original allá también se elimina (las canciones siguen en tu colección)
+        if ref:  # nació en un programa de DJ: la original allá también se elimina (las canciones siguen en tu colección)
             try:
                 res["rekordbox_origin"] = self._rb_write([{"ref": ref, "delete": True}])
-            except rekordbox_sync.RekordboxError as e:
-                res.setdefault("dj_warnings", []).append(f"Rekordbox: {e}")
+            except (rekordbox_sync.RekordboxError, TraktorError, SeratoError, EngineError) as e:
+                res.setdefault("dj_warnings", []).append(str(e))
         if src == "spotify" and self._is_foreign(pid):
             f = self._cfg.setdefault("foreign", {})
             if pid in f:
@@ -3090,11 +3090,6 @@ class Api:
             self._set_stage(70, 85)
             res["dj"], res["dj_warnings"] = self._dj_edit({old: new_name}, [])
             ref = self._rb_ref(pid, pl, entry)
-            if ref:  # nació en Rekordbox: la original allá también cambia de nombre
-                try:
-                    res["rekordbox_origin"] = self._rb_write([{"ref": ref, "rename": new_name}])
-                except rekordbox_sync.RekordboxError as e:
-                    res["dj_warnings"] = list(res["dj_warnings"] or []) + [f"Rekordbox: {e}"]
             names = dict(self._cfg.get("playlist_names") or {})
             new_pid = pid
             if pid == "liked":
@@ -3115,7 +3110,7 @@ class Api:
                                                  for e in self._cfg.get("folder_playlists") or []]
                 new_pid = FC.entry_pid(new_entry)
                 self._migrate_pid(pid, new_pid)
-                if entry.get("program") and not self._rb_ref(pid, pl, entry):
+                if entry.get("program") and not ref:
                     import dj_playlists
                     res["origin_untouched"] = dj_playlists.LABELS.get(entry["program"], entry["program"])
             else:
@@ -3124,6 +3119,15 @@ class Api:
                     (fuentes.SOURCES[src].LABEL if src in fuentes.SOURCES else src)
             self._cfg["playlist_names"] = names
             config.save(self._cfg)
+            if ref:  # nació en un programa de DJ: la original allá también cambia de nombre
+                try:
+                    res["rekordbox_origin"] = self._rb_write([{"ref": ref, "rename": new_name}])
+                    if src == "carpetas" and entry:  # Serato cambia el id del crate al renombrar: se sigue
+                        e2 = next((e for e in self._cfg.get("folder_playlists") or []
+                                   if e.get("program") == entry.get("program") and e.get("name") == new_name), None)
+                        new_pid = FC.entry_pid(e2) if e2 else new_pid
+                except (rekordbox_sync.RekordboxError, TraktorError, SeratoError, EngineError) as e:
+                    res["dj_warnings"] = list(res["dj_warnings"] or []) + [str(e)]
 
             def put(data):
                 for x in data["playlists"]:
@@ -3424,58 +3428,90 @@ class Api:
         if src == "spotify":
             return not self._is_foreign(pid)
         return src == "carpetas" and bool(entry and (entry.get("path") or
-                                                     (entry.get("program") == "rekordbox" and entry.get("ref"))))
+                                                     (entry.get("program") in destinos.DESTINATIONS and entry.get("ref"))))
 
     def _rb_ref(self, pid, pl=None, entry=None):
-        """Id en Rekordbox de una playlist que nació en Rekordbox (la original allá es la única copia: Organizar no
-        la duplica en la carpeta de BrainOrder). None si no es de Rekordbox o no se encuentra."""
+        """La playlist original en un programa de DJ de una playlist que nació allá: (programa, id) o None.
+        (La original es la única copia: Organizar no la duplica en la carpeta de BrainOrder de ese programa.)"""
         from fuentes import carpetas as FC
         if not pid or pid == "liked":
             return None
         e = entry or next((x for x in FC.entries(self._cfg) if FC.entry_pid(x) == pid), None)
-        if e and e.get("program") == "rekordbox" and e.get("ref"):
-            return str(e["ref"])
-        if e and e.get("program"):
-            return None
+        if e and e.get("program") and e.get("ref"):
+            return (e["program"], str(e["ref"])) if e["program"] in destinos.DESTINATIONS else None
         origin = (pl or {}).get("origin") or (self._cfg.get("playlist_origin") or {}).get(pid)
-        if origin != "rekordbox":
+        if not origin or origin not in destinos.DESTINATIONS:
             return None
         try:
-            import rb_cambios
-            for rid, b in rb_cambios.load_baseline().items():
-                if b.get("pid") == pid:
-                    return str(rid)
+            if origin == "rekordbox":
+                import rb_cambios
+                for rid, b in rb_cambios.load_baseline().items():
+                    if b.get("pid") == pid:
+                        return (origin, str(rid))
             import dj_playlists as DJ
             name = biblioteca.folder_key((pl or {}).get("name") or "")
-            hits = [ref for ref, v in (DJ.read(self._cfg, "rekordbox") or {}).items()
+            hits = [ref for ref, v in (DJ.read(self._cfg, origin) or {}).items()
                     if name and biblioteca.folder_key(v["name"]) == name]
-            return str(hits[0]) if len(hits) == 1 else None  # solo si no hay duda de cuál es
+            return (origin, str(hits[0])) if len(hits) == 1 else None  # solo si no hay duda de cuál es
         except Exception as e:
-            config.log(f"buscar la playlist en Rekordbox: {e!r}")
+            config.log(f"buscar la playlist original en {origin}: {e!r}")
             return None
 
     def _rb_ready(self, *refs):
-        if any(refs) and rekordbox_sync.rekordbox_running():
-            raise unificar.UnifyError("Rekordbox está abierto. Ciérralo para que el cambio quede también en tu "
-                                      "playlist de Rekordbox (BrainOrder, Spotify y Rekordbox quedan iguales).")
+        """Los programas donde viven esas playlists tienen que estar cerrados (antes de tocar nada)."""
+        for r in refs:
+            if not r:
+                continue
+            m = destinos.DESTINATIONS.get(r[0])
+            running = rekordbox_sync.rekordbox_running() if r[0] == "rekordbox" else (m is not None and m.running())
+            if running:
+                label = getattr(m, "LABEL", r[0])
+                raise unificar.UnifyError(f"{label} está abierto. Ciérralo para que el cambio quede también en tu playlist "
+                                          f"de {label} (BrainOrder, Spotify y {label} quedan iguales).")
 
     def _rb_write(self, ops):
-        """Escribe en las playlists originales de Rekordbox y actualiza la foto (para que no parezca un cambio que
-        hiciste tú allá). -> resultado de rekordbox_sync.edit_by_ref o None"""
-        ops = [o for o in ops or [] if o.get("ref")]
-        if not ops:
+        """Escribe en las playlists originales de los programas de DJ. ops: [{"ref": (programa, id), …}].
+        En Rekordbox también actualiza la foto (para que no parezca un cambio que hiciste tú allá). Si un programa
+        cambia el id de la playlist (Serato al renombrar), BrainOrder la sigue. -> {"added", "removed", …, "labels"}"""
+        from fuentes import carpetas as FC
+        by = {}
+        for o in ops or []:
+            if o.get("ref"):
+                by.setdefault(o["ref"][0], []).append({**o, "ref": o["ref"][1]})
+        if not by:
             return None
-        out = rekordbox_sync.edit_by_ref(self._cfg, ops)
-        try:
-            import rb_cambios
-            state = rb_cambios.read_state(self._cfg)
-            rids = [str(o["ref"]) for o in ops if not o.get("delete") and state and str(o["ref"]) in state]
-            if rids:
-                rb_cambios.accept(state, rids)
-            rb_cambios.drop_ids([str(o["ref"]) for o in ops if o.get("delete")])
-        except Exception as e:
-            config.log(f"foto de Rekordbox: {e!r}")
-        return out
+        total = {"added": 0, "removed": 0, "renamed": 0, "deleted": 0, "missing": 0, "labels": [], "backup": None}
+        for prog, pops in by.items():
+            if prog == "rekordbox":
+                r = rekordbox_sync.edit_by_ref(self._cfg, pops)
+                try:
+                    import rb_cambios
+                    state = rb_cambios.read_state(self._cfg)
+                    rids = [o["ref"] for o in pops if not o.get("delete") and state and o["ref"] in state]
+                    if rids:
+                        rb_cambios.accept(state, rids)
+                    rb_cambios.drop_ids([o["ref"] for o in pops if o.get("delete")])
+                except Exception as e:
+                    config.log(f"foto de Rekordbox: {e!r}")
+            else:
+                m = destinos.DESTINATIONS.get(prog)
+                if m is None or not hasattr(m, "edit_by_ref"):
+                    continue
+                r = m.edit_by_ref(self._cfg, pops)
+            if not r:
+                continue
+            for k in ("added", "removed", "renamed", "deleted", "missing"):
+                total[k] += r.get(k) or 0
+            total["labels"].append(getattr(destinos.DESTINATIONS.get(prog), "LABEL", prog))
+            total["backup"] = total["backup"] or r.get("backup")
+            for old, new in (r.get("refs") or {}).items():  # el id cambió: la entrada de BrainOrder lo sigue
+                for e in self._cfg.get("folder_playlists") or []:
+                    if e.get("program") == prog and str(e.get("ref")) == old:
+                        opid = FC.entry_pid(e)
+                        e["ref"] = new
+                        self._migrate_pid(opid, FC.entry_pid(e))
+                config.save(self._cfg)
+        return total
 
     def _new_pl_for_move(self, name, spotify, rows, analysis):
         """Playlist nueva (vacía) para «Mover a otra playlist» -> (pid, creada). Si ya tienes una que se llama

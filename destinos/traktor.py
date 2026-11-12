@@ -363,3 +363,77 @@ def root_folders(cfg):
             sub = f.find("SUBNODES")
             out[f.get("NAME")] = [n.get("NAME") for n in (sub.findall("NODE") if sub is not None else [])]
     return out
+
+
+def _find_by_ref(col, ref):
+    """La playlist de Traktor con ese id (su UUID o «carpeta/…/nombre», como la lee dj_playlists).
+    -> (SUBNODES donde está, NODE, carpetas) o None"""
+    pls = col.root.find("PLAYLISTS")
+    top = pls.find("NODE") if pls is not None else None
+
+    def walk(node, trail):
+        sub = node.find("SUBNODES")
+        for n in (sub.findall("NODE") if sub is not None else []):
+            name = n.get("NAME") or ""
+            if n.get("TYPE") == "FOLDER":
+                hit = walk(n, trail + [name])
+                if hit:
+                    return hit
+            elif n.get("TYPE") == "PLAYLIST":
+                pl = n.find("PLAYLIST")
+                if ((pl.get("UUID") if pl is not None else None) or "/".join(trail + [name])) == str(ref):
+                    return sub, n, trail
+        return None
+    return walk(top, []) if top is not None else None
+
+
+def edit_by_ref(cfg, ops):
+    """Cambios hechos en BrainOrder sobre playlists que viven en Traktor (las que agregaste desde Traktor).
+    ops: [{"ref", "add": [{"source", "name", "artists"}], "remove": [rutas], "rename", "delete"}]
+    Traktor cerrado y respaldo antes. -> {"added", "removed", "renamed", "deleted", "missing", "backup", "refs"}"""
+    ops = [o for o in ops or [] if o.get("ref")]
+    if not ops:
+        return None
+    path = _open(cfg)
+    bk = backup(path)
+    col = Collection(path)
+    out = {"added": 0, "removed": 0, "renamed": 0, "deleted": 0, "missing": 0, "backup": bk, "refs": {}}
+    for o in ops:
+        hit = _find_by_ref(col, o["ref"])
+        if hit is None:
+            out["missing"] += 1
+            continue
+        sub, node, trail = hit
+        if o.get("delete"):
+            sub.remove(node)
+            sub.set("COUNT", str(len(sub.findall("NODE"))))
+            out["deleted"] += 1
+            continue
+        pl = node.find("PLAYLIST")
+        if pl is None:
+            pl = ET.SubElement(node, "PLAYLIST", ENTRIES="0", TYPE="LIST", UUID=uuid.uuid4().hex)
+        gone = {col.key(p) for p in o.get("remove") or [] if p}
+        for e in list(pl.findall("ENTRY")):
+            pk = e.find("PRIMARYKEY")
+            if pk is not None and pk.get("KEY") in gone:
+                pl.remove(e)
+                out["removed"] += 1
+        have = {pk.get("KEY") for pk in pl.iter("PRIMARYKEY")}
+        for r in o.get("add") or []:
+            if not r.get("source"):
+                continue
+            k, _new = col.ensure_entry(r["source"], r.get("name") or "", ", ".join(r.get("artists") or []))
+            if k in have:
+                continue
+            ET.SubElement(ET.SubElement(pl, "ENTRY"), "PRIMARYKEY", TYPE="TRACK", KEY=k)
+            have.add(k)
+            out["added"] += 1
+        pl.set("ENTRIES", str(len(pl.findall("ENTRY"))))
+        if o.get("rename") and node.get("NAME") != o["rename"]:
+            node.set("NAME", o["rename"])
+            out["renamed"] += 1
+            if not pl.get("UUID"):  # su id era la ruta: cambia con el nombre
+                out["refs"][str(o["ref"])] = "/".join(trail + [o["rename"]])
+    col.save()
+    log(f"Traktor: cambios desde BrainOrder {out}")
+    return out

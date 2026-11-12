@@ -330,3 +330,74 @@ def root_folders(cfg):
         if "%%" not in child:
             out.setdefault(parent, []).append(child)
     return out
+
+
+def edit_by_ref(cfg, ops):
+    """Cambios hechos en BrainOrder sobre crates de Serato (los que agregaste desde Serato).
+    ops: [{"ref": nombre del archivo del crate sin .crate («Padre%%Hijo»), "add": [{"source"}], "remove": [rutas],
+           "rename", "delete"}]
+    Serato cerrado y copia de respaldo antes. Solo canciones del disco donde está tu carpeta _Serato_.
+    -> {"added", "removed", "renamed", "deleted", "missing", "skipped", "refs": {ref viejo: ref nuevo}}"""
+    ops = [o for o in ops or [] if o.get("ref")]
+    if not ops:
+        return None
+    if not available(cfg):
+        raise SeratoError(f"No encontré la carpeta de Serato ({home_serato(cfg)}).")
+    if running():
+        raise SeratoError("Serato está abierto. Ciérralo para que el cambio quede también en Serato.")
+    sdir = home_serato(cfg)
+    sub, root = sdir / "Subcrates", _volume_of(str(sdir))[0]
+    b = _Backup(sdir)
+    out = {"added": 0, "removed": 0, "renamed": 0, "deleted": 0, "missing": 0, "skipped": 0,
+           "backup": "BrainOrder respaldos", "refs": {}}
+
+    def rel(p):
+        r0, r = _volume_of(p)
+        return r if r0 == root else None
+    for o in ops:
+        ref = str(o["ref"])
+        f = sub / f"{ref}.crate"
+        if not f.exists():
+            out["missing"] += 1
+            continue
+        if o.get("delete"):
+            b.save(f)
+            f.unlink()
+            out["deleted"] += 1
+            continue
+        gone = {x for x in (rel(p) for p in o.get("remove") or [] if p) if x}
+        entries, have = [], set()
+        for tag, d in parse(f.read_bytes()):
+            if tag == "otrk":
+                p = next((d2.decode("utf-16-be", "replace") for t2, d2 in parse(d) if t2 == "ptrk"), None)
+                if p in gone:
+                    out["removed"] += 1
+                    continue
+                have.add(p)
+            entries.append((tag, d))
+        for r in o.get("add") or []:
+            x = rel(r["source"]) if r.get("source") else None
+            if x is None:
+                out["skipped"] += 1 if r.get("source") else 0
+                continue
+            if x not in have:
+                entries.append(("otrk", _tlv("ptrk", _txt(x))))
+                have.add(x)
+                out["added"] += 1
+        _write(f, dump(entries), b)
+        if o.get("rename"):
+            head = ref.rsplit("%%", 1)[0] + "%%" if "%%" in ref else ""
+            new = head + _crate_name(o["rename"])
+            if new != ref and not (sub / f"{new}.crate").exists():
+                kids = list(sub.glob(f"{ref}%%*.crate"))
+                b.save(f)
+                os.replace(f, sub / f"{new}.crate")
+                out["refs"][ref] = new
+                for k in kids:  # los crates de adentro van con él
+                    b.save(k)
+                    nk = new + k.stem[len(ref):]
+                    os.replace(k, sub / f"{nk}.crate")
+                    out["refs"][k.stem] = nk
+                out["renamed"] += 1
+    log(f"Serato: cambios desde BrainOrder {out}")
+    return out

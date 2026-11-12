@@ -1,5 +1,5 @@
 {
-  "version": "2.38.0",
-  "build": 92,
-  "notes": "Las playlists que agregaste desde Rekordbox ya aparecen al fusionar y al mover canciones, y lo que cambias en BrainOrder (mover, quitar, fusionar, renombrar, eliminar) también cambia en esa misma playlist de Rekordbox: BrainOrder, Spotify y Rekordbox quedan iguales."
+  "version": "2.39.0",
+  "build": 93,
+  "notes": "Lo mismo que con Rekordbox, ahora también con Traktor, Serato y Engine DJ: las playlists que agregaste desde esos programas se pueden fusionar y mover, y lo que cambias en BrainOrder también cambia en la playlist original de allá."
 }

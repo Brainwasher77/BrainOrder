@@ -160,12 +160,12 @@ print('mismo id dos veces: lista reescrita', SPr.sent)
 
 # 12) nació en Rekordbox: mover de una playlist de Rekordbox a una de Spotify cambia también la original allá
 o = setup()
-o._rb_ref = lambda pid, pl=None, entry=None: {'pa': 'R1', 'pb': 'R2'}.get(pid)
+o._rb_ref = lambda pid, pl=None, entry=None: {'pa': ('rekordbox', 'R1'), 'pb': ('traktor', 'T2')}.get(pid)
 o._rb_ready = lambda *refs: None
 W = []
 o._rb_write = lambda ops: (W.extend(ops), {"added": 1})[1]
 r = o.playlist_tracks_move('pa', [1], 'pb')
-assert [w['ref'] for w in W] == ['R2', 'R1'], W
+assert [w['ref'] for w in W] == [('traktor', 'T2'), ('rekordbox', 'R1')], W
 assert [x['source'] for x in W[0]['add']] == [str(fb/'uno.mp3')], W[0]
 assert s1 in W[1]['remove'] and str(fb/'uno.mp3') in W[1]['remove'], W[1]
 print('Rekordbox:', W)
