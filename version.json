@@ -1,5 +1,5 @@
 {
-  "version": "2.39.1",
-  "build": 94,
-  "notes": "Unificar: ya no propone juntar una carpeta que agrupa playlists (como «Brainwasher» con Hard y Soft adentro) ni una sin canciones, y «X» y «X ADC» ya no cuentan como la misma carpeta. Las carpetas con solo accesos directos salen como vacías para borrarlas (la música a la que apuntan no se toca)."
+  "version": "2.39.2",
+  "build": 95,
+  "notes": "Unificar y Duplicados solo apartan la misma grabación (±4 s, la misma regla que Recuperar). Antes dos versiones distintas de una canción (por ejemplo con 4,5 s de diferencia) se apartaban a _duplicados, Recuperar avisaba que estaba sola allí y en cada vuelta volvía a pasar."
 }

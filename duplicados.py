@@ -130,7 +130,7 @@ def scan(cfg, analysis=None, rb=None, progress=None):
         for f in sorted(g, key=lambda x: b.duration(x.path) or 0):
             d = b.duration(f.path)
             for s in subs:
-                if b.same_length(s[0][1], d):
+                if b.same_take(s[0][1], d):
                     s.append((f, d))
                     break
             else:

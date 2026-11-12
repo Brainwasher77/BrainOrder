@@ -6,7 +6,7 @@ App de escritorio para **macOS y Windows** que mantiene sincronizadas tus playli
 
 - Compara tus playlists de Spotify (y tus Me gusta) con los archivos de tu computador y te dice qué te falta y a qué carpeta va.
 - **Organizar** mueve las descargas a la carpeta de su playlist, sin duplicar archivos, y replica las playlists en Rekordbox con el mismo orden de Spotify.
-- **Unificar repetidos** limpia la carpeta: junta carpetas repetidas, aparta canciones repetidas en `_duplicados` y corrige las rutas en Rekordbox. Solo junta carpetas con música propia y sin subcarpetas (una carpeta que agrupa playlists, como «Brainwasher» con «Hard» y «Soft», no es una copia de «Brainwasher🚀»), y «X» y «X ADC» son carpetas distintas. Las carpetas con solo accesos directos salen como vacías (se borran los enlaces, nunca la música a la que apuntan).
+- **Unificar repetidos** limpia la carpeta: junta carpetas repetidas, aparta canciones repetidas en `_duplicados` y corrige las rutas en Rekordbox. Solo junta carpetas con música propia y sin subcarpetas (una carpeta que agrupa playlists, como «Brainwasher» con «Hard» y «Soft», no es una copia de «Brainwasher🚀»), y «X» y «X ADC» son carpetas distintas. Las carpetas con solo accesos directos salen como vacías (se borran los enlaces, nunca la música a la que apuntan). Una canción solo se aparta si es la MISMA grabación (duración ±4 s, la misma regla que «Recuperar»): dos versiones distintas, como un radio edit y la versión de álbum, se quedan las dos.
 - Links de **Spotify y Deezer** para cada canción que falta. Botones para copiarlos todos de una, por playlist.
 - Informes en **Excel** por playlist o de todo lo que falta, `.txt` de faltantes dentro de cada carpeta y estadísticas.
 

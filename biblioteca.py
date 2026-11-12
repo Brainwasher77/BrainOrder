@@ -199,6 +199,15 @@ def same_length(a, b):
     return abs(a - b) <= max(float(r["dur_tol_s"]), float(r["dur_tol_pct"]) / 100 * max(a, b))
 
 
+def same_take(a, b):
+    """¿Dos duraciones son de la MISMA grabación? La misma regla que plataforma.same_recording (±REC_TOL s y,
+    si no se sabe alguna, NO): lo que Unificar / Duplicados apartan, Recuperar lo reconoce como repetido. Con la
+    tolerancia amplia de same_length, dos versiones distintas (radio edit y otra, 4,5 s de diferencia) se
+    apartaban y Recuperar las devolvía: un bucle."""
+    from plataforma import REC_TOL
+    return bool(a and b and abs(a - b) <= REC_TOL)
+
+
 # ---------------- carpetas con nombre equivalente ----------------
 def folder_key(name: str) -> str:
     """'Stay High🌒' == 'Stay High', 'Clásica' == 'Clasica', "Gangsta's" == 'Gangstas'."""
