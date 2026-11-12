@@ -1461,6 +1461,8 @@ const tmWhy = p => p.pending ? 'Analiza la playlist primero' : 'A esta playlist 
 const tmLabel = r => (r.artists && r.artists.length ? r.artists.join(', ') + ' - ' : '') + r.name;
 function tmFileNote(pl, r, B){
   const inside = r.source && pl.folder && dirOf(r.source) === pl.folder;
+  if(r.source && pl.tracks.some(t => t !== r && t.source === r.source))
+    return `La canción está dos veces en «${esc(pl.name)}» con el mismo archivo: el archivo se queda donde está (la otra la sigue usando).`;
   if(!inside) return r.source ? 'Su archivo no está en la carpeta de esta playlist: no se mueve.' : 'No tienes su archivo: solo cambia la playlist.';
   if(B) return `Su archivo pasa a la carpeta de «${esc(B.name)}»${B.tracks.some(t=>t.id===r.id)?' (si ya tiene su propia copia de la misma grabación, esta va a <code>_duplicados</code>)':''}.`;
   return 'Su archivo sale de la carpeta de esta playlist: va a la de otra playlist que la tenga o a <code>_Sin Playlist</code>.';
@@ -1569,6 +1571,7 @@ async function tmDone(res, dj){
     : `✅ ${song} ya no está en <b>«${esc(x.name)}»</b>.`;
   if(f.moved) msg += `<br>📁 ${f.home ? `Archivo a <code>${esc(short(f.to))}</code>` : ''}${f.home && f.dup ? ' · ' : ''}${f.dup ? `copia repetida a <code>${esc(short(f.dup_dir))}</code>` : ''}.` + undoLink(f);
   if(f.kept) msg += `<br><span class="art">Su archivo se quedó donde estaba (otra versión o chocaba por nombre).</span>`;
+  if(x.shared) msg += `<br><span class="art">El archivo se quedó en «${esc(x.name)}»: la otra vez que estaba la canción lo sigue usando.</span>`;
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">No se movió: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
   const sps = [x.spotify, x.spotify_src].filter(Boolean);
   if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ Spotify está en pausa: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;

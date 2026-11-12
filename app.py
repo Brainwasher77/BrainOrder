@@ -3497,6 +3497,9 @@ class Api:
             for r in (B.get("tracks") or []) if B else []:
                 b_by_id.setdefault(r.get("id"), r)
             ops, planned, dup_keep, n = [], set(), {}, {"home": 0, "dup": 0, "kept": 0}
+            # un archivo que también usa otra fila de src que se queda (la misma canción dos veces en la
+            # playlist, por ejemplo dos versiones de Spotify con el mismo archivo) no se mueve: sigue siendo de src
+            stay = {nk(r["source"]) for r in A.get("tracks") or [] if r.get("source") and r.get("pos") not in want}
             if afold and afold.is_dir():
                 inside = nk(afold) + os.sep
                 seen = set()
@@ -3505,6 +3508,9 @@ class Api:
                     if not src or nk(src) in seen or not nk(src).startswith(inside) or not os.path.isfile(src):
                         continue
                     seen.add(nk(src))
+                    if nk(src) in stay:
+                        res["shared"] = res.get("shared", 0) + 1
+                        continue
                     if B is not None:
                         kr = b_by_id.get(r.get("id")) or {}
                         own = kr.get("source")
@@ -3616,7 +3622,7 @@ class Api:
                             cur["total"] = len(cur["tracks"])
                     self._update_sp(put)
             else:
-                gone = {nk(r["source"]) for r in rows if r.get("source")} | {nk(v) for v in ch.values()}
+                gone = ({nk(r["source"]) for r in rows if r.get("source")} - stay) | {nk(v) for v in ch.values()}
                 FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone])
             # las de carpeta se releen (con lo que llegó o salió)
             for pid, folder_pl in ((src_pid, a_folder_pl), (dst_pid, b_folder_pl)):

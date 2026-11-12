@@ -126,5 +126,16 @@ try:
 except app.unificar.UnifyError as e:
     assert 'archivo' in str(e)
 assert not o.jobs and not (root/'Otra').exists()
+
+# 10) la misma canción dos veces en la playlist (dos versiones de Spotify con el MISMO archivo): quitar la de
+# más no saca el archivo de la carpeta (la otra fila lo sigue usando)
+o = setup()
+LA2 = o._analysis()[0]
+LA2["tracks"].append({"pos": 5, "id": SP('e'), "name": "Uno", "source": s1})
+o._analysis = lambda: [LA2] + [p for p in setup()._analysis() if p["id"] != "pa"]
+o._pl_ctx = lambda pid, an=None: ({p["id"]: p for p in o._analysis()}[pid], 'spotify', None, None)
+r = o.playlist_tracks_move('pa', [5], None)
+assert not o.got.get('ops') and r['result'].get('shared') == 1, (o.got, r['result'])
+assert [j['uris'] for j in o.jobs] == [['spotify:track:' + SP('e')]]
 shutil.rmtree(root)
 print("OK")

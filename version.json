@@ -1,5 +1,5 @@
 {
-  "version": "2.36.0",
-  "build": 89,
-  "notes": "Mover a otra playlist: ahora también puedes crear una playlist nueva ahí mismo («➕ Crear una playlist nueva…»), en Spotify y BrainOrder o solo en BrainOrder. Si ya tienes una con ese nombre, la canción va a esa."
+  "version": "2.36.1",
+  "build": 90,
+  "notes": "Quitar o mover una canción que está dos veces en la misma playlist (dos versiones de Spotify con el mismo archivo) ya no saca el archivo de su carpeta: la otra la sigue usando."
 }
