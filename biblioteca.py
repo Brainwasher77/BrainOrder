@@ -483,7 +483,19 @@ def _harm(src):
     return {"key": h.get("key"), "energy": h.get("energy"), "bpm": h.get("bpm"), "mik": h.get("mik")}
 
 
-def analyze(playlists, cfg, progress=None):
+_LAST_IDX = [None]
+
+
+def maybe_have(row):
+    """¿Hay en tu música (último análisis) algo con el mismo título base y artista? Barato, sin leer audio."""
+    idx = _LAST_IDX[0]
+    if idx is None:
+        return False
+    return any(artist_ok(row.get("artists") or [], f.artist_n)
+               for f in idx.by_core.get(core_title(row.get("name", "")), []))
+
+
+def analyze(playlists, cfg, progress=None, alt=None):
     """Cruza playlists de Spotify con los archivos locales, sin duplicar archivos.
 
     Cada canción tiene UN solo archivo. Su carpeta "hogar" es la de la primera playlist
@@ -493,6 +505,9 @@ def analyze(playlists, cfg, progress=None):
       inbox      -> está en descargas; Organizar lo MUEVE a su carpeta hogar
       missing    -> falta por descargar
     inbox_dups: descargas que repiten una canción que ya tienes (van a _duplicados).
+    alt: {id: canción} lo que baja el link de Deezer de cada canción (deezer.targets()). Si la canción no
+         aparece por su nombre pero sí tienes lo que baja ese link (otra versión, otra duración), se usa ese
+         archivo: así no se te vuelve a dar un link para bajar algo que ya está (y que iría a _duplicados).
     """
     rules = configure(cfg)
     dest_root = Path(cfg["dest_root"])
@@ -507,6 +522,8 @@ def analyze(playlists, cfg, progress=None):
     total_tracks = sum(len(p["tracks"]) for p in playlists) or 1
     done_tracks = 0
     idx = Index(files)
+    _LAST_IDX[0] = idx
+    alt = alt or {}
     # versiones que aceptaste a mano («usar esta versión»): {id de la canción: [nombre de archivo normalizado]}
     manual = cfg.get("version_links") or {}
     by_stem = {}
@@ -576,6 +593,12 @@ def analyze(playlists, cfg, progress=None):
                 else:
                     isrc_hits = by_isrc(t["isrc"], claimed)
                 matches += [f for f in isrc_hits if f not in matches]
+            via = None
+            a = alt.get(t["id"])
+            if not matches and a and norm(a["for"]) == norm(f"{(t.get('artists') or [''])[0]} - {t['name']}"):
+                matches = idx.find(a)  # lo que baja su link de Deezer: si ya lo tienes, es esta canción
+                if matches:
+                    via = f"{a['artists'][0]} - {a['name']}"
             claimed.update(f.path for f in matches)
             ex = extras(t["name"])
             # entre varias copias de la misma canción: la analizada con Mixed In Key primero (MIK no
@@ -612,6 +635,7 @@ def analyze(playlists, cfg, progress=None):
                 "dest_dir": hdir,
                 "home_name": home_name[hk(t)],
                 "inbox_dups": [d.path for d in dups],
+                **({"via_deezer": via} if via else {}),
                 **_harm(src),
             })
         out.append({"id": pl["id"], "name": pl["name"], "folder": folder_s, "tracks": rows,

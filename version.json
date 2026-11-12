@@ -1,5 +1,5 @@
 {
-  "version": "2.39.2",
-  "build": 95,
-  "notes": "Unificar y Duplicados solo apartan la misma grabación (±4 s, la misma regla que Recuperar). Antes dos versiones distintas de una canción (por ejemplo con 4,5 s de diferencia) se apartaban a _duplicados, Recuperar avisaba que estaba sola allí y en cada vuelta volvía a pasar."
+  "version": "2.39.3",
+  "build": 96,
+  "notes": "Ya no te da links de Deezer de canciones que ya tienes. Si Deezer solo tiene otra versión (Extended, Dub, otra duración) y ese archivo ya está en tu música, la canción cuenta como tenida: deja de salir en «Faltan», en el .txt y en el Excel, y lo que vuelvas a bajar se aparta en _duplicados sin pedírtelo otra vez. La primera vez que analices se revisa qué baja cada link (solo de las canciones que puede que ya tengas)."
 }

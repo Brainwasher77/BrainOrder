@@ -855,7 +855,7 @@ class Api:
         loaded = [{**p, "name": self._cfg.get("liked_name", "Me gusta") if p["id"] == "liked" else p["name"]}
                   for p in loaded] + list(sp_data.get("foreign_ok", []))
         loaded = self._mirror_folders(loaded)  # subcarpetas como en Rekordbox
-        result = biblioteca.analyze(loaded, self._cfg, progress)
+        result = biblioteca.analyze(loaded, self._cfg, progress, alt=deezer.targets())
         if self._rb_master() and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
             try:
                 import rb_cambios
@@ -992,7 +992,7 @@ class Api:
         rows = [r for pl in a if not pl.get("pending") and (focus is None or pl["id"] in focus)
                 for r in pl["tracks"] if r["status"] == "missing"]
         self._sub_stage(0.45, 0.95)
-        deezer.add_links([{"tracks": rows}], prog)
+        deezer.add_links([{"tracks": rows}], prog, maybe_have=biblioteca.maybe_have)
         self._sub_stage(0.95, 1.0)
         with self._state:
             self._progress("Guardando y escribiendo la lista de faltantes…", 0)

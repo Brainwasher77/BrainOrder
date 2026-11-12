@@ -2180,6 +2180,7 @@ function links(r){
   if(r.deezer && r.deezer.url && r.deezer.url!==r.url) out.push(r.deezer.other
     ? `<a class="lnk" style="color:var(--org)" title="Deezer no tiene esta versión: el link es de «${esc(r.deezer.other)}». Si la bajas, BrainOrder te propone usarla como esta canción." onclick="openUrl(${jsq(r.deezer.url)})">Deezer (otra versión) ↗</a>`
     : `<a class="lnk" style="color:#a78bfa" title="${r.deezer.found?'Mismo tema en Deezer':'No encontrado exacto: abre una búsqueda'}" onclick="openUrl(${jsq(r.deezer.url)})">Deezer${r.deezer.found?'':' (buscar)'} ↗</a>`);
+  if(r.via_deezer && r.status!=='missing') out.push(`<span class="art" title="Es lo que baja su link de Deezer («${esc(r.via_deezer)}») y ya lo tenías: se usa ese archivo y no se te vuelve a pedir descargarla">≈ ya la tenías (Deezer)</span>`);
   return out.join('<span style="color:var(--line)"> · </span>');
 }
 async function exportPlaylist(i){
