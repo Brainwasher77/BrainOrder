@@ -410,9 +410,9 @@ class Api:
     def pick_file(self, current="", kind="nml"):
         """Selector de archivo (por ahora: collection.nml de Traktor)."""
         import webview
-        start = str(Path(current).parent) if current and Path(current).exists() else str(Path.home() / "Documents")
+        start = str(Path(current).parent) if current and Path(current).parent.exists() else str(Path.home() / "Documents")
         mode = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
-        types = ("Colección de Traktor (*.nml)",) if kind == "nml" else ()
+        types = {"nml": ("Colección de Traktor (*.nml)",), "xml": ("XML de Rekordbox (*.xml)",)}.get(kind, ())
         try:
             res = self._window.create_file_dialog(mode, directory=start, file_types=types)
         except Exception as e:
@@ -6104,6 +6104,60 @@ class Api:
             self._progress("Listo.", 1)
             return {"added": added, "backup": bk.name, "name": self.GRID_NAME}
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
+
+    # ---------- corregir BPM al doble / a la mitad (XML que importa Rekordbox) ----------
+    def bpm_xml_pick(self):
+        """Elegir el XML que exportaste de Rekordbox (Archivo → Exportar colección en formato xml)."""
+        cur = self._cfg.get("rb_xml_export") or ""
+        p = self.pick_file(cur if cur and Path(cur).exists() else str(Path.home() / "Music" / "x.xml"), "xml")
+        if not p:
+            return {"ok": False}
+        self._cfg["rb_xml_export"] = p
+        config.save(self._cfg)
+        return {"ok": True, **self._bpm_xml_info(p)}
+
+    def _bpm_xml_info(self, p):
+        try:
+            st = os.stat(p)
+        except OSError:
+            return {"path": p, "exists": False}
+        return {"path": p, "exists": True, "mtime": st.st_mtime, "age_h": round((time.time() - st.st_mtime) / 3600, 1),
+                "size": st.st_size}
+
+    def bpm_xml_state(self):
+        p = self._cfg.get("rb_xml_export") or ""
+        return {"ok": True, "export": self._bpm_xml_info(p) if p else None, "last": self._cfg.get("bpm_xml_last")}
+
+    def bpm_xml_build(self, items):
+        """items [{id, path, f}] (f = 0.5 si el BPM está al doble, 2 si está a la mitad). Arma, junto al XML
+        exportado, «BrainOrder · BPM corregido.xml» con SOLO esas canciones corregidas y una playlist con ellas.
+        No toca Rekordbox: lo importas tú desde «rekordbox xml» (Rekordbox reescribe su propio análisis)."""
+        import bpm_xml
+        export = self._cfg.get("rb_xml_export") or ""
+
+        def run():
+            if not export or not Path(export).exists():
+                raise RuntimeError("Primero elige el XML que exportaste de Rekordbox.")
+            wanted = {}
+            for it in items or []:
+                f = float(it.get("f") or 0)
+                if it.get("path") and f in (0.5, 2.0):
+                    wanted[it["path"]] = 0.5 if f == 0.5 else 2
+            if not wanted:
+                return {"done": 0, "missing": [], "skipped": []}
+            self._progress("Leyendo el XML de Rekordbox…", 0.05)
+            out = Path(export).with_name(bpm_xml.OUT_NAME)
+            res = bpm_xml.build(export, wanted, out, progress=lambda k, n: self._progress(
+                f"Corrigiendo grillas {k}/{n}…", 0.1 + 0.85 * k / max(1, n)))
+            res["skipped"] = [{"path": p, "why": w} for p, w in res["skipped"]]
+            res["age_h"] = self._bpm_xml_info(export).get("age_h")
+            self._cfg["bpm_xml_last"] = {"out": res["out"], "done": res["done"], "at": time.time()}
+            config.save(self._cfg)
+            config.log(f"BPM corregido: XML con {res['done']} canciones en {res['out']} "
+                       f"({len(res['missing'])} no estaban en el XML exportado, {len(res['skipped'])} saltadas)")
+            self._progress("Listo.", 1)
+            return res
+        return self._task(run, "bpm_xml", "Corregir BPM al doble / a la mitad")
 
     def _rb_track_paths(self):
         try:
