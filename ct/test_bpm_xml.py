@@ -85,7 +85,58 @@ pl = root.find("PLAYLISTS/NODE/NODE")
 assert pl.get("Name") == B.PLAYLIST and [x.get("Key") for x in pl] == ["11", "12"]
 print("ok test_bpm_xml")
 
-# --- la API de la app (elegir XML guardado en cfg + armar)
+# --- un botón: XML armado desde la colección (master.db) + preferencia de Rekordbox
+tracks = [
+    {"id": "171318462", "path": "/Users/frank/Music/BRAIN LIBRARY/Desembale/Andrés Cepeda - Para Amarte Mejor (Live).m4a",
+     "title": "Para Amarte Mejor", "artist": "Andrés Cepeda", "album": "A", "genre": "Salsa", "bpm": 180.0, "len": 219,
+     "track_no": 0, "bitrate": 256, "comment": "7B - Energy 5", "kind": "M4A File", "rating": 3, "year": 2001,
+     "remixer": "", "label": "", "key": "F", "added": "2026-09-07", "color": 5, "plays": 2, "size": 7742993, "disc": 0,
+     "composer": "", "mix": "", "sr": 44100,
+     "grid": [(4, 180.0, 159), (1, 180.0, 492), (2, 180.0, 825)],
+     "cues": [(1, 459, -1, ""), (2, 32458, -1, "Drop"), (0, 1000, -1, ""), (3, 2000, 4000, "")]},
+    {"id": "2", "path": "/x/sin.mp3", "title": "", "artist": "", "album": "", "genre": "", "bpm": 170.0, "len": 10,
+     "track_no": 0, "bitrate": 0, "comment": "", "kind": "", "rating": 0, "year": 0, "remixer": "", "label": "",
+     "key": "", "added": "", "color": 0, "plays": 0, "size": 0, "disc": 0, "composer": "", "mix": "", "sr": 0,
+     "grid": [], "cues": []},
+    {"id": "3", "path": "/x/otra.mp3", "title": "o", "artist": "", "album": "", "genre": "", "bpm": 128.0, "len": 10,
+     "track_no": 0, "bitrate": 0, "comment": "", "kind": "", "rating": 0, "year": 0, "remixer": "", "label": "",
+     "key": "", "added": "", "color": 0, "plays": 0, "size": 0, "disc": 0, "composer": "", "mix": "", "sr": 0,
+     "grid": [(1, 128.0, 10)], "cues": []}]
+out2 = d / "db.xml"
+r2 = B.build_from_db(tracks, {"171318462": 0.5, "2": 0.5}, out2)
+assert r2["done"] == 1 and r2["skipped"] == [("/x/sin.mp3", "sin grilla")], r2
+x = ET.parse(out2).getroot()
+t = x.find("COLLECTION/TRACK")
+assert t.get("AverageBpm") == "90.00" and t.get("Rating") == "153" and t.get("Colour") == "0x00FF00" and t.get("Tonality") == "F"
+assert B.location_path(t.get("Location")) == tracks[0]["path"] and "(Live)" in t.get("Location")
+te = t.findall("TEMPO")
+assert len(te) == 1 and te[0].get("Inizio") == "0.492" and te[0].get("Bpm") == "90.00" and te[0].get("Battito") == "1"
+pm = [(m.get("Num"), m.get("Start"), m.get("Type"), m.get("End"), m.get("Name")) for m in t.findall("POSITION_MARK")]
+assert pm == [("0", "0.459", "0", None, ""), ("-1", "1.000", "0", None, ""), ("2", "2.000", "4", "4.000", ""),
+              ("1", "32.458", "0", None, "Drop")], pm
+assert x.find("PLAYLISTS/NODE/NODE").get("Name") == B.PLAYLIST
+# grilla dinámica: un TEMPO por cambio
+assert B.grid_tempos([(1, 120.0, 0), (2, 120.0, 500), (3, 121.0, 1000), (4, 121.0, 1496)]) == [(0.0, 120.0, 1), (1.0, 121.0, 3)]
+
+# preferencia «rekordbox xml» en rekordbox3.settings
+home = d / "home"
+sdir = home / "Library" / "Application Support" / "Pioneer" / "rekordbox6"
+sdir.mkdir(parents=True)
+sf = sdir / "rekordbox3.settings"
+sf.write_text('<?xml version="1.0"?>\n<PROPERTIES>\n  <VALUE name="masterDbDirectory" val="/x"/>\n'
+              '  <VALUE name="bridgeImportedLibraryFile" val=""/>\n</PROPERTIES>\n', "utf-8")
+files = B.settings_files(home)
+assert files == [sf], files
+assert B.set_xml_pref('/Users/frank/Library/Application Support/BrainOrder/BrainOrder · BPM corregido.xml & "x"', files) == [str(sf)]
+txt = sf.read_text("utf-8")
+assert 'val="/Users/frank/Library/Application Support/BrainOrder/BrainOrder · BPM corregido.xml &amp; &quot;x&quot;"' in txt, txt
+assert 'masterDbDirectory" val="/x"' in txt and (sdir / "rekordbox3.settings.brainorder.bak").exists()
+ET.fromstring(txt.encode())  # sigue siendo XML válido
+sf.write_text('<PROPERTIES><VALUE name="otro" val=""/></PROPERTIES>', "utf-8")
+assert B.set_xml_pref("/a.xml", files) == []  # sin el valor no se inventa nada
+print("ok un botón")
+
+# --- la API de la app
 import app  # noqa: E402
 import config  # noqa: E402
 
@@ -95,18 +146,14 @@ o = A.__new__(A)
 o._cfg = {}
 o._task = lambda fn, k, l, files=False: {"ok": True, **fn()}
 o._progress = lambda *a, **k: None
-assert o.bpm_xml_state()["export"] is None
-
-try:
-    o._task = lambda fn, k, l, files=False: fn()
-    o.bpm_xml_build([{"id": "11", "path": a, "f": 0.5}])
-    raise AssertionError("sin XML elegido debía fallar")
-except RuntimeError:
-    pass
-o._task = lambda fn, k, l, files=False: {"ok": True, **fn()}
-o._cfg["rb_xml_export"] = str(exp)
-st = o.bpm_xml_state()["export"]
-assert st["exists"] and st["age_h"] < 1, st
-r = o.bpm_xml_build([{"id": "11", "path": a, "f": 0.5}, {"id": "12", "path": b_, "f": 2}, {"id": "x", "path": c, "f": 3}])
-assert r["ok"] and r["done"] == 2 and r["out"].endswith(B.OUT_NAME) and o._cfg["bpm_xml_last"]["done"] == 2, r
+o._rb_read = lambda fn, tag="": fn(None)
+B_db = B.db_tracks
+B.db_tracks = lambda con, share, ids: [t for t in tracks if t["id"] in ids]
+config.SUPPORT_DIR = d
+app.config.SUPPORT_DIR = d
+app.rekordbox_sync.rekordbox_running = lambda: False
+B.settings_files = lambda home=None: []
+r = o.bpm_xml_build([{"id": "171318462", "f": 0.5}, {"id": "3", "f": 7}, {"id": "2", "f": "0.5"}])
+assert r["ok"] and r["done"] == 1 and len(r["skipped"]) == 1 and r["pref"] == [] and not r["rekordbox_running"], r
+assert Path(r["out"]).exists() and o._cfg["bpm_xml_last"]["done"] == 1
 print("ok api bpm_xml")

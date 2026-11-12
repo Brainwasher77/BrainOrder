@@ -6106,55 +6106,45 @@ class Api:
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
 
     # ---------- corregir BPM al doble / a la mitad (XML que importa Rekordbox) ----------
-    def bpm_xml_pick(self):
-        """Elegir el XML que exportaste de Rekordbox (Archivo → Exportar colección en formato xml)."""
-        cur = self._cfg.get("rb_xml_export") or ""
-        p = self.pick_file(cur if cur and Path(cur).exists() else str(Path.home() / "Music" / "x.xml"), "xml")
-        if not p:
-            return {"ok": False}
-        self._cfg["rb_xml_export"] = p
-        config.save(self._cfg)
-        return {"ok": True, **self._bpm_xml_info(p)}
-
-    def _bpm_xml_info(self, p):
-        try:
-            st = os.stat(p)
-        except OSError:
-            return {"path": p, "exists": False}
-        return {"path": p, "exists": True, "mtime": st.st_mtime, "age_h": round((time.time() - st.st_mtime) / 3600, 1),
-                "size": st.st_size}
-
-    def bpm_xml_state(self):
-        p = self._cfg.get("rb_xml_export") or ""
-        return {"ok": True, "export": self._bpm_xml_info(p) if p else None, "last": self._cfg.get("bpm_xml_last")}
-
     def bpm_xml_build(self, items):
-        """items [{id, path, f}] (f = 0.5 si el BPM está al doble, 2 si está a la mitad). Arma, junto al XML
-        exportado, «BrainOrder · BPM corregido.xml» con SOLO esas canciones corregidas y una playlist con ellas.
-        No toca Rekordbox: lo importas tú desde «rekordbox xml» (Rekordbox reescribe su propio análisis)."""
+        """items [{id, f}] (f = 0.5 si el BPM está al doble, 2 si está a la mitad). Un botón:
+        lee esas canciones de tu colección (solo lectura), arma «BrainOrder · BPM corregido.xml» con el BPM y la
+        grilla corregidos (y sus cues, tags, key… como están) y, si Rekordbox está cerrado, lo deja elegido como
+        «rekordbox xml» en sus preferencias. Falta solo «Importar a la colección» dentro de Rekordbox (es Rekordbox
+        quien reescribe su propio análisis; desde fuera no se puede escribir la grilla sin riesgo)."""
         import bpm_xml
-        export = self._cfg.get("rb_xml_export") or ""
+        factors = {}
+        for it in items or []:
+            try:
+                f = float(it.get("f") or 0)
+            except (TypeError, ValueError):
+                continue
+            if it.get("id") and f in (0.5, 2.0):
+                factors[str(it["id"])] = 0.5 if f == 0.5 else 2
 
         def run():
-            if not export or not Path(export).exists():
-                raise RuntimeError("Primero elige el XML que exportaste de Rekordbox.")
-            wanted = {}
-            for it in items or []:
-                f = float(it.get("f") or 0)
-                if it.get("path") and f in (0.5, 2.0):
-                    wanted[it["path"]] = 0.5 if f == 0.5 else 2
-            if not wanted:
-                return {"done": 0, "missing": [], "skipped": []}
-            self._progress("Leyendo el XML de Rekordbox…", 0.05)
-            out = Path(export).with_name(bpm_xml.OUT_NAME)
-            res = bpm_xml.build(export, wanted, out, progress=lambda k, n: self._progress(
-                f"Corrigiendo grillas {k}/{n}…", 0.1 + 0.85 * k / max(1, n)))
+            if not factors:
+                return {"done": 0, "skipped": []}
+            self._progress("Leyendo tu colección de Rekordbox…", 0.1)
+            share = rekordbox_sync.RB_DIR / "share"
+            tracks = self._rb_read(lambda con: bpm_xml.db_tracks(con, share, list(factors)), "bpm")
+            self._progress("Armando el XML con las grillas corregidas…", 0.6)
+            out = Path(config.SUPPORT_DIR) / bpm_xml.OUT_NAME
+            res = bpm_xml.build_from_db(tracks, factors, out)
             res["skipped"] = [{"path": p, "why": w} for p, w in res["skipped"]]
-            res["age_h"] = self._bpm_xml_info(export).get("age_h")
+            res["missing"] = len(factors) - res["done"] - len(res["skipped"])
+            res["rekordbox_running"] = rekordbox_sync.rekordbox_running()
+            res["pref"] = []
+            if not res["rekordbox_running"]:
+                try:
+                    res["pref"] = bpm_xml.set_xml_pref(out, bpm_xml.settings_files())
+                except Exception as e:
+                    config.log(f"BPM corregido: no pude poner el XML en las preferencias de Rekordbox: {e!r}")
             self._cfg["bpm_xml_last"] = {"out": res["out"], "done": res["done"], "at": time.time()}
             config.save(self._cfg)
-            config.log(f"BPM corregido: XML con {res['done']} canciones en {res['out']} "
-                       f"({len(res['missing'])} no estaban en el XML exportado, {len(res['skipped'])} saltadas)")
+            config.log(f"BPM corregido: XML con {res['done']} canciones en {res['out']}; "
+                       f"preferencia de Rekordbox {'puesta' if res['pref'] else 'NO puesta'}; "
+                       f"{len(res['skipped'])} saltadas")
             self._progress("Listo.", 1)
             return res
         return self._task(run, "bpm_xml", "Corregir BPM al doble / a la mitad")

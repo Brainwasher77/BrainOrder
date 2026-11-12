@@ -192,8 +192,174 @@ def build(export_path, wanted, out_path, playlist=PLAYLIST, progress=None):
 
 
 def to_location(path):
-    """Ruta -> Location como la escribe Rekordbox (para pruebas)."""
+    """Ruta -> Location como la escribe Rekordbox (espacios y tildes codificados; paréntesis y similares no)."""
     p = str(path).replace("\\", "/")
     if not p.startswith("/"):
         p = "/" + p
-    return "file://localhost" + quote(p, safe="/:")
+    return "file://localhost" + quote(p, safe="/:()!$'*,;=@~&+[]")
+
+
+# ---------------------------------------------------------------- un botón: XML armado desde la colección
+KIND = {1: "MP3 File", 4: "M4A File", 5: "FLAC File", 11: "WAV File", 12: "AIFF File"}
+# colores de pista de Rekordbox (djmdColor.ID) -> Colour del XML
+COLOUR = {1: "0xFF007F", 2: "0xFF0000", 3: "0xFFA500", 4: "0xFFFF00", 5: "0x00FF00", 6: "0x25FDE9",
+          7: "0x0000FF", 8: "0x660099"}
+HOT_KIND = [1, 2, 3, 5, 6, 7, 8, 9]  # djmdCue.Kind de los hot cues A..H (0 = memory cue)
+
+
+def grid_tempos(grid):
+    """Grilla PQTZ [(tiempo 1-4, bpm, ms)] -> TEMPO [(inicio_s, bpm, battito)] (uno por cada cambio de BPM)."""
+    out, last = [], None
+    for beat, bpm, ms in grid:
+        if last is None or abs(bpm - last) > 0.005:
+            out.append((ms / 1000.0, bpm, int(beat) or 1))
+            last = bpm
+    return out
+
+
+def db_tracks(con, share_dir, ids):
+    """Lee de master.db (solo lectura) lo necesario para el XML de esas canciones."""
+    from grillas import read_grid
+    ids = [str(i) for i in ids]
+    if not ids:
+        return []
+
+    def names(table):
+        try:
+            return {str(i): n for i, n in con.execute(f"SELECT ID, Name FROM {table}")}
+        except Exception:
+            return {}
+    art, alb, gen, lab = names("djmdArtist"), names("djmdAlbum"), names("djmdGenre"), names("djmdLabel")
+    keys = {str(i): n for i, n in con.execute("SELECT ID, ScaleName FROM djmdKey")}
+    out = []
+    for k in range(0, len(ids), 500):
+        part = ids[k:k + 500]
+        q = ",".join("?" * len(part))
+        rows = con.execute(f"""SELECT ID, FolderPath, Title, ArtistID, AlbumID, GenreID, BPM, Length, TrackNo, BitRate,
+            Commnt, FileType, Rating, ReleaseYear, RemixerID, LabelID, KeyID, StockDate, ColorID, DJPlayCount,
+            AnalysisDataPath, FileSize, DiscNo, ComposerID, Subtitle, SampleRate
+            FROM djmdContent WHERE ID IN ({q})""", part).fetchall()
+        cues = {}
+        for cid, kind, a, b, comment in con.execute(
+                f"""SELECT ContentID, Kind, InMsec, OutMsec, Comment FROM djmdCue
+                WHERE ContentID IN ({q}) AND COALESCE(rb_local_deleted, 0) = 0""", part):
+            cues.setdefault(str(cid), []).append((int(kind or 0), a, b, comment or ""))
+        for r in rows:
+            (cid, path, title, ar, al, ge, bpm, length, tno, br, com, ft, rating, year, rem, la, key, stock, col,
+             plays, anlz, size, disc, comp, sub, sr) = r
+            cid = str(cid)
+            out.append({"id": cid, "path": path or "", "title": title or "", "artist": art.get(str(ar), ""),
+                        "album": alb.get(str(al), ""), "genre": gen.get(str(ge), ""), "bpm": (bpm or 0) / 100.0,
+                        "len": int(length or 0), "track_no": int(tno or 0), "bitrate": int(br or 0),
+                        "comment": com or "", "kind": KIND.get(int(ft or 0), ""), "rating": int(rating or 0),
+                        "year": int(year or 0), "remixer": art.get(str(rem), ""), "label": lab.get(str(la), ""),
+                        "key": keys.get(str(key), ""), "added": (stock or "")[:10], "color": int(col or 0),
+                        "plays": int(plays or 0), "size": int(size or 0), "disc": int(disc or 0),
+                        "composer": art.get(str(comp), ""), "mix": sub or "", "sr": int(sr or 0),
+                        "grid": read_grid(share_dir, anlz), "cues": sorted(cues.get(cid, []), key=lambda c: c[1] or 0)})
+    return out
+
+
+def track_element(t, factor):
+    """Canción de la colección -> <TRACK> con el BPM y la grilla corregidos (o None, motivo)."""
+    tempos = grid_tempos(t["grid"])
+    if not tempos:
+        return None, "sin grilla"
+    new = retempo(tempos, factor, t["len"] or (t["grid"][-1][2] / 1000.0 + 1))
+    if not new:
+        return None, "no pude calcular la grilla"
+    a = {"TrackID": t["id"], "Name": t["title"], "Artist": t["artist"], "Composer": t["composer"],
+         "Album": t["album"], "Grouping": "", "Genre": t["genre"], "Kind": t["kind"], "Size": str(t["size"]),
+         "TotalTime": str(t["len"]), "DiscNumber": str(t["disc"]), "TrackNumber": str(t["track_no"]),
+         "Year": str(t["year"]), "AverageBpm": _num((t["bpm"] or new[0][1] / factor) * factor, 2),
+         "DateAdded": t["added"], "BitRate": str(t["bitrate"]), "SampleRate": str(t["sr"]),
+         "Comments": t["comment"], "PlayCount": str(t["plays"]), "Rating": str(min(5, max(0, t["rating"])) * 51),
+         "Location": to_location(t["path"]), "Remixer": t["remixer"], "Tonality": t["key"], "Label": t["label"],
+         "Mix": t["mix"]}
+    if t["color"] in COLOUR:
+        a["Colour"] = COLOUR[t["color"]]
+    el = ET.Element("TRACK", a)
+    for t0, bpm, b in new:
+        ET.SubElement(el, "TEMPO", {"Inizio": _num(t0, 3), "Bpm": _num(bpm, 2), "Metro": "4/4", "Battito": str(b)})
+    for kind, a_ms, b_ms, name in sorted(t["cues"], key=lambda c: c[1] if c[1] is not None else -1):
+        if a_ms is None or a_ms < 0:
+            continue
+        loop = b_ms is not None and b_ms > a_ms
+        m = {"Name": name, "Type": "4" if loop else "0", "Start": _num(a_ms / 1000.0, 3),
+             "Num": str(HOT_KIND.index(kind)) if kind in HOT_KIND else "-1"}
+        if loop:
+            m["End"] = _num(b_ms / 1000.0, 3)
+        ET.SubElement(el, "POSITION_MARK", m)
+    return el, ""
+
+
+def build_from_db(tracks, factors, out_path, playlist=PLAYLIST):
+    """tracks de db_tracks, factors {id: 0.5|2}. Escribe el XML. -> {done, out, skipped, playlist}"""
+    root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+    ET.SubElement(root, "PRODUCT", {"Name": "rekordbox", "Version": "6.0.0", "Company": "AlphaTheta"})
+    coll = ET.SubElement(root, "COLLECTION")
+    ids, skipped = [], []
+    for t in tracks:
+        f = factors.get(t["id"])
+        if f not in (0.5, 2):
+            continue
+        el, why = track_element(t, f)
+        if el is None:
+            skipped.append((t["path"], why))
+            continue
+        coll.append(el)
+        ids.append(t["id"])
+    coll.set("Entries", str(len(ids)))
+    pls = ET.SubElement(root, "PLAYLISTS")
+    r = ET.SubElement(pls, "NODE", {"Type": "0", "Name": "ROOT", "Count": "1"})
+    p = ET.SubElement(r, "NODE", {"Name": playlist, "Type": "1", "KeyType": "0", "Entries": str(len(ids))})
+    for i in ids:
+        ET.SubElement(p, "TRACK", {"Key": i})
+    try:
+        ET.indent(root, space="  ")
+    except AttributeError:
+        pass
+    tmp = str(out_path) + ".tmp"
+    ET.ElementTree(root).write(tmp, encoding="UTF-8", xml_declaration=True)
+    os.replace(tmp, out_path)
+    return {"done": len(ids), "out": str(out_path), "skipped": skipped, "playlist": playlist}
+
+
+# ---------------------------------------------------------------- dejar Rekordbox apuntando al XML
+def settings_files(home=None):
+    """rekordbox3.settings posibles (Rekordbox 6/7 y 5), el más nuevo primero."""
+    import sys
+    from pathlib import Path
+    home = Path(home) if home else Path.home()
+    if sys.platform == "darwin" or home != Path.home():
+        base = home / "Library" / "Application Support" / "Pioneer"
+    else:
+        base = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming")) / "Pioneer"
+    cands = [base / d / "rekordbox3.settings" for d in ("rekordbox7", "rekordbox6", "rekordbox")]
+    return [p for p in cands if p.exists()]
+
+
+def set_xml_pref(xml_path, files):
+    """Pone «Biblioteca importada» (rekordbox xml) = xml_path en rekordbox3.settings. Respalda antes.
+    Solo cambia ese valor si ya existe. -> lista de archivos cambiados."""
+    import re
+    import shutil
+    from xml.sax.saxutils import escape
+    done = []
+    val = escape(str(xml_path), {'"': "&quot;"})
+    for f in files:
+        try:
+            s = f.read_text("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        pat = re.compile(r'(<VALUE\s+name="bridgeImportedLibraryFile"\s+val=")([^"]*)(")')
+        if not pat.search(s):
+            continue
+        new = pat.sub(lambda m: m.group(1) + val + m.group(3), s, count=1)
+        if new != s:
+            shutil.copy2(f, f.with_name(f.name + ".brainorder.bak"))
+            tmp = f.with_name(f.name + ".tmp")
+            tmp.write_text(new, "utf-8")
+            os.replace(tmp, f)
+        done.append(str(f))
+    return done

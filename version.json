@@ -1,5 +1,5 @@
 {
-  "version": "2.41.0",
-  "build": 98,
-  "notes": "Nuevo: «BPM al doble o a la mitad» en el menú. Junta las canciones donde Rekordbox tiene el BPM al doble o a la mitad (comparado con Mixed In Key o con su género) y arma un XML con el BPM y la grilla corregidos (÷2 o ×2, con el 1 del compás en el kick) para que Rekordbox lo importe él mismo. Tus cues, colores, tags y key no cambian."
+  "version": "2.42.0",
+  "build": 99,
+  "notes": "«BPM al doble o a la mitad» ahora es un solo botón: BrainOrder lee tu colección, arma el XML con el BPM y la grilla corregidos y deja Rekordbox apuntando a él. Ya no hace falta exportar la colección; en Rekordbox solo queda «Importar a la colección»."
 }
