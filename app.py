@@ -3395,15 +3395,49 @@ class Api:
             return not self._is_foreign(pid)
         return src == "carpetas" and bool(entry and entry.get("path"))
 
-    def playlist_tracks_move(self, src_pid, positions, dst_pid=None):
+    def _new_pl_for_move(self, name, spotify, rows, analysis):
+        """Playlist nueva (vacía) para «Mover a otra playlist» -> (pid, creada). Si ya tienes una que se llama
+        así, se usa esa. spotify: también en Spotify (si no, queda solo en BrainOrder como playlist de carpeta)."""
+        from fuentes import carpetas as FC
+        import carpetas_nuevas as CN
+        name, same = self._new_playlist_name(name, analysis)
+        if same:
+            return same, False
+        if spotify:
+            sp = self._spotify_ready()
+            if spotify_api.paused_until():
+                raise SpotifyPaused("Spotify está en pausa y ahora no se pueden crear playlists allá. Quita la casilla "
+                                    "«También en Spotify» para crearla solo en BrainOrder, o inténtalo cuando vuelva.")
+            created = sp.create_playlist(name, description=f"Creada con {config.CREDIT}")
+            pid, snap = created["id"], created.get("snapshot_id")
+            pl_entry = {"id": pid, "name": name, "source": "spotify", "snapshot": snap, "analyzed_snapshot": snap,
+                        "total": 0, "tracks": [], "url": (created.get("external_urls") or {}).get("spotify")}
+
+            def put(data):
+                data["playlists"] = [x for x in data["playlists"] if x["id"] != pid] + [pl_entry]
+            self._update_sp(put)
+            self._build_analysis(light=True)
+            return pid, True
+        if not any(r.get("source") and os.path.isfile(r["source"]) for r in rows):
+            raise unificar.UnifyError("No tienes el archivo de esa canción: una playlist solo de BrainOrder (de carpeta) "
+                                      "necesita el archivo. Marca «También en Spotify» para crearla allá.")
+        folder = self._new_playlist_folder(str(Path(self._cfg["dest_root"]) / config.safe_name(name)), analysis)
+        folder.mkdir(parents=True, exist_ok=True)
+        r = self._import_playlist(name, [], {}, {"name": name, "path": str(folder)}, FC.pid_for(folder))
+        CN.mark(folder, known=True, imported=True)  # no aparece en «Playlists nuevas»
+        return r.get("pid") or FC.pid_for(folder), True
+
+    def playlist_tracks_move(self, src_pid, positions, dst_pid=None, new=None):
         """Clic derecho en una (o varias) canciones de una playlist:
         - dst_pid=None: «Quitar de esta playlist»: sale de src (en BrainOrder, su carpeta y su plataforma).
         - dst_pid: «Mover a otra playlist»: entra al final de dst (si no la tenía) y sale de src.
+        - new={"name", "spotify"}: igual, pero a una playlist nueva que se crea aquí (en Spotify o solo en BrainOrder).
         Archivos (nunca se borra música; Deshacer en Historial): si el archivo vive en la carpeta de src, va a la
         carpeta de dst (al mover) o a la de otra playlist que lo tenga / «_Sin Playlist» (al quitar). Si dst ya
         tiene su propia copia de la misma grabación, la de src va a _duplicados; si es otra versión, no se toca.
         Los programas de DJ se ponen al día al organizar (la ventana lo hace enseguida si se lo pides)."""
         def run():
+            nonlocal dst_pid
             from fuentes import carpetas as FC
             import unicodedata
             analysis = self._analysis() or []
@@ -3423,6 +3457,15 @@ class Api:
                 raise unificar.UnifyError(f"A «{A['name']}» no se le pueden quitar canciones desde BrainOrder "
                                           f"(no es tuya o su plataforma no lo deja).")
             a_folder_pl = sa == "carpetas" and bool(ea and ea.get("path"))
+            created = False
+            if new and not dst_pid:
+                dst_pid, created = self._new_pl_for_move((new or {}).get("name"), bool((new or {}).get("spotify")),
+                                                         rows, analysis)
+                if dst_pid == src_pid:
+                    raise unificar.UnifyError("Ya estás en una playlist con ese nombre. Escribe otro.")
+                analysis = self._analysis() or []
+                A, sa, ea, fa = self._pl_ctx(src_pid, analysis)
+                rows = [r for r in A.get("tracks") or [] if r.get("pos") in want]
             B = sb = eb = fb = None
             b_folder_pl = False
             if dst_pid:
@@ -3443,7 +3486,7 @@ class Api:
                                     "vuelva (lo ves arriba, en Spotify).")
             nk = (lambda x: os.path.normcase(os.path.normpath(unicodedata.normalize("NFC", str(x)))))
             names = [r.get("name") or "" for r in rows]
-            res = {"name": A["name"], "into": B["name"] if B else None, "count": len(rows),
+            res = {"name": A["name"], "into": B["name"] if B else None, "count": len(rows), "created": created,
                    "song": names[0] if len(rows) == 1 else None}
             # 1) archivos que viven en la carpeta de src
             self._set_stage(0, 50)
@@ -3596,7 +3639,7 @@ class Api:
             analysis = self._build_analysis(light=True)
             idx = next((i for i, a in enumerate(analysis) if a["id"] == src_pid), None)
             return {"analysis": analysis, "result": res, "pid": src_pid, "dst_pid": dst_pid, "index": idx}
-        return self._task(run, f"pledit:{src_pid}", "Mover a otra playlist" if dst_pid else "Quitar de la playlist")
+        return self._task(run, f"pledit:{src_pid}", "Mover a otra playlist" if (dst_pid or new) else "Quitar de la playlist")
 
     def spotify_queue(self):
         import cola_spotify as Q

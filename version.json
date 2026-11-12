@@ -1,5 +1,5 @@
 {
-  "version": "2.35.0",
-  "build": 88,
-  "notes": "Clic derecho en una canción: «Mover a otra playlist…» (sale de esta y entra en la que elijas) y «Quitar de esta playlist». El cambio pasa a su carpeta, Spotify y tus programas de DJ; su archivo se va con ella o a otra playlist que la tenga / _Sin Playlist. Nunca se borra música y se puede deshacer en Historial."
+  "version": "2.36.0",
+  "build": 89,
+  "notes": "Mover a otra playlist: ahora también puedes crear una playlist nueva ahí mismo («➕ Crear una playlist nueva…»), en Spotify y BrainOrder o solo en BrainOrder. Si ya tienes una con ese nombre, la canción va a esa."
 }

@@ -90,5 +90,41 @@ for args, txt in ((('pa', [1], 'pc'), 'no se le pueden agregar'), (('pc', [1], N
     except app.unificar.UnifyError as e:
         assert txt in str(e), (args, e)
 assert not o.jobs and not o.got.get('ops')
+
+# 7) a una playlist NUEVA en Spotify: se crea, entra (merge_add) y sale de A; el archivo va a su carpeta
+o = setup()
+PLS = {}
+orig_an = o._analysis
+o._analysis = lambda: orig_an() + list(PLS.values())
+class SPm:
+    def create_playlist(self, name, description=""):
+        return {"id": SP('n'), "snapshot_id": "s1", "external_urls": {}}
+o._spotify_ready = lambda: SPm()
+def upd(f):
+    data = {"playlists": []}
+    f(data)
+    for x in data["playlists"]:
+        PLS[x["id"]] = {**x, "folder": str(root/x["name"])}
+o._update_sp = upd
+ctx0 = o._pl_ctx
+o._pl_ctx = lambda pid, an=None: (PLS[pid], 'spotify', None, None) if pid in PLS else ctx0(pid, an)
+r = o.playlist_tracks_move('pa', [1], None, {"name": "Bachata Nueva", "spotify": True})
+assert r['dst_pid'] == SP('n') and r['result']['created'] and r['result']['into'] == 'Bachata Nueva', r
+assert [(j['kind'], j['pid']) for j in o.jobs] == [('merge_add', SP('n')), ('remove', 'pa')], o.jobs
+assert [Path(d).name for a, d in o.got['ops']] == ['Bachata Nueva'], o.got
+print('nueva en Spotify:', o.got['ops'])
+
+# 8) con un nombre que ya tienes: va a esa (no se crea otra)
+o = setup()
+r = o.playlist_tracks_move('pa', [1], None, {"name": "  b ", "spotify": True})
+assert r['dst_pid'] == 'pb' and not r['result']['created']
+
+# 9) nueva solo en BrainOrder sin archivo: no se puede (y no se crea nada)
+o = setup()
+try:
+    o.playlist_tracks_move('pa', [4], None, {"name": "Otra", "spotify": False}); raise AssertionError
+except app.unificar.UnifyError as e:
+    assert 'archivo' in str(e)
+assert not o.jobs and not (root/'Otra').exists()
 shutil.rmtree(root)
 print("OK")

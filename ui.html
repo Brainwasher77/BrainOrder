@@ -1470,15 +1470,43 @@ function tmMove(pl, r){
   const opts = S.analysis.map((p,j)=>[p,j]).filter(([p]) => p !== pl && tmCanAdd(p))
     .map(([p,j]) => [p, j, (p.tracks.some(t => t.id===r.id) ? 'ya la tiene · ' : '') + (p.liked ? 'Me gusta' : p.source==='carpetas' ? 'carpeta' : (p.tracks.length + (p.tracks.length===1 ? ' canción' : ' canciones')))]);
   if(!opts.length){ toast('No hay otra playlist donde ponerla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true); return; }
-  TM = {pid: pl.id, pos: r.pos};
-  const dj = plDjNames();
+  TM = {pid: pl.id, pos: r.pos, nw: false};
+  const dj = plDjNames(), spOn = !!S.connected, spPaused = !!(S.spPause && S.spPause*1000 > Date.now());
   modal(`<h3>➡️ Mover «${esc(tmLabel(r))}» a…</h3>
     <div class="art">Sale de <b>«${esc(pl.name)}»</b> y entra al final de la que elijas (si ya la tiene, solo sale de «${esc(pl.name)}»). Escribe para buscar; Enter o doble clic para moverla.</div>
     ${plPicker('tmTo', opts, null, () => tmMoveGo(), () => tmInfo())}
+    <div style="margin-top:8px"><a class="lnk" id="tmNewLnk" onclick="tmNewToggle(true)">➕ Crear una playlist nueva…</a></div>
+    <div id="tmNewBox" class="box" style="display:none;margin-top:6px;line-height:1.6">
+      <div style="font-weight:650;margin-bottom:4px">➕ Playlist nueva</div>
+      <input class="inp" id="tmNewName" placeholder="Nombre de la playlist nueva" autocomplete="off" style="width:100%" oninput="tmNewInfo()" onkeydown="if(event.key==='Enter'){event.preventDefault(); tmMoveGo();} if(event.key==='Escape'){event.stopPropagation(); tmNewToggle(false);}">
+      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:${spOn?'pointer':'default'};${spOn?'':'opacity:.5'}"><input type="checkbox" id="tmNewSp" ${spOn && !spPaused ? 'checked' : ''} ${spOn ? '' : 'disabled'} onchange="tmNewInfo()"> También en Spotify${spOn ? (spPaused ? ' <span class="art">(Spotify está en pausa: ahora no se puede crear allá)</span>' : '') : ' <span class="art">(Spotify no está conectado)</span>'}</label>
+      <div id="tmNewInfo" class="art" style="margin-top:6px"></div>
+      <div style="margin-top:6px"><a class="lnk" onclick="tmNewToggle(false)">← Elegir una que ya tengo</a></div>
+    </div>
     <div id="tmInfo"></div>
     ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="tmDj" checked> Actualizar ya las dos playlists en ${dj.map(esc).join(', ')}</label>`:''}
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="tmGo" onclick="tmMoveGo()">Mover</button></div>`);
   pkOpen('tmTo'); tmInfo();
+}
+function tmNewToggle(on){
+  TM.nw = !!on; const box = $('tmNewBox'), lnk = $('tmNewLnk'), list = $('tmToL'), q = $('tmToQ'), info = $('tmInfo');
+  if(!box) return;
+  box.style.display = on ? '' : 'none'; if(lnk) lnk.style.display = on ? 'none' : '';
+  [list, q, info].forEach(el => { if(el) el.style.display = on ? 'none' : ''; });
+  if(on){ const n = $('tmNewName'); if(n && !n.value && q) n.value = q.value.trim(); tmNewInfo(); setTimeout(() => { if(n){ n.focus(); n.select(); } }, 30); }
+  else { tmInfo(); if(q) q.focus(); }
+}
+function tmNewInfo(){
+  const [A, r] = tmCtx(), el = $('tmNewInfo'), go = $('tmGo'); if(!el || !A || !r) return;
+  const name = ($('tmNewName').value||'').trim(), sp = $('tmNewSp') && $('tmNewSp').checked;
+  const same = name && (S.analysis||[]).find(p => !p.liked && p.name.trim().toLowerCase() === name.toLowerCase());
+  const inside = r.source && A.folder && dirOf(r.source) === A.folder;
+  el.innerHTML = !name ? 'Escribe el nombre.'
+    : same ? `Ya tienes una que se llama «${esc(same.name)}»: va a esa (nunca dos con el mismo nombre).`
+    : (sp ? 'Se crea en BrainOrder y en Spotify (privada), con su carpeta. ' : 'Se crea solo en BrainOrder, como playlist de carpeta. ')
+      + `La canción sale de «${esc(A.name)}» y entra en la nueva` + (inside ? '; su archivo pasa a la carpeta de la nueva.' : '.')
+      + (!sp && !r.source ? `<br><span style="color:var(--org)">No tienes el archivo de esta canción: para crearla solo en BrainOrder hace falta. Marca «También en Spotify».</span>` : '');
+  if(go){ go.textContent = name ? (same ? `Mover a «${same.name}»` : `Crear «${name}» y mover`) : 'Crear y mover'; go.disabled = !name; }
 }
 function tmCtx(){ const A = (S.analysis||[]).find(p => p.id===TM.pid); return [A, A && A.tracks.find(t => t.pos===TM.pos)]; }
 function tmInfo(){
@@ -1495,6 +1523,14 @@ function tmInfo(){
 async function tmMoveGo(){
   const [A, r] = tmCtx(), B = $('tmTo') && S.analysis[+$('tmTo').value];
   if(!A || !r){ closeModal(); toast('Esa canción cambió: vuelve a analizar la playlist.', true); return; }
+  if(TM.nw){
+    const name = ($('tmNewName').value||'').trim(), sp = !!($('tmNewSp') && $('tmNewSp').checked);
+    if(!name){ toast('Escribe el nombre de la playlist nueva.', true); return; }
+    const dj = $('tmDj') && $('tmDj').checked;
+    closeModal(); toast(`Creando «${esc(name)}» y moviendo «${esc(r.name)}»…`);
+    await tmDone(await api().playlist_tracks_move(A.id, [r.pos], null, {name, spotify: sp}), dj);
+    return;
+  }
   if(!B){ toast('Elige la playlist.', true); return; }
   const dj = $('tmDj') && $('tmDj').checked;
   closeModal(); toast(`Moviendo «${esc(r.name)}» a «${esc(B.name)}»…`);
@@ -1526,7 +1562,9 @@ async function tmDone(res, dj){
   if(!res.ok){ taskErr(res); return; }
   await applyAnalysis(res); if(res.index!==null && res.index!==undefined) S.view = 'pl:' + res.index; render(); loadHist();
   const x = res.result, f = x.files || {}, song = x.song ? `«${esc(x.song)}»` : `${x.count} canciones`;
-  let msg = x.into
+  let msg = x.into && x.created
+    ? `✅ Playlist nueva <b>«${esc(x.into)}»</b> creada${(x.spotify||{}).state ? ' (también en Spotify)' : ''} y ${song} pasó ahí desde «${esc(x.name)}».`
+    : x.into
     ? (x.added ? `✅ ${song} pasó de «${esc(x.name)}» a <b>«${esc(x.into)}»</b>.` : `✅ ${song} salió de «${esc(x.name)}» (<b>«${esc(x.into)}»</b> ya la tenía).`)
     : `✅ ${song} ya no está en <b>«${esc(x.name)}»</b>.`;
   if(f.moved) msg += `<br>📁 ${f.home ? `Archivo a <code>${esc(short(f.to))}</code>` : ''}${f.home && f.dup ? ' · ' : ''}${f.dup ? `copia repetida a <code>${esc(short(f.dup_dir))}</code>` : ''}.` + undoLink(f);
