@@ -1165,13 +1165,15 @@ function plPlace(pl){
   if(pl.source==='spotify' || !pl.source) return plForeign(pl)
     ? {label:'Spotify', edit:false, note:'Es de otra persona: en Spotify no se puede renombrar; al eliminarla se quita de tu biblioteca.'}
     : {label:'Spotify', edit:true};
+  if(pl.source==='carpetas' && pl.origin==='rekordbox')  // la original de Rekordbox cambia igual (BrainOrder la lee de allá)
+    return {label:'Rekordbox', edit:true, rb:true, origin:true, note:'Nació en Rekordbox: el cambio se hace en esa misma playlist de Rekordbox, así BrainOrder, Spotify y Rekordbox quedan iguales (Rekordbox tiene que estar cerrado).'};
   if(pl.source==='carpetas') return pl.origin
     ? {label:PL_DJ_LABEL[pl.origin]||pl.origin, edit:false, origin:true, note:`Nació en ${PL_DJ_LABEL[pl.origin]||pl.origin}: la playlist original allí no se toca (solo la copia de BrainOrder).`}
     : {label:'tu carpeta', edit:true, folder:true};
   const L = {deezer:'Deezer', archivos:'el archivo exportado'}[pl.source] || pl.source;
   return {label:L, edit:false, note:`${L} no deja cambiarla desde BrainOrder: el cambio queda en BrainOrder y tus programas de DJ.`};
 }
-function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='spotify' && !plForeign(p)) || (p.source==='carpetas' && !p.origin)); }
+function plCanMergeInto(p){ return p && !p.pending && !p.liked && ((p.source==='spotify' && !plForeign(p)) || (p.source==='carpetas' && (!p.origin || p.origin==='rekordbox'))); }
 function plMenu(pl, i){
   const it = [['#', pl.name], ['⚖️ Comparar con…', () => cmpPick(i), false, 'Cuántas canciones tienen en común y cuáles están solo en una'], '-', ['✏️ Renombrar…', () => plRename(i)]];
   it.push([plGroup(pl) ? `🏷 Grupo: ${plGroup(pl)}…` : '🏷 Poner en un grupo…', () => plGroupPick([pl.id]), false, 'Para tenerla junto a otras parecidas en la lista y encontrarla rápido']);
@@ -1188,7 +1190,7 @@ function plWhere(pl, verb){
   const li = [`<li><b>BrainOrder</b></li>`];
   if(P.folder || pl.folder) li.push(`<li><b>Su carpeta</b> <span class="art">${esc(short(pl.folder||''))}</span></li>`);
   if(dj.length) li.push(`<li><b>${dj.map(esc).join(', ')}</b> <span class="art">(la playlist dentro de «${esc(S.settings.rekordbox_folder||'BrainOrder')}»; tienen que estar cerrados)</span></li>`);
-  if(P.edit && !pl.liked) li.push(`<li><b>${esc(P.label)}</b>${pl.source==='spotify'&&S.spPause&&S.spPause*1000>Date.now()?' <span class="art">— Spotify está en pausa: se hace sola en cuanto lo permita</span>':''}</li>`);
+  if(P.edit && !pl.liked && !(P.rb && dj.length)) li.push(`<li><b>${esc(P.label)}</b>${pl.source==='spotify'&&S.spPause&&S.spPause*1000>Date.now()?' <span class="art">— Spotify está en pausa: se hace sola en cuanto lo permita</span>':''}</li>`);
   return `<div style="font-weight:650;margin:10px 0 4px">${verb} en:</div><ul style="margin:0 0 6px 18px;padding:0;line-height:1.7">${li.join('')}</ul>${P.note?`<div class="art">${esc(P.note)}</div>`:''}`;
 }
 function plRename(i){
@@ -1240,7 +1242,7 @@ function plMerge(i, mode, sel, keepPicks){
     <div id="mgInfo">${common ? '' : `<div class="box" style="line-height:1.6">
       • Las canciones de <b>«${esc(pl.name)}»</b> se agregan al final de la que elijas (solo las que no tenga), también en Spotify.<br>
       • Sus archivos pasan a la carpeta de esa playlist; si ya tenía la canción, la copia repetida va a <code>_duplicados</code>.<br>
-      • Después <b>«${esc(pl.name)}»</b> se elimina en BrainOrder${dj.length?', '+dj.map(esc).join(', '):''}${plPlace(pl).edit&&!pl.liked?' y '+esc(plPlace(pl).label):''}.<br>
+      • Después <b>«${esc(pl.name)}»</b> se elimina en BrainOrder${dj.length?', '+dj.map(esc).join(', '):''}${plPlace(pl).edit&&!pl.liked&&!(plPlace(pl).rb&&dj.length)?' y '+esc(plPlace(pl).label):''}.<br>
       • Se puede deshacer el movimiento de archivos en Historial.</div>
     ${plPlace(pl).note?`<div class="art">${esc(plPlace(pl).note)}</div>`:''}`}</div>
     ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="plMergeDj" checked> Actualizar ya ${common?'las playlists':'la playlist'} en mis programas de DJ</label>`:''}
@@ -1321,6 +1323,7 @@ async function plCommonGo(){
   if(x.spotify) msg += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: se quitan allá solas en cuanto lo permita (aquí ya no aparecen).` : `<br>🟢 Spotify: listo.`;
   if(x.no_uri) msg += `<br><span style="color:var(--org)">${x.no_uri} eran archivos locales de Spotify y no se pudieron quitar allá: quítalas a mano en Spotify.</span>`;
   if(x.still) msg += `<br><span style="color:var(--org)">${x.still} siguen en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
+  if(x.rekordbox) msg += `<br>🎛️ Rekordbox: también salieron de tu playlist original de allá.`;
   toast(msg);
   if(dj){
     let out = '';
@@ -1389,6 +1392,8 @@ function plResult(x){
   if(x.spotify) m += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: el cambio se hace solo en cuanto lo permita.` : `<br>🟢 Spotify: listo${x.spotify.added!==undefined?` (${x.spotify.added} canciones agregadas)`:''}.`;
   if(x.platform_untouched) m += `<br><span class="art">${esc(x.platform_untouched)} no deja cambiarla desde aquí: el cambio quedó en BrainOrder y tus programas.</span>`;
   if(x.origin_untouched) m += `<br><span class="art">La playlist original en ${esc(x.origin_untouched)} no se tocó.</span>`;
+  if(x.rekordbox_origin) m += `<br>🎛️ Rekordbox: también en tu playlist original de allá (respaldo ${esc(x.rekordbox_origin.backup||'')}).`;
+  if(x.rekordbox && x.rekordbox.backup) m += `<br>🎛️ Rekordbox: también en tu playlist original de allá${x.rekordbox.added||x.rekordbox.removed?` (${x.rekordbox.added?'+'+x.rekordbox.added:''}${x.rekordbox.added&&x.rekordbox.removed?' ':''}${x.rekordbox.removed?'−'+x.rekordbox.removed:''})`:''}.`;
   return m;
 }
 document.addEventListener('contextmenu', e => {
@@ -1630,6 +1635,7 @@ async function tmDone(res, dj){
   if(x.not_found) msg += `<br><span style="color:var(--org)">No la encontré en Spotify para ponerla en Me gusta.</span>`;
   if(x.no_uri > 0) msg += `<br><span style="color:var(--org)">Es un archivo local de Spotify: quítala a mano en Spotify.</span>`;
   if(x.still) msg += `<br><span style="color:var(--org)">Sigue en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
+  if(x.rekordbox) msg += `<br>🎛️ Rekordbox: también en tu playlist original de allá.`;
   toast(msg);
   if(dj){
     let out = '';

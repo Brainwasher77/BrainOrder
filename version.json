@@ -1,5 +1,5 @@
 {
-  "version": "2.37.0",
-  "build": 91,
-  "notes": "Aviso de canciones repetidas dentro de una playlist (la misma canción dos veces, por ejemplo sencillo y álbum de Spotify con tu mismo archivo): ⧉ en la lista de playlists, aviso y filtro «Repetidas» en la playlist, y «Quitar las de más…» eligiendo cuál se queda."
+  "version": "2.38.0",
+  "build": 92,
+  "notes": "Las playlists que agregaste desde Rekordbox ya aparecen al fusionar y al mover canciones, y lo que cambias en BrainOrder (mover, quitar, fusionar, renombrar, eliminar) también cambia en esa misma playlist de Rekordbox: BrainOrder, Spotify y Rekordbox quedan iguales."
 }

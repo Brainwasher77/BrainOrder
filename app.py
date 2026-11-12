@@ -2959,6 +2959,12 @@ class Api:
         import cola_spotify
         from fuentes import carpetas as FC
         deleted = set(self._cfg.get("deleted_playlists") or [])
+        ref = self._rb_ref(pid, pl, entry)
+        if ref:  # nació en Rekordbox: la original allá también se elimina (las canciones siguen en tu colección)
+            try:
+                res["rekordbox_origin"] = self._rb_write([{"ref": ref, "delete": True}])
+            except rekordbox_sync.RekordboxError as e:
+                res.setdefault("dj_warnings", []).append(f"Rekordbox: {e}")
         if src == "spotify" and self._is_foreign(pid):
             f = self._cfg.setdefault("foreign", {})
             if pid in f:
@@ -2976,8 +2982,9 @@ class Api:
                 CN.mark(entry["path"], known=True)
             else:
                 CN.dj_mark(entry["program"], entry["ref"], dismissed=True)  # no se vuelve a preguntar por ella
-                import dj_playlists
-                res["origin_untouched"] = dj_playlists.LABELS.get(entry["program"], entry["program"])
+                if not ref:
+                    import dj_playlists
+                    res["origin_untouched"] = dj_playlists.LABELS.get(entry["program"], entry["program"])
             FC.forget(pid, FC.members(pid))
         else:
             deleted.add(pid)
@@ -3060,6 +3067,7 @@ class Api:
             if src == "spotify" and pid != "liked" and not foreign:
                 self._spotify_ready()
             self._dj_closed()
+            self._rb_ready(self._rb_ref(pid, pl, entry))
             res = {"name": new_name, "old": old}
             new_folder = None
             if folder and os.path.isdir(folder):
@@ -3081,6 +3089,12 @@ class Api:
                         self._cfg["spotify_links"] = links
             self._set_stage(70, 85)
             res["dj"], res["dj_warnings"] = self._dj_edit({old: new_name}, [])
+            ref = self._rb_ref(pid, pl, entry)
+            if ref:  # nació en Rekordbox: la original allá también cambia de nombre
+                try:
+                    res["rekordbox_origin"] = self._rb_write([{"ref": ref, "rename": new_name}])
+                except rekordbox_sync.RekordboxError as e:
+                    res["dj_warnings"] = list(res["dj_warnings"] or []) + [f"Rekordbox: {e}"]
             names = dict(self._cfg.get("playlist_names") or {})
             new_pid = pid
             if pid == "liked":
@@ -3101,7 +3115,7 @@ class Api:
                                                  for e in self._cfg.get("folder_playlists") or []]
                 new_pid = FC.entry_pid(new_entry)
                 self._migrate_pid(pid, new_pid)
-                if entry.get("program"):
+                if entry.get("program") and not self._rb_ref(pid, pl, entry):
                     import dj_playlists
                     res["origin_untouched"] = dj_playlists.LABELS.get(entry["program"], entry["program"])
             else:
@@ -3137,6 +3151,7 @@ class Api:
             if src == "spotify":
                 self._spotify_ready()
             self._dj_closed()
+            self._rb_ready(self._rb_ref(pid, pl, entry))
             res = {"name": pl["name"]}
             if folder and os.path.isdir(folder):
                 self._set_stage(0, 70)
@@ -3165,7 +3180,8 @@ class Api:
             if "liked" in (src_pid, dst_pid):
                 raise unificar.UnifyError("«Me gusta» no se puede fusionar.")
             b_folder_pl = sb == "carpetas" and eb and eb.get("path")
-            if not ((sb == "spotify" and not self._is_foreign(dst_pid)) or b_folder_pl):
+            if not ((sb == "spotify" and not self._is_foreign(dst_pid)) or
+                    (sb == "carpetas" and self._pl_can_remove(dst_pid, sb, eb))):
                 raise unificar.UnifyError(f"Solo se puede fusionar dentro de una playlist tuya de Spotify o de una carpeta: "
                                           f"«{B['name']}» no deja agregarle canciones desde BrainOrder.")
             if A.get("pending") or B.get("pending"):
@@ -3173,6 +3189,8 @@ class Api:
             if sb == "spotify" or sa == "spotify":
                 self._spotify_ready()
             self._dj_closed()
+            rbb = self._rb_ref(dst_pid, B, eb)
+            self._rb_ready(rbb, self._rb_ref(src_pid, A, ea))
             res = {"name": A["name"], "into": B["name"]}
             target = Path(fb) if b_folder_pl else Path(B["folder"])
             changes = {}
@@ -3215,10 +3233,14 @@ class Api:
                 paths = [changes.get(r["source"], r["source"]) for r in todo if r.get("source")]
                 FC.remember(dst_pid, paths)
                 res["count"], res["no_file"] = len(paths), len(todo) - len(paths)
+            if rbb:  # nació en Rekordbox: las canciones entran también a la playlist original allá
+                res["rekordbox"] = self._rb_write([{"ref": rbb, "add": [
+                    {"source": changes.get(r["source"], r["source"]), "name": r.get("name"), "artists": r.get("artists")}
+                    for r in todo if r.get("source")]}])
             self._set_stage(80, 95)
             res["dj"], res["dj_warnings"] = self._dj_edit({}, [A["name"]])
             self._forget_playlist(src_pid, A, sa, ea, res, into=(dst_pid, B["name"]) if sb == "spotify" else None)
-            if b_folder_pl:  # la playlist de carpeta se relee con sus canciones nuevas
+            if sb == "carpetas":  # la playlist de carpeta (o la que se lee de Rekordbox) se relee con sus canciones
                 meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == dst_pid), None)
                 if meta:
                     tracks = FC.tracks(self._cfg, meta)
@@ -3256,7 +3278,8 @@ class Api:
             if lose_pid == "liked":
                 raise unificar.UnifyError("De «Me gusta» no se quitan canciones desde aquí: elige que se queden ahí.")
             l_folder_pl = sl == "carpetas" and el and el.get("path")
-            if not ((sl == "spotify" and not self._is_foreign(lose_pid)) or l_folder_pl):
+            if not ((sl == "spotify" and not self._is_foreign(lose_pid)) or
+                    (sl == "carpetas" and self._pl_can_remove(lose_pid, sl, el))):
                 raise unificar.UnifyError(f"A «{L['name']}» no se le pueden quitar canciones desde BrainOrder "
                                           f"(no es tuya o su plataforma no lo deja): elige que las comunes se queden ahí.")
             ctx = {pid: self._pl_ctx(pid, analysis) for pid in keep_ids}
@@ -3286,6 +3309,7 @@ class Api:
             if sl == "spotify":
                 self._spotify_ready()
             self._dj_closed()
+            self._rb_ready(self._rb_ref(lose_pid, L, el))
             names = [ctx[pid][0]["name"] for pid in keep_ids]
             res = {"name": L["name"], "keep": names[0] if len(names) == 1 else None, "keeps": names, "count": len(match)}
             # 1) archivos que viven en la carpeta de la que se desmantela
@@ -3344,6 +3368,11 @@ class Api:
             # 2) sacarlas de la que se desmantela
             self._set_stage(60, 90)
             lrows = [byl[pos] for pos in match]
+            rbl = self._rb_ref(lose_pid, L, el)
+            if rbl:  # nació en Rekordbox: salen también de la playlist original allá
+                ch0 = mv.get("changes") or {}
+                outp = [r["source"] for r in lrows if r.get("source")]
+                res["rekordbox"] = self._rb_write([{"ref": rbl, "remove": outp + [ch0.get(x, x) for x in outp]}])
             if sl == "spotify":
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in lrows if self._SP_ID.fullmatch(r.get("id") or "")))
                 res["no_uri"] = len(lrows) - len(uris)
@@ -3388,12 +3417,65 @@ class Api:
         return self._task(run, f"pledit:{lose_pid}", "Desmantelar playlist")
 
     def _pl_can_remove(self, pid, src, entry):
-        """¿Se le pueden quitar (o agregar) canciones desde BrainOrder? Spotify tuya, «Me gusta» o carpeta."""
+        """¿Se le pueden quitar (o agregar) canciones desde BrainOrder? Spotify tuya, «Me gusta», carpeta o una
+        playlist que agregaste desde Rekordbox (el cambio se hace en esa misma playlist de Rekordbox)."""
         if pid == "liked":
             return True
         if src == "spotify":
             return not self._is_foreign(pid)
-        return src == "carpetas" and bool(entry and entry.get("path"))
+        return src == "carpetas" and bool(entry and (entry.get("path") or
+                                                     (entry.get("program") == "rekordbox" and entry.get("ref"))))
+
+    def _rb_ref(self, pid, pl=None, entry=None):
+        """Id en Rekordbox de una playlist que nació en Rekordbox (la original allá es la única copia: Organizar no
+        la duplica en la carpeta de BrainOrder). None si no es de Rekordbox o no se encuentra."""
+        from fuentes import carpetas as FC
+        if not pid or pid == "liked":
+            return None
+        e = entry or next((x for x in FC.entries(self._cfg) if FC.entry_pid(x) == pid), None)
+        if e and e.get("program") == "rekordbox" and e.get("ref"):
+            return str(e["ref"])
+        if e and e.get("program"):
+            return None
+        origin = (pl or {}).get("origin") or (self._cfg.get("playlist_origin") or {}).get(pid)
+        if origin != "rekordbox":
+            return None
+        try:
+            import rb_cambios
+            for rid, b in rb_cambios.load_baseline().items():
+                if b.get("pid") == pid:
+                    return str(rid)
+            import dj_playlists as DJ
+            name = biblioteca.folder_key((pl or {}).get("name") or "")
+            hits = [ref for ref, v in (DJ.read(self._cfg, "rekordbox") or {}).items()
+                    if name and biblioteca.folder_key(v["name"]) == name]
+            return str(hits[0]) if len(hits) == 1 else None  # solo si no hay duda de cuál es
+        except Exception as e:
+            config.log(f"buscar la playlist en Rekordbox: {e!r}")
+            return None
+
+    def _rb_ready(self, *refs):
+        if any(refs) and rekordbox_sync.rekordbox_running():
+            raise unificar.UnifyError("Rekordbox está abierto. Ciérralo para que el cambio quede también en tu "
+                                      "playlist de Rekordbox (BrainOrder, Spotify y Rekordbox quedan iguales).")
+
+    def _rb_write(self, ops):
+        """Escribe en las playlists originales de Rekordbox y actualiza la foto (para que no parezca un cambio que
+        hiciste tú allá). -> resultado de rekordbox_sync.edit_by_ref o None"""
+        ops = [o for o in ops or [] if o.get("ref")]
+        if not ops:
+            return None
+        out = rekordbox_sync.edit_by_ref(self._cfg, ops)
+        try:
+            import rb_cambios
+            state = rb_cambios.read_state(self._cfg)
+            rids = [str(o["ref"]) for o in ops if not o.get("delete") and state and str(o["ref"]) in state]
+            if rids:
+                rb_cambios.accept(state, rids)
+            rb_cambios.drop_ids([str(o["ref"]) for o in ops if o.get("delete")])
+        except Exception as e:
+            config.log(f"foto de Rekordbox: {e!r}")
+        return out
 
     def _new_pl_for_move(self, name, spotify, rows, analysis):
         """Playlist nueva (vacía) para «Mover a otra playlist» -> (pid, creada). Si ya tienes una que se llama
@@ -3498,6 +3580,8 @@ class Api:
                                                   f"esperan para entrar: quita la repetida a mano en Spotify.")
                     if any(r["pos"] >= len(ctr) or ctr[r["pos"]].get("id") != r["id"] for r in twin):
                         raise unificar.UnifyError(f"«{A['name']}» cambió en Spotify: vuelve a analizarla.")
+            ra, rbb = self._rb_ref(src_pid, A, ea), (self._rb_ref(dst_pid, B, eb) if B else None)
+            self._rb_ready(ra, rbb)
             if "liked" in (src_pid, dst_pid) and spotify_api.paused_until():
                 raise SpotifyPaused("Spotify está en pausa: «Me gusta» se cambia directo en Spotify, inténtalo cuando "
                                     "vuelva (lo ves arriba, en Spotify).")
@@ -3567,6 +3651,7 @@ class Api:
             now = lambda p: ch.get(p, p) if p else p
             # 2) entra a dst (solo las que no tenía)
             self._set_stage(50, 75)
+            rows_all, todo = list(rows), []
             if B is not None:
                 todo = [r for r in rows if r.get("id") not in b_by_id]
                 res["already"] = len(rows) - len(todo)
@@ -3658,8 +3743,18 @@ class Api:
             else:
                 gone = ({nk(r["source"]) for r in rows if r.get("source")} - stay) | {nk(v) for v in ch.values()}
                 FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone])
-            # las de carpeta se releen (con lo que llegó o salió)
-            for pid, folder_pl in ((src_pid, a_folder_pl), (dst_pid, b_folder_pl)):
+            # Rekordbox: la playlist original de las que nacieron allá cambia igual
+            ops = []
+            if rbb:
+                ops.append({"ref": rbb, "add": [{"source": now(r["source"]), "name": r.get("name"), "artists": r.get("artists")}
+                                                for r in todo if r.get("source")]})
+            if ra:
+                out_paths = [r["source"] for r in rows_all if r.get("source") and nk(r["source"]) not in stay]
+                ops.append({"ref": ra, "remove": out_paths + [now(x) for x in out_paths]})
+            if ops:
+                res["rekordbox"] = self._rb_write(ops)
+            # las de carpeta (y las que se leen de Rekordbox) se releen con lo que llegó o salió
+            for pid, folder_pl in ((src_pid, sa == "carpetas"), (dst_pid, sb == "carpetas")):
                 if not (pid and folder_pl):
                     continue
                 meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == pid), None)

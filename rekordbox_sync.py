@@ -743,3 +743,87 @@ def restore_playlists(backup_path, ids):
             pass
     log(f"Rekordbox: playlists recuperadas de {Path(backup_path).name}: {out}")
     return out
+
+
+def edit_by_ref(cfg, ops, progress=None):
+    """Cambios hechos en BrainOrder sobre playlists que viven en Rekordbox (las que agregaste desde Rekordbox, estén
+    donde estén): así lo que cambias en BrainOrder también cambia allá. Rekordbox cerrado y respaldo antes.
+    ops: [{"ref": id de la playlist en Rekordbox, "add": [{"source", "name", "artists"}], "remove": [rutas],
+           "rename": nombre nuevo, "delete": True}]
+    Agregar: al final y sin repetir (si ya la tiene, no se agrega otra vez). Quitar: todas las veces que esté ese
+    archivo. -> {"added", "removed", "renamed", "deleted", "missing", "backup", "paths": {ref: [rutas]}}"""
+    ops = [o for o in ops or [] if o.get("ref") and (o.get("add") or o.get("remove") or o.get("rename") or o.get("delete"))]
+    if not ops:
+        return None
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo para que el cambio quede también en Rekordbox.")
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"added": 0, "removed": 0, "renamed": 0, "deleted": 0, "missing": 0, "backup": bk.name, "paths": {},
+           "tracks_added": 0}
+    artist_cache = {}
+
+    def artist_id(name):
+        if not name:
+            return None
+        if name not in artist_cache:
+            a = db.get_artist(Name=name).first()
+            if a is None:
+                a = db.add_artist(name)
+            artist_cache[name] = a.ID
+        return artist_cache[name]
+    try:
+        for o in ops:
+            try:
+                pl = db.get_playlist(ID=str(o["ref"]))
+            except Exception:
+                pl = None
+            if pl is None:
+                out["missing"] += 1
+                continue
+            if o.get("delete"):
+                db.delete_playlist(pl)
+                out["deleted"] += 1
+                continue
+            gone = {_k(p) for p in o.get("remove") or [] if p}
+            if gone:
+                for s in list(pl.Songs):
+                    if s.Content is not None and _k(s.Content.FolderPath) in gone:
+                        db.remove_from_playlist(pl, s)
+                        out["removed"] += 1
+            have = {_k(s.Content.FolderPath) for s in pl.Songs if s.Content is not None and s.Content.FolderPath}
+            for r in o.get("add") or []:
+                if not r.get("source") or _k(r["source"]) in have:
+                    continue
+                content = _content_for(db, {"source": r["source"], "name": r.get("name") or "",
+                                            "artists": r.get("artists") or []}, artist_id, out)
+                if content is not None:
+                    db.add_to_playlist(pl, content)
+                    have.add(_k(r["source"]))
+                    out["added"] += 1
+            if o.get("rename") and pl.Name != o["rename"]:
+                db.rename_playlist(pl, o["rename"])
+                out["renamed"] += 1
+            songs = sorted(pl.Songs, key=lambda s: s.TrackNo or 0)
+            out["paths"][str(o["ref"])] = [plataforma.native(s.Content.FolderPath) for s in songs
+                                          if s.Content is not None and s.Content.FolderPath]
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error cambiando playlists en Rekordbox: {e!r}")
+        raise RekordboxError(f"No pude hacer el cambio en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    log(f"Rekordbox: cambios desde BrainOrder {{added {out['added']}, removed {out['removed']}, renamed "
+        f"{out['renamed']}, deleted {out['deleted']}, missing {out['missing']}}} (respaldo {bk.name})")
+    return out

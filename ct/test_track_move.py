@@ -157,5 +157,45 @@ r = o.playlist_tracks_move('pa', [2], None)
 assert SPr.sent == ['spotify:track:' + SP('a'), 'spotify:track:' + SP('b')], SPr.sent
 assert not o.jobs and not o.got.get('ops') and [t["id"] for t in CACHE["playlists"][0]["tracks"]] == [SP('a'), SP('b')]
 print('mismo id dos veces: lista reescrita', SPr.sent)
+
+# 12) nació en Rekordbox: mover de una playlist de Rekordbox a una de Spotify cambia también la original allá
+o = setup()
+o._rb_ref = lambda pid, pl=None, entry=None: {'pa': 'R1', 'pb': 'R2'}.get(pid)
+o._rb_ready = lambda *refs: None
+W = []
+o._rb_write = lambda ops: (W.extend(ops), {"added": 1})[1]
+r = o.playlist_tracks_move('pa', [1], 'pb')
+assert [w['ref'] for w in W] == ['R2', 'R1'], W
+assert [x['source'] for x in W[0]['add']] == [str(fb/'uno.mp3')], W[0]
+assert s1 in W[1]['remove'] and str(fb/'uno.mp3') in W[1]['remove'], W[1]
+print('Rekordbox:', W)
+
+# 13) rekordbox_sync.edit_by_ref con una librería falsa: agrega sin repetir, quita, renombra
+import types, rekordbox_sync as RS
+class C:
+    def __init__(s, p): s.FolderPath = p
+class Song:
+    def __init__(s, c, n): s.Content, s.ContentID, s.TrackNo = c, id(c), n
+class PLx:
+    def __init__(s): s.Name, s.Songs = 'MPB (pop)', [Song(C('/m/a.mp3'), 1), Song(C('/m/b.mp3'), 2)]
+class DB:
+    pl = PLx()
+    def __init__(s, path=None): pass
+    def get_playlist(s, ID=None): return DB.pl if ID == 'R1' else None
+    def remove_from_playlist(s, pl, song): pl.Songs.remove(song)
+    def add_to_playlist(s, pl, c): pl.Songs.append(Song(c, len(pl.Songs) + 1))
+    def rename_playlist(s, pl, n): pl.Name = n
+    def get_content(s, FolderPath=None):
+        return types.SimpleNamespace(first=lambda: C(FolderPath))
+    def commit(s): pass
+    def close(s): pass
+sys.modules['pyrekordbox'] = types.SimpleNamespace(MasterDatabase=DB)
+RS.rekordbox_running = lambda: False
+RS.backup = lambda: Path('/tmp/bk.db')
+out = RS.edit_by_ref({}, [{"ref": "R1", "remove": ["/m/a.mp3"], "add": [{"source": "/m/b.mp3"}, {"source": "/m/c.mp3"}],
+                           "rename": "MPB"}, {"ref": "R9", "remove": ["/x"]}])
+assert [x.Content.FolderPath for x in DB.pl.Songs] == ['/m/b.mp3', '/m/c.mp3'] and DB.pl.Name == 'MPB', DB.pl.Songs
+assert out['added'] == 1 and out['removed'] == 1 and out['renamed'] == 1 and out['missing'] == 1, out
+print('edit_by_ref:', {k: out[k] for k in ('added', 'removed', 'renamed', 'missing')})
 shutil.rmtree(root)
 print("OK")
