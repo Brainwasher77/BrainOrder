@@ -182,11 +182,20 @@ def plan(cfg, analysis=None, progress=None):
     subdirs = sorted(d for d in dest.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))
                      and not ex.dir_excluded(str(d)))
     counts = {str(d): b._audio_count(d) for d in subdirs}
+    # solo se juntan carpetas con música propia y sin subcarpetas: una carpeta que agrupa playlists
+    # (como «Brainwasher» con «Hard» y «Soft» adentro) no es una copia de la playlist «Brainwasher🚀»,
+    # y una carpeta sin canciones no tiene nada que juntar (si solo tiene accesos directos, sale en vacías)
+    def leaf(d):
+        try:
+            return not any(e.is_dir(follow_symlinks=False) for e in os.scandir(d))
+        except OSError:
+            return False
+    mergeable = [d for d in subdirs if counts[str(d)] and leaf(d)]
     groups, used = [], set()
-    for d in subdirs:
+    for d in mergeable:
         if str(d) in used:
             continue
-        g = [x for x in subdirs if str(x) not in used and b.similar_folders(d.name, x.name)]
+        g = [x for x in mergeable if str(x) not in used and b.similar_folders(d.name, x.name)]
         if len(g) > 1:
             used.update(str(x) for x in g)
             groups.append(g)
@@ -292,11 +301,12 @@ def plan(cfg, analysis=None, progress=None):
         if str(d) in merge_src or str(d) in current:
             continue  # las repetidas se borran solas al juntarlas
         try:
-            names = [e.name for e in os.scandir(d)]
+            ents = list(os.scandir(d))
         except OSError:
             continue
         allowed = JUNK | OUR_FILES if analysis else JUNK
-        if all(n in allowed for n in names):
+        # los accesos directos (enlaces) no son música: la canción sigue en su carpeta de verdad
+        if ents and all(e.name in allowed or e.is_symlink() for e in ents) or not ents:
             empty.append(str(d))
 
     affected = {p for g in dups for p in g["remove"]} | {
@@ -457,11 +467,11 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
             try:
                 if not dp.is_dir():
                     continue
-                names = [e.name for e in os.scandir(dp)]
-                if not all(n in JUNK or n in OUR_FILES for n in names):
+                ents = list(os.scandir(dp))
+                if not all(e.name in JUNK or e.name in OUR_FILES or e.is_symlink() for e in ents):
                     continue
-                for n in names:
-                    (dp / n).unlink()
+                for e in ents:
+                    os.unlink(e.path)  # un enlace se borra a sí mismo, nunca el archivo al que apunta
                 dp.rmdir()
                 removed += 1
                 log_lines.append(f"VACÍA     {dp} eliminada")

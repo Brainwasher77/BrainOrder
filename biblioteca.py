@@ -219,6 +219,8 @@ def similar_folders(a: str, b: str) -> bool:
         return False
     if ka == kb:
         return True
+    if ka.startswith(kb) or kb.startswith(ka):  # «Rumba internacional» y «Rumba Internacional ADC» son otras
+        return False
     return min(len(ka), len(kb)) >= 10 and difflib.SequenceMatcher(None, ka, kb).ratio() >= 0.92
 
 

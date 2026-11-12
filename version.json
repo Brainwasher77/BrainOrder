@@ -1,5 +1,5 @@
 {
-  "version": "2.39.0",
-  "build": 93,
-  "notes": "Lo mismo que con Rekordbox, ahora también con Traktor, Serato y Engine DJ: las playlists que agregaste desde esos programas se pueden fusionar y mover, y lo que cambias en BrainOrder también cambia en la playlist original de allá."
+  "version": "2.39.1",
+  "build": 94,
+  "notes": "Unificar: ya no propone juntar una carpeta que agrupa playlists (como «Brainwasher» con Hard y Soft adentro) ni una sin canciones, y «X» y «X ADC» ya no cuentan como la misma carpeta. Las carpetas con solo accesos directos salen como vacías para borrarlas (la música a la que apuntan no se toca)."
 }

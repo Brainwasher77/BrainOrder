@@ -2248,7 +2248,7 @@ function unifyView(){
 
     <div class="vhead" style="margin-top:26px"><h2 style="font-size:18px">Carpetas vacías</h2></div>
     <label style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" ${U.empty?'checked':''} onchange="U.empty=this.checked;$('uCount').innerHTML=uSummary()">
-      Borrar las ${p.empty.length} carpetas que no tienen ningún archivo</label>
+      Borrar las ${p.empty.length} carpetas que no tienen música (vacías o solo con accesos directos; la música a la que apuntan no se toca)</label>
     <details style="margin:8px 0 0"><summary class="art" style="cursor:pointer">Ver cuáles</summary>
       <div class="art" style="columns:3;margin-top:6px">${p.empty.map(e=>esc(rel(e))).join('<br>')}</div></details>
 
