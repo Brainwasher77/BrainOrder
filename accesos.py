@@ -96,7 +96,7 @@ def looks_like_shortcuts(folder, music_roots=(), min_share=0.7):
     return s if (s["links"] or s["broken"]) and s["share"] >= min_share else None
 
 
-def to_trash(paths):
+def to_trash(paths, label="Accesos directos"):
     """Manda a la Papelera (se puede recuperar). -> [(ruta, dónde quedó)]"""
     out = []
     stamp = datetime.now().strftime("%Y-%m-%d %H-%M")
@@ -121,5 +121,6 @@ def to_trash(paths):
             subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             out.append((str(p), "Papelera de reciclaje"))
-    log(f"Accesos directos a la Papelera: {len(out)}")
+    if label:
+        log(f"{label} a la Papelera: {len(out)}")
     return out

@@ -1,5 +1,5 @@
 {
-  "version": "2.39.3",
-  "build": 96,
-  "notes": "Ya no te da links de Deezer de canciones que ya tienes. Si Deezer solo tiene otra versión (Extended, Dub, otra duración) y ese archivo ya está en tu música, la canción cuenta como tenida: deja de salir en «Faltan», en el .txt y en el Excel, y lo que vuelvas a bajar se aparta en _duplicados sin pedírtelo otra vez. La primera vez que analices se revisa qué baja cada link (solo de las canciones que puede que ya tengas)."
+  "version": "2.40.0",
+  "build": 97,
+  "notes": "Nuevo: «Vaciar _duplicados» en el menú. Revisa tus carpetas _duplicados y manda a la Papelera lo que tiene otra copia en tu música y que no usa ningún programa de DJ. Nunca borra la única copia ni lo que usa Rekordbox, Traktor, Serato o Engine: te dice cuáles son y dónde arreglarlas."
 }

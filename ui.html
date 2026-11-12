@@ -306,6 +306,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="mik" onclick="show('mik')"><div class="row"><span class="name">Sin Mixed In Key</span><span class="cnt mono" id="nMik">–</span></div></a>
         <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
+        <a data-v="dupclean" onclick="show('dupclean')"><div class="row"><span class="name">Vaciar _duplicados</span><span class="cnt mono" id="nDupC">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
         <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
         <a data-v="rblost" onclick="show('rblost')"><div class="row"><span class="name">Perdidas en Rekordbox</span><span class="cnt mono" id="nLost">–</span></div></a>
@@ -1919,6 +1920,7 @@ function renderCore(){
   const so=S.sources||{}, de=S.dests||{};
   $('nConn').textContent = (S.connected?1:0) + ['deezer','archivos'].filter(k=>so[k]&&so[k].enabled).length + ' · ' + Object.values(de).filter(x=>x.enabled).length;
   $('nUni').textContent = U.plan ? (U.plan.dups.length + U.plan.merges.length) : '–';
+  if($('nDupC')) $('nDupC').textContent = DQ.data ? DQ.data.ok : '–';
   paintPlSort();
   paintPlNav(false);
   const sv = S.view.startsWith('reorg:') ? 'pl:'+S.view.split(':')[1] : S.view;
@@ -1941,6 +1943,7 @@ const searchBox = () => `<input class="search" placeholder="Buscar canción o ar
 function renderMain(){
   const m = $('main');
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
+  if(S.view==='dupclean'){ m.innerHTML = dcView(); return; }
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(S.view==='conn'){ m.innerHTML = connView(); return; }
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
@@ -2193,6 +2196,56 @@ async function exportAllPlaylists(){
   const r = await api().export_all_playlists_excel();
   if(r.ok) toast(`<b>${r.count}</b> informes guardados en <code>${esc(short(r.path))}</code>` + (r.errors.length?`<br><span style="color:var(--miss)">${r.errors.length} con error</span>`:''), !!r.errors.length);
   else if(!r.cancelled) taskErr(r);
+}
+// ---------- vaciar _duplicados ----------
+const dqSize = n => n>=1e9 ? (n/1e9).toFixed(2)+' GB' : Math.round(n/1e6)+' MB';
+let DQ = {data:null, loading:false, err:null, show:'ok'};
+async function dcLoad(){
+  if(DQ.loading) return; DQ.loading = true; DQ.err = null; if(S.view==='dupclean') renderMain();
+  try{ const r = await api().dup_clean_scan(); if(r.ok) DQ.data = r; else DQ.err = r.error; }
+  catch(e){ DQ.err = String(e); }
+  DQ.loading = false; render();
+}
+function dcView(){
+  const head = `<div class="vhead"><h2>🗑 Vaciar _duplicados</h2>
+    <span class="sub">Lo que Organizar y Unificar apartaron en tus carpetas <code>_duplicados</code>. Solo mando a la <b>Papelera</b> (se puede recuperar) las que tienen otra copia en tu música y que ningún programa de DJ usa. Justo antes de borrar lo vuelvo a comprobar.</span>
+    <div class="sp"><button onclick="dcLoad()" ${DQ.loading?'disabled':''}>${DQ.loading?'Revisando…':'⟳ Revisar'}</button></div></div>`;
+  if(!DQ.data) return head + `<div class="empty"><p>${DQ.err ? esc(DQ.err) : 'Revisando tus carpetas _duplicados…'}</p></div>`;
+  const d = DQ.data;
+  if(!d.items.length) return head + `<div class="empty"><h3>_duplicados está vacía 🎉</h3><p>No hay nada que borrar.</p></div>`;
+  const KIND = {ok:['✓ Tiene otra copia','var(--ok)'], used:['⚠️ La usa tu programa de DJ','var(--org)'], only:['⛔ Única copia','var(--miss)']};
+  const list = d.items.filter(x => x.state===DQ.show);
+  const chip = (k, n, t) => `<button class="chip${DQ.show===k?' on':''}" onclick="DQ.show='${k}';renderMain()">${t} <b>${n}</b></button>`;
+  return head + `<div class="cards" style="grid-template-columns:repeat(4,1fr)">
+      <div class="card"><div class="k">A la Papelera</div><div class="v" style="color:var(--ok)">${d.ok}</div></div>
+      <div class="card"><div class="k">Espacio que liberas</div><div class="v mono">${dqSize(d.bytes)}</div></div>
+      <div class="card"><div class="k">Las usa tu programa de DJ</div><div class="v" style="color:${d.used?'var(--org)':'var(--text)'}">${d.used}</div></div>
+      <div class="card"><div class="k">Única copia</div><div class="v" style="color:${d.only?'var(--miss)':'var(--text)'}">${d.only}</div></div></div>
+    ${d.only?`<div class="box warn" style="margin-bottom:10px">⛔ <b>${d.only}</b> solo existen en _duplicados: no se borran. Devuélvelas a su lugar en <a class="lnk" onclick="show('rblost')">Perdidas en Rekordbox → Recuperar</a>.</div>`:''}
+    ${d.used?`<div class="box warn" style="margin-bottom:10px">⚠️ <b>${d.used}</b> las usa tu programa de DJ desde _duplicados: no se borran. Repáralas primero en <a class="lnk" onclick="show('rblost')">Perdidas en Rekordbox</a> (pasan a la otra copia con sus cues) y vuelve a revisar.</div>`:''}
+    <div class="chips">${chip('ok', d.ok, 'A la Papelera')}${d.used?chip('used', d.used, 'Las usa tu programa de DJ'):''}${d.only?chip('only', d.only, 'Única copia'):''}</div>
+    <div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;margin:8px 0 12px">
+      ${list.slice(0,800).map(x=>`<div class="oxrow" style="padding:6px 10px;align-items:center">
+        <div style="min-width:0;flex:1"><div class="path" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(x.path)}" onclick="reveal(${jsq(x.path)})">${esc(base(x.path))}</div>
+          <div class="art" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(short(x.path))}</div></div>
+        <span class="art" style="color:${KIND[x.state][1]};white-space:nowrap">${KIND[x.state][0]}${x.by?` (${esc(x.by)})`:''} · ${(x.size/1e6).toFixed(1)} MB</span></div>`).join('')}
+      ${list.length>800?`<div class="art" style="padding:6px 10px">… y ${list.length-800} más</div>`:''}</div>
+    <div class="actions"><button class="warn" ${!d.ok||running('dup_clean')?'disabled':''} onclick="dcGo()">${running('dup_clean')?'Mandando a la Papelera…':`🗑 Mandar ${d.ok} a la Papelera`}</button></div>`;
+}
+async function dcGo(){
+  const d = DQ.data; if(!d || !d.ok) return;
+  modal(`<h3>🗑 Vaciar _duplicados</h3>
+    <div class="box">Se mandan <b>${d.ok}</b> archivo${d.ok!==1?'s':''} a la Papelera (${dqSize(d.bytes)}). Todos tienen otra copia en tu música y ningún programa de DJ los usa.</div>
+    <div class="box">Si te equivocas, los sacas de la Papelera.${d.only||d.used?` No se tocan las ${d.only+d.used} que son única copia o que usa tu programa de DJ.`:''}</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="warn" onclick="closeModal();dcDo()">Mandar a la Papelera</button></div>`);
+}
+async function dcDo(){
+  const d = DQ.data; if(!d || !d.ok) return;
+  setTimeout(()=>{ if(S.view==='dupclean') renderMain(); }, 150);
+  const r = await api().dup_clean(d.items.filter(x=>x.state==='ok').map(x=>x.path));
+  if(!r.ok){ taskErr(r); renderMain(); return; }
+  toast(`🗑 <b>${r.trashed}</b> a la Papelera desde _duplicados (${dqSize(r.bytes)} liberados).` + (r.skipped?`<br>${r.skipped} cambiaron mientras tanto y no se tocaron.`:'') + ((r.errors||[]).length?`<br><span style="color:var(--org)">${r.errors.length} no se pudieron mover: ${r.errors.slice(0,2).map(e=>esc(e.file)).join(', ')}</span>`:''));
+  DQ.data = null; dcLoad();
 }
 // ---------- unificar repetidos ----------
 let U = {plan:null, merges:new Set(), dups:new Set(), empty:true, q:'', rbOpen:false};
@@ -2456,7 +2509,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;

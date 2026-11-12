@@ -6105,8 +6105,7 @@ class Api:
             return {"added": added, "backup": bk.name, "name": self.GRID_NAME}
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
 
-    def _rescue_scan(self):
-        import rescate
+    def _rb_track_paths(self):
         try:
             con = rekordbox_sync.connect_ro()
             try:
@@ -6116,10 +6115,97 @@ class Api:
                 con.close()
         except Exception:
             tracks = []
-        roots = self._rb_lost_roots([t["path"] for t in tracks if t.get("path")])
+        return [t["path"] for t in tracks if t.get("path")]
+
+    def _rescue_scan(self, rb_paths=None):
+        import rescate
+        if rb_paths is None:
+            rb_paths = self._rb_track_paths()
+        roots = self._rb_lost_roots(rb_paths)
         self._progress("Buscando canciones que solo están en _duplicados…")
         names = [p["name"] for p in self._analysis() or []]
         return rescate.scan(roots, self._cfg["dest_root"], historial.all_ops(), biblioteca.duration, names)
+
+    # ---------- vaciar _duplicados ----------
+    def _dup_clean_scan(self):
+        """Todo lo que hay en tus carpetas _duplicados, separado en:
+          ok   -> tiene otra copia en tu música y ningún programa de DJ lo usa: se puede mandar a la Papelera
+          only -> es la ÚNICA copia (va a «Recuperar», nunca a la Papelera)
+          used -> Rekordbox / Traktor / Serato / Engine lo usan desde _duplicados (repáralo antes en «Perdidas»)"""
+        import rescate
+        import dj_playlists as DJ
+        rb_paths = self._rb_track_paths()
+        roots = self._rb_lost_roots(rb_paths)
+        self._progress("Revisando tus carpetas _duplicados…", 0.1)
+        _, inside, _ = rescate._walk(roots)
+        if not inside:
+            return {"items": [], "ok": 0, "only": 0, "used": 0, "bytes": 0}
+        only = {os.path.normcase(x["path"]) for x in self._rescue_scan(rb_paths)}
+        self._progress("Mirando si tus programas de DJ usan alguna…", 0.7)
+        used = {}
+        for p in rb_paths:
+            used.setdefault(os.path.normcase(plataforma.native(p)), "Rekordbox")
+        for prog in DJ.enabled_programs(self._cfg):
+            if prog == "rekordbox":
+                continue
+            for v in (DJ.read(self._cfg, prog) or {}).values():
+                for p in v.get("paths") or []:
+                    used.setdefault(os.path.normcase(p), DJ.LABELS.get(prog, prog))
+        items = []
+        for f in inside:
+            k = os.path.normcase(f["path"])
+            state = "only" if k in only else "used" if k in used else "ok"
+            items.append({"path": f["path"], "size": f["size"], "state": state, **({"by": used[k]} if state == "used" else {})})
+        items.sort(key=lambda x: ({"ok": 0, "used": 1, "only": 2}[x["state"]], x["path"].lower()))
+        cnt = {k: sum(1 for x in items if x["state"] == k) for k in ("ok", "only", "used")}
+        return {"items": items, **cnt, "bytes": sum(x["size"] for x in items if x["state"] == "ok")}
+
+    def dup_clean_scan(self):
+        """Qué se puede mandar a la Papelera de tus carpetas _duplicados (solo lee)."""
+        def run():
+            res = self._dup_clean_scan()
+            self._progress("Listo.", 1)
+            return res
+        return self._task(run, "dup_clean_scan", "Revisar _duplicados")
+
+    def dup_clean(self, paths):
+        """Manda a la Papelera las que tienen otra copia y nadie usa (se vuelve a comprobar justo antes).
+        Nunca la única copia ni lo que usa un programa de DJ. Se puede recuperar desde la Papelera."""
+        want = {os.path.normcase(p) for p in paths or []}
+
+        def run():
+            import accesos
+            import rescate
+            scan = self._dup_clean_scan()
+            todo = [x["path"] for x in scan["items"] if x["state"] == "ok" and os.path.normcase(x["path"]) in want]
+            skipped = sum(1 for x in scan["items"] if x["state"] != "ok" and os.path.normcase(x["path"]) in want)
+            self._progress(f"Mandando {len(todo)} a la Papelera…", 0.85)
+            done, errors, freed = [], [], 0
+            for p in todo:
+                try:
+                    size = os.path.getsize(p)
+                    if accesos.to_trash([p], label=None):
+                        done.append(p)
+                        freed += size
+                except Exception as e:
+                    errors.append({"file": os.path.basename(p), "why": str(e)})
+            # subcarpetas de _duplicados que quedaron vacías (no la carpeta _duplicados)
+            for d in sorted({os.path.dirname(p) for p in done}, key=len, reverse=True):
+                while rescate.DUP in Path(d).parts and Path(d).name != rescate.DUP:
+                    try:
+                        if any(not n.startswith(".") for n in os.listdir(d)):
+                            break
+                        for n in os.listdir(d):
+                            os.remove(os.path.join(d, n))  # .DS_Store
+                        os.rmdir(d)
+                    except OSError:
+                        break
+                    d = os.path.dirname(d)
+            config.log(f"Vaciar _duplicados: {len(done)} a la Papelera ({freed / 1e9:.2f} GB), "
+                       f"{skipped} no se tocaron, {len(errors)} errores")
+            self._progress("Listo.", 1)
+            return {"trashed": len(done), "bytes": freed, "skipped": skipped, "errors": errors[:20]}
+        return self._task(run, "dup_clean", "Vaciar _duplicados", files=True)
 
     def dup_rescue(self, paths):
         """Devuelve a su lugar las canciones que solo estaban en _duplicados (con Historial y Rekordbox)."""
