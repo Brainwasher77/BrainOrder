@@ -1,5 +1,5 @@
 {
-  "version": "2.34.0",
-  "build": 87,
-  "notes": "Seguridad y solidez: una sola BrainOrder abierta a la vez; no se cierra ni se reinicia a mitad de un movimiento de archivos; las actualizaciones se comprueban antes de instalarse (paquete completo, de la versión anunciada y con código sano); la sesión de Spotify solo viaja a Spotify; un error inesperado ya no deja la ventana esperando; el Historial se guarda a prueba de cortes."
+  "version": "2.35.0",
+  "build": 88,
+  "notes": "Clic derecho en una canción: «Mover a otra playlist…» (sale de esta y entra en la que elijas) y «Quitar de esta playlist». El cambio pasa a su carpeta, Spotify y tus programas de DJ; su archivo se va con ella o a otra playlist que la tenga / _Sin Playlist. Nunca se borra música y se puede deshacer en Historial."
 }

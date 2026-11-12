@@ -3387,6 +3387,217 @@ class Api:
                     "index": idx}
         return self._task(run, f"pledit:{lose_pid}", "Desmantelar playlist")
 
+    def _pl_can_remove(self, pid, src, entry):
+        """¿Se le pueden quitar (o agregar) canciones desde BrainOrder? Spotify tuya, «Me gusta» o carpeta."""
+        if pid == "liked":
+            return True
+        if src == "spotify":
+            return not self._is_foreign(pid)
+        return src == "carpetas" and bool(entry and entry.get("path"))
+
+    def playlist_tracks_move(self, src_pid, positions, dst_pid=None):
+        """Clic derecho en una (o varias) canciones de una playlist:
+        - dst_pid=None: «Quitar de esta playlist»: sale de src (en BrainOrder, su carpeta y su plataforma).
+        - dst_pid: «Mover a otra playlist»: entra al final de dst (si no la tenía) y sale de src.
+        Archivos (nunca se borra música; Deshacer en Historial): si el archivo vive en la carpeta de src, va a la
+        carpeta de dst (al mover) o a la de otra playlist que lo tenga / «_Sin Playlist» (al quitar). Si dst ya
+        tiene su propia copia de la misma grabación, la de src va a _duplicados; si es otra versión, no se toca.
+        Los programas de DJ se ponen al día al organizar (la ventana lo hace enseguida si se lo pides)."""
+        def run():
+            from fuentes import carpetas as FC
+            import unicodedata
+            analysis = self._analysis() or []
+            A, sa, ea, fa = self._pl_ctx(src_pid, analysis)
+            if A.get("pending"):
+                raise unificar.UnifyError("Analiza la playlist primero.")
+            want = set()
+            for p in positions if isinstance(positions, (list, tuple)) else [positions]:
+                try:
+                    want.add(int(p))
+                except (TypeError, ValueError):
+                    pass
+            rows = [r for r in A.get("tracks") or [] if r.get("pos") in want]
+            if not rows:
+                raise unificar.UnifyError("Esa canción ya no está en la playlist (cambió): vuelve a analizarla.")
+            if not self._pl_can_remove(src_pid, sa, ea):
+                raise unificar.UnifyError(f"A «{A['name']}» no se le pueden quitar canciones desde BrainOrder "
+                                          f"(no es tuya o su plataforma no lo deja).")
+            a_folder_pl = sa == "carpetas" and bool(ea and ea.get("path"))
+            B = sb = eb = fb = None
+            b_folder_pl = False
+            if dst_pid:
+                if dst_pid == src_pid:
+                    raise unificar.UnifyError("Elige otra playlist.")
+                B, sb, eb, fb = self._pl_ctx(dst_pid, analysis)
+                if B.get("pending"):
+                    raise unificar.UnifyError(f"Analiza «{B['name']}» primero.")
+                if not self._pl_can_remove(dst_pid, sb, eb):
+                    raise unificar.UnifyError(f"A «{B['name']}» no se le pueden agregar canciones desde BrainOrder "
+                                              f"(no es tuya o su plataforma no lo deja).")
+                b_folder_pl = sb == "carpetas" and bool(eb and eb.get("path"))
+            sp = None
+            if sa == "spotify" or sb == "spotify":
+                sp = self._spotify_ready()
+            if "liked" in (src_pid, dst_pid) and spotify_api.paused_until():
+                raise SpotifyPaused("Spotify está en pausa: «Me gusta» se cambia directo en Spotify, inténtalo cuando "
+                                    "vuelva (lo ves arriba, en Spotify).")
+            nk = (lambda x: os.path.normcase(os.path.normpath(unicodedata.normalize("NFC", str(x)))))
+            names = [r.get("name") or "" for r in rows]
+            res = {"name": A["name"], "into": B["name"] if B else None, "count": len(rows),
+                   "song": names[0] if len(rows) == 1 else None}
+            # 1) archivos que viven en la carpeta de src
+            self._set_stage(0, 50)
+            afold = Path(fa) if a_folder_pl else (Path(A["folder"]) if A.get("folder") else None)
+            bfold = (Path(fb) if b_folder_pl else (Path(B["folder"]) if B.get("folder") else None)) if B else None
+            dupdir = Path(self._cfg["dest_root"]) / "_duplicados" / config.safe_name(A["name"])
+            b_by_id = {}
+            for r in (B.get("tracks") or []) if B else []:
+                b_by_id.setdefault(r.get("id"), r)
+            ops, planned, dup_keep, n = [], set(), {}, {"home": 0, "dup": 0, "kept": 0}
+            if afold and afold.is_dir():
+                inside = nk(afold) + os.sep
+                seen = set()
+                for r in rows:
+                    src = r.get("source")
+                    if not src or nk(src) in seen or not nk(src).startswith(inside) or not os.path.isfile(src):
+                        continue
+                    seen.add(nk(src))
+                    if B is not None:
+                        kr = b_by_id.get(r.get("id")) or {}
+                        own = kr.get("source")
+                        if own and os.path.isfile(own) and not plataforma.same_file(src, own) \
+                                and not plataforma.is_dup_dir(own):
+                            if plataforma.same_recording(src, own):  # dst ya tiene su copia: esta sobra
+                                d = self._plan_dest(src, dupdir, planned, dupdir)
+                                if d:
+                                    ops.append((src, d))
+                                    dup_keep[src] = own
+                                    n["dup"] += 1
+                            else:
+                                n["kept"] += 1  # otra versión: ante la duda, nunca se aparta
+                            continue
+                        target = bfold
+                    else:
+                        target = Path(self._rb_home_for(src, src_pid, analysis))
+                    if not target:
+                        n["kept"] += 1
+                        continue
+                    d = self._plan_dest(src, target, planned, dupdir)
+                    if d and Path(d) != target:  # chocaría por nombre con otro archivo: se deja donde está
+                        planned.discard(str(Path(d) / Path(src).name))
+                        n["kept"] += 1
+                        continue
+                    if d:
+                        target.mkdir(parents=True, exist_ok=True)
+                        ops.append((src, d))
+                        n["home"] += 1
+                        res.setdefault("to", str(target))
+            song = f"«{names[0]}»" if len(rows) == 1 else f"{len(rows)} canciones"
+            label = (f"Mover {song} de «{A['name']}» a «{B['name']}»" if B else f"Quitar {song} de «{A['name']}»")
+            mv = self._relocate_ops(ops, label, extra=lambda ch: {"dup_of": {ch[a]: k for a, k in dup_keep.items() if a in ch}})
+            ch = mv.get("changes") or {}
+            res["files"] = {**n, "moved": mv.get("moved", 0), "skipped": mv.get("skipped") or [], "op_id": mv.get("op_id"),
+                            "to": res.get("to", ""), "dup_dir": str(dupdir)}
+            now = lambda p: ch.get(p, p) if p else p
+            # 2) entra a dst (solo las que no tenía)
+            self._set_stage(50, 75)
+            if B is not None:
+                todo = [r for r in rows if r.get("id") not in b_by_id]
+                res["already"] = len(rows) - len(todo)
+                if todo and dst_pid == "liked":
+                    uris, cache = [], {}
+                    for r in todo:
+                        if self._SP_ID.fullmatch(r.get("id") or ""):
+                            uris.append("spotify:track:" + r["id"])
+                        elif r.get("source"):
+                            u = self._spotify_uri_for(now(r["source"]), analysis, sp, cache)
+                            if u:
+                                uris.append(u["uri"])
+                    if uris:
+                        sp.save_to_library(list(dict.fromkeys(uris)))
+                    res["added"], res["not_found"] = len(uris), len(todo) - len(uris)
+                    res["spotify"] = {"state": "ok"}
+                elif todo and sb == "spotify":
+                    cache = self._load_sp()
+                    ids = {r.get("id") for r in todo}
+                    raw_a = next((x.get("tracks") for x in (cache["playlists"] + list(cache.get("foreign_ok") or []))
+                                  if x["id"] == src_pid), None) or []
+                    local = [t for t in raw_a if t.get("id") in ids]
+                    job = {"kind": "merge_add", "pid": dst_pid, "name": B["name"], "uris": [], "paths": [], "queries": [],
+                           "local_tracks": local}
+                    for r in todo:
+                        if self._SP_ID.fullmatch(r.get("id") or ""):
+                            job["uris"].append("spotify:track:" + r["id"])
+                        elif r.get("source"):
+                            job["paths"].append(now(r["source"]))
+                        else:
+                            job["queries"].append({"artist": (r.get("artists") or [""])[0], "title": r.get("name") or "",
+                                                   "isrc": r.get("isrc") or ""})
+                    res["spotify"] = self._spotify_do(job)
+                    res["added"] = len(todo)
+                    if res["spotify"].get("state") == "queued" and local:
+                        self._sp_put_local(dst_pid, local)  # mientras tanto se ven en dst
+                elif todo:  # carpeta: entra con su archivo
+                    paths = [now(r["source"]) for r in todo if r.get("source")]
+                    if paths:
+                        FC.remember(dst_pid, paths)
+                    res["added"], res["no_file"] = len(paths), len(todo) - len(paths)
+                else:
+                    res["added"] = 0
+            # 3) sale de src
+            self._set_stage(75, 95)
+            if src_pid == "liked":
+                uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in rows if self._SP_ID.fullmatch(r.get("id") or "")))
+                res["no_uri"] = len(rows) - len(uris)
+                if uris:
+                    sp.remove_from_library(uris)
+                    self._sp_drop(src_pid, uris)
+                res["spotify_src"] = {"state": "ok"}
+            elif sa == "spotify":
+                uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in rows if self._SP_ID.fullmatch(r.get("id") or "")))
+                pend = [r for r in rows if str(r.get("id") or "").startswith(FC.PREFIX)]  # aún esperaban para entrar
+                res["no_uri"] = len(rows) - len(uris) - len(pend)
+                if uris:
+                    res["spotify_src"] = self._spotify_do({"kind": "remove", "pid": src_pid, "name": A["name"], "uris": uris})
+                    if res["spotify_src"].get("state") == "queued":
+                        self._sp_drop(src_pid, uris)  # mientras Spotify lo permite, en BrainOrder ya no están
+                if pend:
+                    import cola_spotify
+                    gone_ids = {r["id"] for r in pend}
+                    cola_spotify.drop_pending(src_pid, {r.get("source") for r in pend if r.get("source")}, gone_ids)
+
+                    def put(data, gone_ids=gone_ids):
+                        cur = next((x for x in data["playlists"] if x["id"] == src_pid), None)
+                        if cur is not None and cur.get("tracks") is not None:
+                            cur["tracks"] = [t for t in cur["tracks"] if t.get("id") not in gone_ids]
+                            cur["total"] = len(cur["tracks"])
+                    self._update_sp(put)
+            else:
+                gone = {nk(r["source"]) for r in rows if r.get("source")} | {nk(v) for v in ch.values()}
+                FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone])
+            # las de carpeta se releen (con lo que llegó o salió)
+            for pid, folder_pl in ((src_pid, a_folder_pl), (dst_pid, b_folder_pl)):
+                if not (pid and folder_pl):
+                    continue
+                meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == pid), None)
+                if not meta:
+                    continue
+                tracks = FC.tracks(self._cfg, meta)
+                if pid == src_pid:
+                    left = {r["id"] for r in tracks}
+                    res["still"] = sum(1 for r in rows if r.get("id") in left)  # su archivo no se pudo sacar
+
+                def put(data, pid=pid, meta=meta, tracks=tracks):
+                    cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+                    if cur is not None:
+                        cur.update(meta, tracks=tracks, analyzed_snapshot=meta["snapshot"])
+                self._update_sp(put)
+            self._set_stage(95, 100)
+            analysis = self._build_analysis(light=True)
+            idx = next((i for i, a in enumerate(analysis) if a["id"] == src_pid), None)
+            return {"analysis": analysis, "result": res, "pid": src_pid, "dst_pid": dst_pid, "index": idx}
+        return self._task(run, f"pledit:{src_pid}", "Mover a otra playlist" if dst_pid else "Quitar de la playlist")
+
     def spotify_queue(self):
         import cola_spotify as Q
         try:

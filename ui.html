@@ -1418,14 +1418,21 @@ function songMenu(r, pl){
   const it = [['#', label], [r.source ? '▶ Escuchar' : '▶ Escuchar 30 s (Deezer)', () => pvPlay(r)]];
   if(r.source && !r.mik) it.push(['🎹 Mandar a Mixed In Key', async () => { MK.sel = new Set([r.source]); await mikSend(); }]);
   const finder = S.win ? 'Mostrar en el Explorador' : 'Mostrar en Finder';
+  if(pl && !pl.pending){  // cambiar la canción de playlist (en BrainOrder, su carpeta, su plataforma y tus programas)
+    const can = tmCanTrim(pl), why = tmWhy(pl);
+    it.push('-');
+    it.push(['➡️ Mover a otra playlist…', () => tmMove(pl, r), !can, can ? `Sale de «${pl.name}» y entra en la que elijas (también en Spotify y tus programas de DJ)` : why]);
+    if(!r.kept) it.push([pl.liked ? '♡ Quitar de Me gusta' : `➖ Quitar de «${pl.name}»`, () => tmRemove(pl, r), !can, can ? 'Sale de esta playlist (también en Spotify y tus programas de DJ). La música nunca se borra.' : why]);
+    it.push('-');
+  }
   if(pl && r.source && (r.status==='ok' || r.status==='elsewhere')){
     const cur = dirOf(r.source), seen = new Set([cur]);
     const mv = (dest, txt, tip) => { if(!dest || seen.has(dest)) return; seen.add(dest); it.push([txt, () => ctxMove(pl, r, dest), false, tip]); };
     mv(r.dest_dir, `📁 Mover a su carpeta «${r.home_name || base(r.dest_dir)}»`, 'La carpeta de la primera playlist donde aparece (según tu prioridad en Reglas)');
-    mv(pl.folder, `📂 Mover a esta playlist «${pl.name}»`);
+    mv(pl.folder, `📂 Mover el archivo a la carpeta de «${pl.name}»`);
     // otras playlists que también tienen esta canción
     const otras = []; for(const p of S.analysis||[]) if(p !== pl && !p.pending && p.tracks.some(t => t.id === r.id)) otras.push(p);
-    otras.slice(0, 8).forEach(p => mv(p.folder, `♫ Mover a «${p.name}»`, 'También está en esa playlist'));
+    otras.slice(0, 8).forEach(p => mv(p.folder, `♫ Mover el archivo a «${p.name}»`, 'También está en esa playlist: solo cambia de carpeta el archivo'));
     it.push(['📁 Mover a otra carpeta…', () => ctxMovePick(pl, r)]);
     it.push('-');
     it.push(S.pinned.has(r.source)
@@ -1445,6 +1452,101 @@ function songMenu(r, pl){
     it.push(['➖ Quitar de esta playlist', () => ctxForget(pl, r), false, 'La playlist la recuerda aunque borraste el archivo de su carpeta (usa la otra copia). Esto la quita de la playlist; no toca ningún archivo.']);
   it.push(['📋 Copiar «' + label + '»', async () => { const x = await api().copy_text(label); toast(x.ok ? 'Copiado.' : esc(x.error), !x.ok); }]);
   return it;
+}
+// ---------- mover una canción a otra playlist / quitarla de la playlist (clic derecho) ----------
+let TM = {pid:null, pos:null};
+const tmCanTrim = p => !!p && !p.pending && (plCanTrim(p) || !!p.liked);
+const tmCanAdd = p => !!p && !p.pending && !p.ignored && (plCanMergeInto(p) || !!p.liked);
+const tmWhy = p => p.pending ? 'Analiza la playlist primero' : 'A esta playlist no se le pueden quitar canciones desde BrainOrder (no es tuya o su plataforma no lo deja)';
+const tmLabel = r => (r.artists && r.artists.length ? r.artists.join(', ') + ' - ' : '') + r.name;
+function tmFileNote(pl, r, B){
+  const inside = r.source && pl.folder && dirOf(r.source) === pl.folder;
+  if(!inside) return r.source ? 'Su archivo no está en la carpeta de esta playlist: no se mueve.' : 'No tienes su archivo: solo cambia la playlist.';
+  if(B) return `Su archivo pasa a la carpeta de «${esc(B.name)}»${B.tracks.some(t=>t.id===r.id)?' (si ya tiene su propia copia de la misma grabación, esta va a <code>_duplicados</code>)':''}.`;
+  return 'Su archivo sale de la carpeta de esta playlist: va a la de otra playlist que la tenga o a <code>_Sin Playlist</code>.';
+}
+function tmMove(pl, r){
+  if(!tmCanTrim(pl)){ toast(esc(tmWhy(pl)), true); return; }
+  const opts = S.analysis.map((p,j)=>[p,j]).filter(([p]) => p !== pl && tmCanAdd(p))
+    .map(([p,j]) => [p, j, (p.tracks.some(t => t.id===r.id) ? 'ya la tiene · ' : '') + (p.liked ? 'Me gusta' : p.source==='carpetas' ? 'carpeta' : (p.tracks.length + (p.tracks.length===1 ? ' canción' : ' canciones')))]);
+  if(!opts.length){ toast('No hay otra playlist donde ponerla: tiene que ser una playlist tuya de Spotify o de una carpeta.', true); return; }
+  TM = {pid: pl.id, pos: r.pos};
+  const dj = plDjNames();
+  modal(`<h3>➡️ Mover «${esc(tmLabel(r))}» a…</h3>
+    <div class="art">Sale de <b>«${esc(pl.name)}»</b> y entra al final de la que elijas (si ya la tiene, solo sale de «${esc(pl.name)}»). Escribe para buscar; Enter o doble clic para moverla.</div>
+    ${plPicker('tmTo', opts, null, () => tmMoveGo(), () => tmInfo())}
+    <div id="tmInfo"></div>
+    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="tmDj" checked> Actualizar ya las dos playlists en ${dj.map(esc).join(', ')}</label>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="tmGo" onclick="tmMoveGo()">Mover</button></div>`);
+  pkOpen('tmTo'); tmInfo();
+}
+function tmCtx(){ const A = (S.analysis||[]).find(p => p.id===TM.pid); return [A, A && A.tracks.find(t => t.pos===TM.pos)]; }
+function tmInfo(){
+  const el = $('tmInfo'), [A, r] = tmCtx(), B = $('tmTo') && S.analysis[+$('tmTo').value]; if(!el || !A || !r || !B) return;
+  const has = B.tracks.some(t => t.id===r.id), PA = plPlace(A), PB = plPlace(B);
+  const noFile = B.source==='carpetas' && !r.source;
+  el.innerHTML = `<div class="box" style="line-height:1.6;margin-top:8px">
+    • ${has ? `«${esc(B.name)}» ya la tiene: no se repite.` : `Entra al final de <b>«${esc(B.name)}»</b>${PB.edit?' (también en '+esc(PB.label)+')':''}.`}<br>
+    • Sale de <b>«${esc(A.name)}»</b>${PA.edit?' (también en '+esc(PA.label)+')':''}.<br>
+    • ${tmFileNote(A, r, B)} Nunca se borra música; se puede deshacer en Historial.</div>
+    ${noFile ? `<div class="art" style="color:var(--org);margin-top:6px">«${esc(B.name)}» es una playlist de carpeta y no tienes el archivo de esta canción: no puede entrar ahí (solo saldría de «${esc(A.name)}»).</div>` : ''}`;
+  const go = $('tmGo'); if(go) go.textContent = `Mover a «${B.name}»`;
+}
+async function tmMoveGo(){
+  const [A, r] = tmCtx(), B = $('tmTo') && S.analysis[+$('tmTo').value];
+  if(!A || !r){ closeModal(); toast('Esa canción cambió: vuelve a analizar la playlist.', true); return; }
+  if(!B){ toast('Elige la playlist.', true); return; }
+  const dj = $('tmDj') && $('tmDj').checked;
+  closeModal(); toast(`Moviendo «${esc(r.name)}» a «${esc(B.name)}»…`);
+  const res = await api().playlist_tracks_move(A.id, [r.pos], B.id);
+  await tmDone(res, dj);
+}
+function tmRemove(pl, r){
+  if(!tmCanTrim(pl)){ toast(esc(tmWhy(pl)), true); return; }
+  TM = {pid: pl.id, pos: r.pos};
+  const P = plPlace(pl), dj = plDjNames();
+  modal(`<h3>${pl.liked ? '♡ Quitar de Me gusta' : `➖ Quitar de «${esc(pl.name)}»`}</h3>
+    <div style="margin:2px 0 6px"><b>${esc(tmLabel(r))}</b></div>
+    <div class="box" style="line-height:1.6">
+      • Sale de <b>«${esc(pl.name)}»</b> en BrainOrder${P.edit?', '+esc(P.label):''}${dj.length?' y '+dj.map(esc).join(', '):''}.<br>
+      • ${tmFileNote(pl, r, null)} Nunca se borra música; se puede deshacer en Historial.</div>
+    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="tmDj" checked> Actualizar ya la playlist en ${dj.map(esc).join(', ')}</label>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="tmGo" style="background:var(--miss);border-color:var(--miss);color:#fff" onclick="tmRemoveGo()">Quitar</button></div>`);
+  setTimeout(() => { const b = $('tmGo'); if(b) b.focus(); }, 30);
+}
+async function tmRemoveGo(){
+  const [A, r] = tmCtx();
+  if(!A || !r){ closeModal(); toast('Esa canción cambió: vuelve a analizar la playlist.', true); return; }
+  const dj = $('tmDj') && $('tmDj').checked;
+  closeModal(); toast(`Quitando «${esc(r.name)}» de «${esc(A.name)}»…`);
+  const res = await api().playlist_tracks_move(A.id, [r.pos], null);
+  await tmDone(res, dj);
+}
+async function tmDone(res, dj){
+  if(!res.ok){ taskErr(res); return; }
+  await applyAnalysis(res); if(res.index!==null && res.index!==undefined) S.view = 'pl:' + res.index; render(); loadHist();
+  const x = res.result, f = x.files || {}, song = x.song ? `«${esc(x.song)}»` : `${x.count} canciones`;
+  let msg = x.into
+    ? (x.added ? `✅ ${song} pasó de «${esc(x.name)}» a <b>«${esc(x.into)}»</b>.` : `✅ ${song} salió de «${esc(x.name)}» (<b>«${esc(x.into)}»</b> ya la tenía).`)
+    : `✅ ${song} ya no está en <b>«${esc(x.name)}»</b>.`;
+  if(f.moved) msg += `<br>📁 ${f.home ? `Archivo a <code>${esc(short(f.to))}</code>` : ''}${f.home && f.dup ? ' · ' : ''}${f.dup ? `copia repetida a <code>${esc(short(f.dup_dir))}</code>` : ''}.` + undoLink(f);
+  if(f.kept) msg += `<br><span class="art">Su archivo se quedó donde estaba (otra versión o chocaba por nombre).</span>`;
+  if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">No se movió: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
+  const sps = [x.spotify, x.spotify_src].filter(Boolean);
+  if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ Spotify está en pausa: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;
+  if(x.no_file) msg += `<br><span style="color:var(--org)">No entró a «${esc(x.into)}»: es de carpeta y no tienes el archivo.</span>`;
+  if(x.not_found) msg += `<br><span style="color:var(--org)">No la encontré en Spotify para ponerla en Me gusta.</span>`;
+  if(x.no_uri > 0) msg += `<br><span style="color:var(--org)">Es un archivo local de Spotify: quítala a mano en Spotify.</span>`;
+  if(x.still) msg += `<br><span style="color:var(--org)">Sigue en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
+  toast(msg);
+  if(dj){
+    let out = '';
+    for(const pid of [res.pid, res.dst_pid].filter(Boolean)){
+      const g = await api().organize(true, pid, null);
+      if(g.ok){ await applyAnalysis(g); out += djSummary(g.dj); } else out += `<br><span style="color:var(--org)">Programas de DJ: ${esc(g.error)}</span>`;
+    }
+    render(); toast(msg + out);
+  }
 }
 async function ctxForget(pl, r){
   const res = await api().folder_forget(pl.id, r.id);
