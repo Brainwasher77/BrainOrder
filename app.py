@@ -3481,6 +3481,23 @@ class Api:
             sp = None
             if sa == "spotify" or sb == "spotify":
                 sp = self._spotify_ready()
+            twin = []  # filas que salen pero su MISMA canción de Spotify (mismo id) se queda en otra posición
+            if sa == "spotify" and src_pid != "liked":
+                kept_ids = {r.get("id") for r in A.get("tracks") or [] if r.get("pos") not in want}
+                twin = [r for r in rows if r.get("id") in kept_ids and self._SP_ID.fullmatch(r.get("id") or "")]
+                if twin:
+                    sp = sp or self._spotify_ready()
+                    if spotify_api.paused_until():
+                        raise SpotifyPaused("Spotify está en pausa: esa canción está dos veces con la misma versión y "
+                                            "para quitar solo una hay que reescribir la playlist en Spotify. "
+                                            "Inténtalo cuando vuelva.")
+                    cur = next((x for x in self._load_sp()["playlists"] if x["id"] == src_pid), None)
+                    ctr = (cur or {}).get("tracks") or []
+                    if any(not self._SP_ID.fullmatch(str(t.get("id") or "")) for t in ctr):
+                        raise unificar.UnifyError(f"«{A['name']}» tiene archivos locales de Spotify o canciones que "
+                                                  f"esperan para entrar: quita la repetida a mano en Spotify.")
+                    if any(r["pos"] >= len(ctr) or ctr[r["pos"]].get("id") != r["id"] for r in twin):
+                        raise unificar.UnifyError(f"«{A['name']}» cambió en Spotify: vuelve a analizarla.")
             if "liked" in (src_pid, dst_pid) and spotify_api.paused_until():
                 raise SpotifyPaused("Spotify está en pausa: «Me gusta» se cambia directo en Spotify, inténtalo cuando "
                                     "vuelva (lo ves arriba, en Spotify).")
@@ -3603,6 +3620,23 @@ class Api:
                     self._sp_drop(src_pid, uris)
                 res["spotify_src"] = {"state": "ok"}
             elif sa == "spotify":
+                if twin:  # Spotify quita TODAS las apariciones de una canción: se reescribe la lista sin esas posiciones
+                    drop = {r["pos"] for r in twin}
+                    cur = next((x for x in self._load_sp()["playlists"] if x["id"] == src_pid), None) or {}
+                    left = [t for i, t in enumerate(cur.get("tracks") or []) if i not in drop]
+                    snap = sp.replace_items(src_pid, ["spotify:track:" + t["id"] for t in left])
+
+                    def put(data, left=left, snap=snap):
+                        x = next((y for y in data["playlists"] if y["id"] == src_pid), None)
+                        if x is None or x.get("tracks") is None:
+                            return
+                        x["tracks"], x["total"] = left, len(left)
+                        if snap and x.get("snapshot") == x.get("analyzed_snapshot"):
+                            x["snapshot"] = x["analyzed_snapshot"] = snap
+                    self._update_sp(put)
+                    res["spotify_src"] = {"state": "ok"}
+                    tw = {r["pos"] for r in twin}
+                    rows = [r for r in rows if r["pos"] not in tw]
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in rows if self._SP_ID.fullmatch(r.get("id") or "")))
                 pend = [r for r in rows if str(r.get("id") or "").startswith(FC.PREFIX)]  # aún esperaban para entrar
                 res["no_uri"] = len(rows) - len(uris) - len(pend)

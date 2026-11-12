@@ -137,5 +137,25 @@ o._pl_ctx = lambda pid, an=None: ({p["id"]: p for p in o._analysis()}[pid], 'spo
 r = o.playlist_tracks_move('pa', [5], None)
 assert not o.got.get('ops') and r['result'].get('shared') == 1, (o.got, r['result'])
 assert [j['uris'] for j in o.jobs] == [['spotify:track:' + SP('e')]]
+
+# 11) la MISMA canción de Spotify (mismo id) dos veces: no se usa «remove» (quitaría las dos): se reescribe la lista
+o = setup()
+LA3 = o._analysis()[0]
+LA3["tracks"] = [{"pos": 0, "id": SP('a'), "name": "Uno", "source": s1}, {"pos": 1, "id": SP('b'), "name": "Dos", "source": s2},
+                 {"pos": 2, "id": SP('a'), "name": "Uno", "source": s1}]
+o._analysis = lambda: [LA3]
+o._pl_ctx = lambda pid, an=None: (LA3, 'spotify', None, None)
+CACHE = {"playlists": [{"id": "pa", "tracks": [{"id": SP('a')}, {"id": SP('b')}, {"id": SP('a')}], "snapshot": "x", "analyzed_snapshot": "x"}]}
+o._load_sp = lambda: CACHE
+o._update_sp = lambda f: f(CACHE)
+class SPr:
+    sent = None
+    def replace_items(self, pid, uris):
+        SPr.sent = uris; return "y"
+o._spotify_ready = lambda: SPr()
+r = o.playlist_tracks_move('pa', [2], None)
+assert SPr.sent == ['spotify:track:' + SP('a'), 'spotify:track:' + SP('b')], SPr.sent
+assert not o.jobs and not o.got.get('ops') and [t["id"] for t in CACHE["playlists"][0]["tracks"]] == [SP('a'), SP('b')]
+print('mismo id dos veces: lista reescrita', SPr.sent)
 shutil.rmtree(root)
 print("OK")

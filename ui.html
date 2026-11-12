@@ -215,6 +215,7 @@ th.sortable.on{color:var(--acid)}
 .chipf.all.on{background:var(--text);border-color:var(--text)}
 .chipf.missing.on{background:var(--miss);border-color:var(--miss)}
 .chipf.inbox.on{background:var(--org);border-color:var(--org)}
+.chipf.rep.on{background:var(--org);border-color:var(--org)}
 .chipf.elsewhere.on{background:var(--info);border-color:var(--info)}
 .chipf.here.on{background:var(--ok);border-color:var(--ok)}
 .oxrow{display:flex;gap:10px;align-items:flex-start;padding:7px 4px;cursor:pointer;border-bottom:1px solid #1d2028}
@@ -1453,6 +1454,56 @@ function songMenu(r, pl){
   it.push(['📋 Copiar «' + label + '»', async () => { const x = await api().copy_text(label); toast(x.ok ? 'Copiado.' : esc(x.error), !x.ok); }]);
   return it;
 }
+// ---------- canciones repetidas DENTRO de una playlist (la misma canción dos o más veces) ----------
+// misma canción = mismo id, mismo ISRC, mismo archivo o mismo artista + título (sin tildes, mayúsculas ni «feat.»)
+const RPC = new WeakMap();
+function plRepeats(pl){
+  if(!pl || pl.pending || !pl.tracks) return [];
+  const hit = RPC.get(pl); if(hit && hit.n === pl.tracks.length) return hit.g;
+  const par = pl.tracks.map((_, i) => i), find = i => par[i]===i ? i : (par[i] = find(par[i])), seen = new Map();
+  pl.tracks.forEach((r, i) => { for(const k of cmpKeys(r)){ if(seen.has(k)) par[find(i)] = find(seen.get(k)); else seen.set(k, i); } });
+  const by = new Map(); pl.tracks.forEach((r, i) => { const k = find(i); if(!by.has(k)) by.set(k, []); by.get(k).push(r); });
+  const g = [...by.values()].filter(x => x.length > 1).map(x => x.slice().sort((a,b) => a.pos-b.pos));
+  RPC.set(pl, {n: pl.tracks.length, g}); return g;
+}
+function rpInfo(pl){ const g = plRepeats(pl), first = new Map(), set = new Map();
+  for(const x of g) x.forEach((r, k) => { set.set(r.pos, k); first.set(r.pos, x[0]); });
+  return {groups: g, extra: g.reduce((n, x) => n + x.length - 1, 0), nth: set, first}; }
+// cuál se queda por defecto: la que ya tienes en la carpeta de la playlist, si no la que tiene archivo, si no la primera
+function rpKeep(pl, x){ return x.find(r => r.source && dirOf(r.source)===pl.folder) || x.find(r => r.source) || x[0]; }
+function rpBanner(pl, i){
+  const R = rpInfo(pl); if(!R.groups.length) return '';
+  const can = tmCanTrim(pl);
+  return `<div class="box" style="border-left:3px solid var(--org);margin:0 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span style="flex:1 1 380px">⧉ <b>${R.groups.length} canci${R.groups.length===1?'ón está':'ones están'} más de una vez</b> en esta playlist (${R.extra} de más). Suele ser la misma canción en dos versiones de Spotify (sencillo y álbum).</span>
+    <button class="ghost" onclick="SO.filter='rep';renderTable()">Ver</button>
+    ${can ? `<button class="primary" onclick="rpFix(${i})">Quitar las de más…</button>` : `<span class="art">${esc(tmWhy(pl))}</span>`}</div>`;
+}
+let RP = {i:null, keep:{}};
+function rpFix(i){
+  const pl = S.analysis[i], R = rpInfo(pl); if(!pl || !R.groups.length) return;
+  RP = {i, keep: {}}; R.groups.forEach((x, k) => RP.keep[k] = rpKeep(pl, x).pos);
+  const dj = plDjNames(), st = r => r.source ? (dirOf(r.source)===pl.folder ? 'Aquí' : 'En otra carpeta') : (r.status==='inbox' ? 'En descargas' : 'Falta');
+  modal(`<h3>⧉ Repetidas en «${esc(pl.name)}»</h3>
+    <div class="art">Elige cuál se queda de cada una; las demás salen de la playlist${plPlace(pl).edit?' (también en '+esc(plPlace(pl).label)+')':''}. Si comparten el archivo, el archivo se queda; nunca se borra música.</div>
+    <div style="max-height:52vh;overflow:auto;margin-top:8px">${R.groups.map((x, k) => `<div class="box" style="margin:0 0 8px;padding:8px 10px">
+      ${x.map(r => `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;cursor:pointer">
+        <input type="radio" name="rp${k}" ${RP.keep[k]===r.pos?'checked':''} onchange="RP.keep[${k}]=${r.pos};rpSum()" style="margin-top:3px">
+        <span><span class="mono" style="color:var(--mute)">#${r.pos+1}</span> ${esc(r.name)} <span class="art">· ${esc((r.artists||[]).join(', '))}${r.album?' · '+esc(r.album):''} · ${st(r)}${r.source?' · '+esc(base(r.source)):''}</span></span></label>`).join('')}</div>`).join('')}</div>
+    ${dj.length?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="rpDj" checked> Actualizar ya la playlist en ${dj.map(esc).join(', ')}</label>`:''}
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" id="rpGo" onclick="rpGo()">Quitar las de más</button></div>`);
+  rpSum();
+}
+function rpOut(){ const pl = S.analysis[RP.i], R = rpInfo(pl); return R.groups.flatMap((x, k) => x.filter(r => r.pos !== RP.keep[k]).map(r => r.pos)); }
+function rpSum(){ const b = $('rpGo'), n = rpOut().length; if(b){ b.textContent = `Quitar ${n} repetida${n!==1?'s':''}`; b.disabled = !n; } }
+async function rpGo(){
+  const pl = S.analysis[RP.i], out = rpOut(); if(!pl || !out.length) return;
+  const dj = $('rpDj') && $('rpDj').checked;
+  closeModal(); toast(`Quitando ${out.length} repetida${out.length!==1?'s':''} de «${esc(pl.name)}»…`);
+  const res = await api().playlist_tracks_move(pl.id, out, null);
+  if(res.ok && SO.filter==='rep') SO.filter = 'all';
+  await tmDone(res, dj);
+}
 // ---------- mover una canción a otra playlist / quitarla de la playlist (clic derecho) ----------
 let TM = {pid:null, pos:null};
 const tmCanTrim = p => !!p && !p.pending && (plCanTrim(p) || !!p.liked);
@@ -1568,10 +1619,10 @@ async function tmDone(res, dj){
     ? `✅ Playlist nueva <b>«${esc(x.into)}»</b> creada${(x.spotify||{}).state ? ' (también en Spotify)' : ''} y ${song} pasó ahí desde «${esc(x.name)}».`
     : x.into
     ? (x.added ? `✅ ${song} pasó de «${esc(x.name)}» a <b>«${esc(x.into)}»</b>.` : `✅ ${song} salió de «${esc(x.name)}» (<b>«${esc(x.into)}»</b> ya la tenía).`)
-    : `✅ ${song} ya no está en <b>«${esc(x.name)}»</b>.`;
+    : `✅ ${song} ya no est${x.count>1?'án':'á'} en <b>«${esc(x.name)}»</b>.`;
   if(f.moved) msg += `<br>📁 ${f.home ? `Archivo a <code>${esc(short(f.to))}</code>` : ''}${f.home && f.dup ? ' · ' : ''}${f.dup ? `copia repetida a <code>${esc(short(f.dup_dir))}</code>` : ''}.` + undoLink(f);
   if(f.kept) msg += `<br><span class="art">Su archivo se quedó donde estaba (otra versión o chocaba por nombre).</span>`;
-  if(x.shared) msg += `<br><span class="art">El archivo se quedó en «${esc(x.name)}»: la otra vez que estaba la canción lo sigue usando.</span>`;
+  if(x.shared) msg += `<br><span class="art">${x.shared>1?'Los archivos se quedaron':'El archivo se quedó'} en «${esc(x.name)}»: la otra vez que estaba la canción lo sigue usando.</span>`;
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">No se movió: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
   const sps = [x.spotify, x.spotify_src].filter(Boolean);
   if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ Spotify está en pausa: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;
@@ -1660,7 +1711,7 @@ function plNavRow([pl,i]){
       <div class="bar" style="opacity:.4"></div></a>`;
     const c = plStats(pl), n = c.total || 1, oc = orgCount(pl.id);
     return `<a data-v="pl:${i}" onclick="show('pl:${i}')" ${statHidden(pl)?'title="Fuera de tus estadísticas (clic derecho para volver a contarla)" style="opacity:.6"':''}><div class="row"><span class="name">${statHidden(pl)?'🙈 ':''}${pl.liked?'♥ ':''}${esc(pl.name)}</span>
-      <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${c.here+c.other}/${c.total}</span></div>
+      <span class="cnt mono">${SRC_TAG[pl.source]?`<span class="art" title="${pl.source==='deezer'?'Deezer':'Archivo exportado'}">${SRC_TAG[pl.source]} </span>`:''}${changed(pl)?'<span title="Cambió en Spotify desde que la analizaste" style="color:var(--org)">● </span>':''}${oc?`<span title="Descargas listas para organizar" style="color:var(--org)">⬇${oc} </span>`:''}${(()=>{ const e = rpInfo(pl).extra; return e ? `<span title="${e} canción(es) repetida(s) en esta playlist" style="color:var(--org)">⧉${e} </span>` : ''; })()}${c.here+c.other}/${c.total}</span></div>
       <div class="bar"><i style="width:${c.here/n*100}%;background:var(--ok)"></i><i style="width:${c.other/n*100}%;background:var(--info)"></i><i style="width:${c.inbox/n*100}%;background:var(--org)"></i><i style="width:${c.missing/n*100}%;background:var(--miss)"></i></div></a>`;
 }
 
@@ -1981,10 +2032,12 @@ function renderTable(){
     const cls = {here:'ok', elsewhere:'elsewhere', inbox:'inbox', missing:'missing'};
     const ds = r => (r.status==='ok'||r.status==='elsewhere') ? (dirOf(r.source)===pl.folder?'here':'elsewhere') : r.status;
     // filtro por estado (chips con conteo) + orden por columna
-    const cnt = {all:pl.tracks.length, here:0, elsewhere:0, inbox:0, missing:0, nomik:0};
+    const cnt = {all:pl.tracks.length, here:0, elsewhere:0, inbox:0, missing:0, nomik:0, rep:0};
+    const RPI = rpInfo(pl); cnt.rep = RPI.nth.size;
     pl.tracks.forEach(r=>{ cnt[ds(r)]++; if(r.source && !r.mik) cnt.nomik++; });
     if(SO.filter!=='all' && !cnt[SO.filter]) SO.filter='all';
-    let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || (SO.filter==='nomik' ? (r.source && !r.mik) : ds(r)===SO.filter));
+    let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || (SO.filter==='nomik' ? (r.source && !r.mik) : SO.filter==='rep' ? RPI.nth.has(r.pos) : ds(r)===SO.filter));
+    if(SO.filter==='rep') rows.sort((a,b) => RPI.first.get(a.pos).pos - RPI.first.get(b.pos).pos || a.pos - b.pos);
     const rank = {missing:0, inbox:1, elsewhere:2, here:3};
     const key = {
       pos: r => r.pos,
@@ -1996,13 +2049,15 @@ function renderTable(){
       energy: r => (r.energy ? 11-r.energy : 99)*1e5 + r.pos,
       bpm: r => (r.bpm || 999)*1e5 + r.pos,
     }[SO.col] || (r=>r.pos);
-    rows = rows.slice().sort((a,b)=>{ const x=key(a), y=key(b); return (x<y?-1:x>y?1:0) * SO.dir; });
+    if(SO.filter!=='rep') rows = rows.slice().sort((a,b)=>{ const x=key(a), y=key(b); return (x<y?-1:x>y?1:0) * SO.dir; });
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
     const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
-    html = `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}</div>
+    const rpTag = r => { const k = RPI.nth.get(r.pos); if(k===undefined) return '';
+      const f = RPI.first.get(r.pos); return ` <span class="gtag" style="color:var(--org);border-color:var(--org);cursor:pointer" title="${k ? `Repetida: la misma canción que la #${f.pos+1}` : 'Esta canción está más de una vez en la playlist'}" onclick="event.stopPropagation();SO.filter='rep';renderTable()">⧉ ${k ? (k+1)+'ª vez' : 'repetida'}</span>`; };
+    html = rpBanner(pl, +S.view.split(':')[1]) + `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}${cnt.rep?chip('rep','⧉ Repetidas'):''}</div>
       <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
-      <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
+      <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}${rpTag(r)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
       <td>${keyChip(r)}</td>
       <td style="white-space:nowrap">${energyBar(r.energy)}</td>
       <td class="mono" style="color:var(--mute)">${r.bpm?Math.round(r.bpm):''}</td>
