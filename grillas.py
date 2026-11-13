@@ -43,6 +43,7 @@ RANGES = [
     ("moombahton", ("moombah",), 98, 116),
     ("house", ("house",), 112, 132),
     ("techno", ("techno",), 120, 152),
+    ("hard techno", ("hard techno", "hardtechno", "hardgroove", "industrial techno", "schranz"), 140, 180),
     ("trance", ("trance", "psytrance", "psy trance"), 125, 150),
     ("drum and bass", ("drum and bass", "drum & bass", "drum n bass", "drum'n'bass", "dnb", "jungle"), 158, 182),
     ("hardstyle", ("hardstyle", "hard dance"), 140, 165),
@@ -193,18 +194,22 @@ def check(t, mik_bpm=None):
     hint = " ".join([t.get("genre") or ""] + list(t.get("pls") or []))
     sty, fixed = styles(hint), fixed_tempo(hint)
     tempo_done = False
+    in_sty = lambda b: any(lo <= b <= hi for _, lo, hi in sty)  # noqa: E731
     if mik_bpm:
+        # Mixed In Key manda; el rango del estilo solo se usa sin MIK. Excepción: si MIK dice el doble/la mitad
+        # pero Rekordbox cae en el rango normal del estilo y MIK no, se deja (p. ej. hard techno 160 vs MIK 80).
+        # Así nunca se corrige de ida y de vuelta (antes «More» bajaba por el rango y volvía a subir por MIK).
+        tempo_done = True
         r = bpm / mik_bpm
-        if abs(r - 2) < 0.04:
+        if sty and (abs(r - 2) < 0.04 or abs(r - 0.5) < 0.01) and in_sty(bpm) and not in_sty(mik_bpm):
+            pass
+        elif abs(r - 2) < 0.04:
             add("double", f"BPM al doble: Rekordbox {_fmt(bpm)}, Mixed In Key {_fmt(mik_bpm)}")
-            tempo_done = True
         elif abs(r - 0.5) < 0.01:
             add("half", f"BPM a la mitad: Rekordbox {_fmt(bpm)}, Mixed In Key {_fmt(mik_bpm)}")
-            tempo_done = True
         elif abs(bpm - mik_bpm) > 0.6:
             add("mik", f"BPM distinto: Rekordbox {_fmt(bpm)}, Mixed In Key {_fmt(mik_bpm)}")
-            tempo_done = True
-    if not tempo_done and sty and not any(lo <= bpm <= hi for _, lo, hi in sty):
+    if not tempo_done and sty and not in_sty(bpm):
         for name, lo, hi in sty:
             if lo <= bpm * 2 <= hi:
                 add("half", f"BPM a la mitad: {_fmt(bpm)}; en {name} lo normal es {lo}–{hi} (¿{_fmt(bpm * 2)}?)")

@@ -1,5 +1,5 @@
 {
-  "version": "2.44.0",
-  "build": 101,
-  "notes": "«BPM al doble o a la mitad»: el mismo botón ahora también corrige las que tienen el BPM a la mitad (×2), directo en Rekordbox, con respaldo y deshacer. Ya no hace falta el XML para ninguna."
+  "version": "2.44.1",
+  "build": 102,
+  "notes": "«BPM al doble o a la mitad»: Mixed In Key manda sobre el rango del estilo y ya no se corrige de ida y de vuelta (p. ej. «More» de reguetón o hard techno a 160). Nuevo rango para hard techno (140–180)."
 }
