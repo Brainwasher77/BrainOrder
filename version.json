@@ -1,5 +1,5 @@
 {
-  "version": "2.46.1",
-  "build": 106,
-  "notes": "Arreglado: el buscador no hacía nada en Grillas dudosas, BPM por corregir, Sin Mixed In Key y otras secciones."
+  "version": "2.46.2",
+  "build": 107,
+  "notes": "Grillas dudosas: con el buscador o el filtro puestos, los botones (cues sobre la grilla, medir, pasar a Rekordbox, están bien) actúan solo sobre las marcadas que se ven."
 }

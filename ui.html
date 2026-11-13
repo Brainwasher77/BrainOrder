@@ -3038,6 +3038,8 @@ function gridSplit(r, codes, keep){
   return Object.assign({}, r, {items, summary});
 }
 function gridSet(r){ GR.raw = r; GR.data = gridSplit(r, BPM_C, false); GR.bpm = gridSplit(r, BPM_C, true); if(typeof BF !== 'undefined'){ BF.sel = null; } GR.sel = new Set(GR.data.items.filter(x => x.sev >= 2).map(x => x.id)); }
+// las marcadas que se ven (con el buscador o el filtro puestos, los botones actúan solo sobre esas)
+function gridMarked(){ return gridVisible().filter(x => GR.sel.has(x.id)); }
 function gridVisible(){
   const q = (GR.q||'').toLowerCase();
   return (GR.data ? GR.data.items : []).filter(x => (!GR.f || x.why.some(w => w.c===GR.f) || (GR.f==='audio' && x.audio)) &&
@@ -3052,7 +3054,7 @@ function gridView(){
   const sm = d.summary, all = d.items, n = c => sm[c]||0;
   const place = n('shift') + n('offbeat') + n('down'), ncues = n('cues');
   if(GR.cf === undefined){ GR.cf = null; api().cue_fix_state().then(r => { GR.cf = r.last || null; if(S.view==='rbgrid') renderMain(); }).catch(()=>{}); }
-  const cueSel = all.filter(x => GR.sel.has(x.id) && x.why.some(w => w.c==='cues')).length, cbusy = running('cue_fix');
+  const marked = gridMarked(), cueSel = marked.filter(x => x.why.some(w => w.c==='cues')).length, cbusy = running('cue_fix');
   const cal = Object.entries(d.calib||{}).map(([e,v]) => `${e} ${v>0?'+':''}${v} ms`).join(', ');
   const tb = gridVisible().slice(0, 500).map(x => {
     const au = x.audio ? GRID_AUDIO[x.audio] : null;
@@ -3074,16 +3076,16 @@ function gridView(){
     <div class="box" style="margin-bottom:10px">
       <b>🎯 Cues corridos</b>: la grilla está sobre el kick y tus cues (casi todos puestos por Mixed In Key en MP3) caen unos ms antes. Los pongo justo sobre su tiempo, directo en Rekordbox (Rekordbox cerrado, con respaldo; la grilla no se toca).
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
-        <button class="primary" ${cbusy||busy||!cueSel?'disabled':''} onclick="cueFix()">${cbusy?'Moviendo cues…':`🎯 Poner los cues sobre la grilla (${cueSel})`}</button>
+        <button id="cfGo" class="primary" ${cbusy||busy||!cueSel?'disabled':''} onclick="cueFix()">${cbusy?'Moviendo cues…':`🎯 Poner los cues sobre la grilla (${cueSel})`}</button>
         ${GR.cf ? `<span class="art">Última vez: ${GR.cf.n} canci${GR.cf.n===1?'ón':'ones'}, ${GR.cf.cues} cues.</span><button class="ghost" ${cbusy?'disabled':''} onclick="cueUndo()">↩︎ Deshacer</button>` : ''}
         ${GR.cfres ? `<span class="art">✅ ${GR.cfres.done} canci${GR.cfres.done===1?'ón':'ones'} (${GR.cfres.cues} cues)${GR.cfres.skipped.length?` · ${GR.cfres.skipped.length} no`:''}.</span>` : ''}</div>
-      <span class="art">Cuenta las marcadas que tienen «Cues fuera». Para probar con una sola: búscala, «Ninguna» y márcala.</span></div>
+      <span class="art">Cuenta las marcadas que tienen «Cues fuera» y se ven en la lista: si buscas una canción, solo actúa sobre esa.</span></div>
     <div class="box" style="margin-bottom:10px">
       <b>🎧 Medir en el audio</b>: decodifico la canción y miro dónde cae el kick respecto a la grilla de Rekordbox (corrida al inicio, se va corriendo, el 1 fuera del kick, en el contratiempo). Tarda 1–2 s por canción; mido de a ${GR.max||250} por vuelta y lo medido queda guardado.
       ${d.decoder ? '' : '<br><b style="color:var(--org)">En este computador no encontré con qué decodificar el audio (falta ffmpeg).</b> Las revisiones rápidas sí funcionan.'}
       ${cal ? `<br><span class="art">Ajuste del decodificador (se descuenta solo): ${esc(cal)}.</span>` : (d.measured ? '<br><span class="art">Con pocas canciones medidas por tipo de archivo solo marco lo evidente (≥35 ms); con más medidas se afina.</span>' : '')}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button ${busy||!d.decoder||!GR.sel.size?'disabled':''} onclick="gridAudio(false)">${running('grid_audio')?'Midiendo…':`🎧 Medir las marcadas (${GR.sel.size})`}</button>
+        <button ${busy||!d.decoder||!marked.length?'disabled':''} onclick="gridAudio(false)">${running('grid_audio')?'Midiendo…':`🎧 Medir las marcadas (${marked.length})`}</button>
         <button class="ghost" ${busy||!d.decoder||!d.to_measure?'disabled':''} onclick="gridAudio(true)" title="Las que aún no están medidas, de a 250">🎧 Medir toda la colección${d.to_measure?` (faltan ${d.to_measure})`:''}</button></div></div>
     <div class="box" style="margin-bottom:10px"><b>Cómo arreglarlas en Rekordbox:</b> pásalas a una playlist con el botón de abajo; en cada una abre la edición de grilla, pon el cabezal en el primer kick y usa «fijar el 1 aquí»; si al final se corre, ajusta el BPM (en electrónica, redondo); escucha con el metrónomo y <b>bloquea</b> la pista. BPM al doble/mitad: ×2 o ÷2, o todas de una vez en <a class="lnk" onclick="show('rbbpm')">BPM por corregir</a>. Sin grilla: «Analizar» (Normal para electrónica, Dinámico solo para música en vivo).
       ${d.hidden ? `<br><span class="art">${d.hidden} marcada(s) como «Está bien» no se muestran. <a class="lnk" onclick="gridShowHidden()">Mostrarlas otra vez</a></span>` : ''}</div>
@@ -3092,13 +3094,13 @@ function gridView(){
         <option value="">Todas (${all.length})</option>${opts}<option value="audio" ${GR.f==='audio'?'selected':''}>Medidas en el audio</option></select>
       <input placeholder="Buscar…" value="${esc(GR.q)}" oninput="GR.q=this.value; clearTimeout(GR.t); GR.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\\'Buscar…\\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
       <button class="ghost" onclick="gridAll(true)">Marcar las de la lista</button><button class="ghost" onclick="gridAll(false)">Ninguna</button>
-      <button class="ghost" ${GR.sel.size?'':'disabled'} onclick="gridOk([...GR.sel])" title="Ya las revisé: no mostrarlas más">✓ Están bien</button>
-      <button id="grGo" class="primary" ${running('grid_playlist')||!GR.sel.size?'disabled':''} onclick="gridAsk()">Pasar a Rekordbox</button></div>
+      <button class="ghost" ${marked.length?'':'disabled'} onclick="gridOk(gridMarked().map(x => x.id))" title="Ya las revisé: no mostrarlas más">✓ Están bien</button>
+      <button id="grGo" class="primary" ${running('grid_playlist')||!marked.length?'disabled':''} onclick="gridAsk()">Pasar a Rekordbox</button></div>
     ${!all.length ? `<div class="empty"><h3>Ninguna grilla dudosa 🎉</h3><p>Revisé ${d.total} canciones de tu colección.${d.to_measure?' Mide el audio para revisar también dónde cae el kick.':''}</p></div>` :
       rows.length ? `<table><tr><th></th><th></th><th>Canción</th><th>BPM</th><th>Qué pasa</th><th></th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
 }
 async function cueFix(){
-  const ids = (GR.data ? GR.data.items : []).filter(x => GR.sel.has(x.id) && x.why.some(w => w.c==='cues')).map(x => x.id);
+  const ids = gridMarked().filter(x => x.why.some(w => w.c==='cues')).map(x => x.id);
   setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
   const r = await api().cue_fix(ids);
   if(!r.ok){ taskErr(r); renderMain(); return; }
@@ -3112,12 +3114,14 @@ async function cueUndo(){
   gridLoad();
 }
 function gridSum(){
-  const b = $('grGo'), n = GR.sel.size;
+  const b = $('grGo'), m = gridMarked(), n = m.length;
+  const c = $('cfGo'), nc = m.filter(x => x.why.some(w => w.c==='cues')).length;
+  if(c && !running('cue_fix')){ c.disabled = !nc || running('grid_audio'); c.textContent = `🎯 Poner los cues sobre la grilla (${nc})`; }
   if(b){ b.disabled = !n || running('grid_playlist'); b.textContent = running('grid_playlist') ? 'Pasando…' : n ? `Pasar ${n} a Rekordbox` : 'Pasar a Rekordbox'; }
 }
 function gridAll(on){ gridVisible().forEach(x => on ? GR.sel.add(x.id) : GR.sel.delete(x.id)); renderMain(); }
 async function gridAudio(every){
-  const ids = every ? [] : [...GR.sel];
+  const ids = every ? [] : gridMarked().map(x => x.id);
   setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
   const r = await api().grid_audio(ids, !!every);
   if(!r.ok){ taskErr(r); renderMain(); return; }
@@ -3136,14 +3140,14 @@ async function gridOk(ids){
 }
 async function gridShowHidden(){ await api().grid_show_hidden(); gridLoad(); }
 function gridAsk(){
-  const n = GR.sel.size; if(!n) return;
+  const n = gridMarked().length; if(!n) return;
   modal(`<h3>Pasar ${n} ${n===1?'canción':'canciones'} a Rekordbox</h3>
     <p>Quedan en la playlist <b>${esc(GR.data.playlist)}</b> (en la raíz de tu colección; si ya existía, se reemplaza su contenido) para que las revises una por una.</p>
     <div class="box">Rekordbox tiene que estar cerrado; respaldo la librería antes. Solo se arma la playlist: no cambio las canciones, sus grillas ni sus cues.</div>
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="gridGo()">Pasar ${n}</button></div>`);
 }
 async function gridGo(){
-  closeModal(); const ids = (GR.data ? GR.data.items : []).filter(x => GR.sel.has(x.id)).map(x => x.id);
+  closeModal(); const ids = gridMarked().map(x => x.id);
   setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
   const r = await api().grid_playlist(ids);
   if(!r.ok){ taskErr(r); renderMain(); return; }
