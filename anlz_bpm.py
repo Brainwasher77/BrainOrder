@@ -184,3 +184,68 @@ def halve(dat, ext=None):
 
 def md5(b):
     return hashlib.md5(b).hexdigest()
+
+
+def retempo_beats(beats, bpm, end_ms=None):
+    """Grilla nueva a tempo fijo `bpm`, anclada en el primer «1» del compás de la grilla vieja (el primer kick).
+    Cubre lo mismo que la vieja (desde su primer tiempo hasta el último, o hasta end_ms)."""
+    if len(beats) < 2 or not bpm or bpm <= 0:
+        raise AnlzError("grilla demasiado corta")
+    per = 60000.0 / bpm
+    first = next((k for k, b in enumerate(beats) if b[0] == 1), 0)
+    t1 = beats[first][2]
+    lo = beats[0][2] - per / 2
+    hi = (end_ms if end_ms else beats[-1][2]) + per / 2
+    k0 = 0
+    while t1 - (k0 + 1) * per >= max(0, lo):
+        k0 += 1
+    out, k = [], -k0
+    tempo = min(65535, int(round(bpm * 100)))
+    while True:
+        t = t1 + k * per
+        if t > hi:
+            break
+        out.append(((k % 4) + 1, tempo, int(round(t))))
+        k += 1
+    return out
+
+
+def _pqt2_retempo(t, old, new):
+    lh = struct.unpack(">I", t[4:8])[0]
+    if lh < 56:
+        raise AnlzError("PQT2 con cabecera desconocida")
+    cnt = struct.unpack(">I", t[40:44])[0]
+    if lh + 2 * cnt > len(t):
+        raise AnlzError("PQT2 cortado")
+    v = [struct.unpack(">H", t[lh + 2 * k:lh + 2 * k + 2])[0] for k in range(cnt)]
+    times = [b[2] for b in old][:cnt]
+    import bisect
+    nv = []
+    for _n, _t, ms in new:  # a cada tiempo nuevo, la entrada del tiempo viejo más cercano
+        i = bisect.bisect_left(times, ms)
+        j = min((x for x in (i - 1, i) if 0 <= x < len(times)), key=lambda x: abs(times[x] - ms), default=0)
+        nv.append(v[j] if v else 0)
+    h = bytearray(t[:lh])
+    struct.pack_into(">HHI", h, 24, *new[0])
+    struct.pack_into(">HHI", h, 32, *new[-1])
+    struct.pack_into(">I", h, 40, len(nv))
+    struct.pack_into(">I", h, 8, lh + 2 * len(nv))
+    return bytes(h) + b"".join(struct.pack(">H", x) for x in nv)
+
+
+def retempo(dat, ext, bpm):
+    """Rehace la grilla a tempo fijo `bpm` (anclada en el primer kick). -> (dat, ext o None, bpm, n)"""
+    head, tags = _tags(dat)
+    beats = read_beats(dat)
+    if not beats:
+        raise AnlzError("sin grilla")
+    new = retempo_beats(beats, bpm)
+    d2 = _join(head, [(tag, _pqtz(t, new) if tag == b"PQTZ" else t) for tag, t in tags])
+    e2 = None
+    if ext:
+        h2, t2 = _tags(ext)
+        if any(tag == b"PQT2" for tag, _ in t2):
+            e2 = _join(h2, [(tag, _pqt2_retempo(t, beats, new) if tag == b"PQT2" else t) for tag, t in t2])
+    if read_beats(d2) != new:
+        raise AnlzError("la grilla nueva no se lee igual")
+    return d2, e2, new[0][1] / 100.0, len(new)
