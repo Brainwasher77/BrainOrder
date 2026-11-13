@@ -1,5 +1,5 @@
 {
-  "version": "2.46.2",
-  "build": 107,
-  "notes": "Grillas dudosas: con el buscador o el filtro puestos, los botones (cues sobre la grilla, medir, pasar a Rekordbox, están bien) actúan solo sobre las marcadas que se ven."
+  "version": "2.46.3",
+  "build": 108,
+  "notes": "Arreglos de la auditoría: los buscadores ya no pierden lo que escribes cuando la pantalla se actualiza sola; vuelve a armarse el instalador para Mac con chip Apple."
 }

@@ -1942,7 +1942,19 @@ function cards(){
 }
 const searchBox = () => `<input class="search" placeholder="Buscar canción o artista…" value="${esc(S.q)}" oninput="S.q=this.value;renderTable()">`;
 
+// Re-dibujar sin perder lo que estás escribiendo: si el cursor estaba en un campo de texto de la vista (buscador…),
+// vuelve al mismo campo (mismo placeholder/id) y a la misma posición. Antes, un aviso o el progreso de una tarea
+// re-dibujaba la vista y el buscador perdía el foco a mitad de palabra.
 function renderMain(){
+  const a = document.activeElement, m0 = $('main');
+  const keep = a && m0 && m0.contains(a) && a.tagName==='INPUT' && /^(text|search|number|)$/.test(a.type||'') ?
+    {id: a.id, ph: a.placeholder, s: a.selectionStart, e: a.selectionEnd} : null;
+  renderMainCore();
+  if(!keep) return;
+  const b = keep.id ? document.getElementById(keep.id) : [...$('main').querySelectorAll('input')].find(i => i.placeholder === keep.ph);
+  if(b && b !== document.activeElement){ b.focus(); try{ b.setSelectionRange(keep.s, keep.e); }catch(e){} }
+}
+function renderMainCore(){
   const m = $('main');
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
   if(S.view==='dupclean'){ m.innerHTML = dcView(); return; }

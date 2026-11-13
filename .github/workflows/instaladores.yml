@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15-intel]   # Apple Silicon e Intel
+        os: [macos-15, macos-15-intel]   # Apple Silicon (macos-14 ya no existe en GitHub) e Intel
     runs-on: ${{ matrix.os }}
     env:
       GH_TOKEN: ${{ github.token }}
