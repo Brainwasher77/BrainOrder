@@ -3033,6 +3033,8 @@ const GRID_C = {nogrid:['Sin grilla','var(--miss)','Rekordbox no la ha analizado
   down:['El 1 no está en el kick','var(--org)','Medido en el audio: el primer kick no cae en el tiempo 1 del compás.'],
   var:['Grilla variable','var(--org)','Grilla con BPM que cambia en un estilo de tempo fijo: probablemente se analizó en modo Dinámico.'],
   cue1:['Un cue fuera','var(--mute)','Tu único cue cae fuera de la grilla.'],
+  offgrid:['Grilla vs cues','var(--miss)','Todos tus cues caen en el mismo punto, lejos de los tiempos (casi medio tiempo): o la grilla o los cues están corridos.'],
+  scatter:['Cues dispersos','var(--mute)','Tus cues caen en cualquier parte del tiempo: la grilla no sigue la canción (tempo en vivo). En Rekordbox: analizarla en modo Dinámico.'],
   dec:['BPM con decimales','var(--mute)','En estilos hechos en computador el BPM casi siempre es redondo.']};
 const GRID_AUDIO = {ok:['🎧 bien','var(--ok)','Medí el audio: el kick cae sobre la grilla.'], unclear:['🎧 sin kick claro','var(--mute)','No hay un kick claro para medir (o el bajo pesa igual que el kick): no se juzga.'],
   err:['🎧 no se pudo leer','var(--mute)','No pude decodificar el audio.'], issue:['🎧 medida','var(--org)','Medí el audio.']};

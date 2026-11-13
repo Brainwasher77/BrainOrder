@@ -56,7 +56,7 @@ FIXED = ("electr", "edm", "dance", "house", "techno", "trance", "dnb", "drum and
          "regueton", "reggueton", "perreo", "dembow", "moombah", "kuduro", "dancehall", "afro", "bass",
          "jungle", "hard dance", "psy", "urbano")
 
-SEV = {"nogrid": 3, "double": 3, "half": 3, "mik": 2, "cues": 2, "var": 2, "dec": 1, "cue1": 1,
+SEV = {"nogrid": 3, "double": 3, "half": 3, "mik": 2, "cues": 2, "var": 2, "dec": 1, "cue1": 1, "offgrid": 2, "scatter": 1,
        "shift": 3, "drift": 3, "down": 2, "offbeat": 3}
 
 
@@ -200,6 +200,29 @@ def cue_offsets_t(grid, cues):
     return out
 
 
+def cue_phase(grid, cues):
+    """Dónde caen tus cues dentro del tiempo de la grilla, mirando TODOS (también los que caen lejos de un tiempo).
+    -> (R, desfase_ms) : R ≈ 1 = todos caen en el mismo punto del tiempo; R bajo = caen por todos lados."""
+    cs = [c for c in cues if c is not None and c >= 0]
+    if len(cs) < 3 or len(grid) < 2:
+        return None
+    bpm = grid_bpm(grid)
+    if not bpm:
+        return None
+    per = 60000.0 / bpm
+    times = [g[2] for g in grid]
+    sx = sy = 0.0
+    for c in cs:
+        i = max(0, bisect.bisect_right(times, c) - 1)
+        a = 2 * math.pi * (((c - times[i]) / per) % 1.0)
+        sx += math.cos(a)
+        sy += math.sin(a)
+    sx, sy = sx / len(cs), sy / len(cs)
+    r = math.hypot(sx, sy)
+    mean = (math.atan2(sy, sx) / (2 * math.pi)) % 1.0
+    return r, (mean if mean < 0.5 else mean - 1) * per
+
+
 def cue_offsets(grid, cues):
     """Distancia (ms, con signo) de cada cue al tiempo más cercano de la grilla. Los que están lejos a
     propósito (en un contratiempo) no cuentan."""
@@ -281,7 +304,15 @@ def check(t, mik_bpm=None):
         m = statistics.median(off)
         add("cues", f"Tus {len(off)} cues caen {abs(m):.0f} ms {'después' if m > 0 else 'antes'} de la grilla: "
                     "la grilla está corrida")
-    elif len(offs) == 1 and abs(offs[0]) >= 25:
+    elif (ph := cue_phase(grid, t.get("cues") or [])) and ph[0] > 0.97 and abs(ph[1]) > 80:
+        add("offgrid", f"Tus {len(t.get('cues') or [])} cues caen todos {abs(ph[1]):.0f} ms "
+                       f"{'después' if ph[1] > 0 else 'antes'} de la grilla (casi medio tiempo): la grilla o los cues "
+                       "están corridos")
+    elif ph and ph[0] < 0.6:
+        add("scatter", f"Tus {len(t.get('cues') or [])} cues caen en cualquier parte del tiempo: la grilla no sigue la "
+                       "canción (¿tempo en vivo? analízala en modo Dinámico)")
+    elif len(offs) == 1 and len([c for c in (t.get("cues") or []) if c is not None and c >= 0]) == 1 \
+            and abs(offs[0]) >= 25:
         add("cue1", f"Tu cue cae {abs(offs[0]):.0f} ms {'después' if offs[0] > 0 else 'antes'} de la grilla")
     return why
 
