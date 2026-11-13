@@ -266,7 +266,9 @@ def check(t, mik_bpm=None):
     if fixed and variable:
         add("var", f"Grilla variable ({_fmt(min(tempos))}–{_fmt(max(tempos))}) en un estilo de tempo fijo: "
                    "¿quedó en modo Dinámico?")
-    elif fixed and abs(bpm - round(bpm)) >= 0.01:
+    elif fixed and abs(bpm - round(bpm)) >= 0.1:
+        # 127.99 o 128.04 no se marcan: en 4 minutos son ~15 ms y muchas veces Rekordbox tiene razón (el audio no está
+        # exactamente a 128). Probado con «Blue» de Eiffel 65 (13 nov 2026): redondear a 128 dejó la grilla peor.
         add("dec", f"BPM {_fmt(bpm)} con decimales en un estilo de tempo fijo (¿{round(bpm)}?)")
     offs = cue_offsets(grid, t.get("cues") or [])
     off = [o for o in offs if abs(o) >= SHIFT_MS]

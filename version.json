@@ -1,5 +1,5 @@
 {
-  "version": "2.47.1",
-  "build": 110,
-  "notes": "Grillas dudosas: «Un cue fuera» viene marcado para el botón 🎯. Las canciones cuyos cues se van corriendo de a poco ya no salen como «cues corridos»: el que está mal es el BPM, y pasan a «BPM por corregir» (con el BPM sugerido)."
+  "version": "2.47.2",
+  "build": 111,
+  "notes": "«BPM con decimales» ya no marca diferencias mínimas como 127,99 o 128,04: ahí Rekordbox suele tener razón."
 }
