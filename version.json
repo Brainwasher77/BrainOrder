@@ -1,5 +1,5 @@
 {
-  "version": "2.46.3",
-  "build": 108,
-  "notes": "Arreglos de la auditoría: los buscadores ya no pierden lo que escribes cuando la pantalla se actualiza sola; vuelve a armarse el instalador para Mac con chip Apple."
+  "version": "2.47.0",
+  "build": 109,
+  "notes": "Grillas dudosas: «🎯 Poner los cues sobre la grilla» ahora también arregla las de «Un cue fuera» (un solo cue a más de 25 ms de su tiempo)."
 }

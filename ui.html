@@ -3066,7 +3066,7 @@ function gridView(){
   const sm = d.summary, all = d.items, n = c => sm[c]||0;
   const place = n('shift') + n('offbeat') + n('down'), ncues = n('cues');
   if(GR.cf === undefined){ GR.cf = null; api().cue_fix_state().then(r => { GR.cf = r.last || null; if(S.view==='rbgrid') renderMain(); }).catch(()=>{}); }
-  const marked = gridMarked(), cueSel = marked.filter(x => x.why.some(w => w.c==='cues')).length, cbusy = running('cue_fix');
+  const marked = gridMarked(), cueSel = marked.filter(x => x.why.some(w => w.c==='cues' || w.c==='cue1')).length, cbusy = running('cue_fix');
   const cal = Object.entries(d.calib||{}).map(([e,v]) => `${e} ${v>0?'+':''}${v} ms`).join(', ');
   const tb = gridVisible().slice(0, 500).map(x => {
     const au = x.audio ? GRID_AUDIO[x.audio] : null;
@@ -3091,7 +3091,7 @@ function gridView(){
         <button id="cfGo" class="primary" ${cbusy||busy||!cueSel?'disabled':''} onclick="cueFix()">${cbusy?'Moviendo cues…':`🎯 Poner los cues sobre la grilla (${cueSel})`}</button>
         ${GR.cf ? `<span class="art">Última vez: ${GR.cf.n} canci${GR.cf.n===1?'ón':'ones'}, ${GR.cf.cues} cues.</span><button class="ghost" ${cbusy?'disabled':''} onclick="cueUndo()">↩︎ Deshacer</button>` : ''}
         ${GR.cfres ? `<span class="art">✅ ${GR.cfres.done} canci${GR.cfres.done===1?'ón':'ones'} (${GR.cfres.cues} cues)${GR.cfres.skipped.length?` · ${GR.cfres.skipped.length} no`:''}.</span>` : ''}</div>
-      <span class="art">Cuenta las marcadas que tienen «Cues fuera» y se ven en la lista: si buscas una canción, solo actúa sobre esa.</span></div>
+      <span class="art">Cuenta las marcadas que tienen «Cues fuera» o «Un cue fuera» y se ven en la lista: si buscas una canción, solo actúa sobre esa.</span></div>
     <div class="box" style="margin-bottom:10px">
       <b>🎧 Medir en el audio</b>: decodifico la canción y miro dónde cae el kick respecto a la grilla de Rekordbox (corrida al inicio, se va corriendo, el 1 fuera del kick, en el contratiempo). Tarda 1–2 s por canción; mido de a ${GR.max||250} por vuelta y lo medido queda guardado.
       ${d.decoder ? '' : '<br><b style="color:var(--org)">En este computador no encontré con qué decodificar el audio (falta ffmpeg).</b> Las revisiones rápidas sí funcionan.'}
@@ -3112,7 +3112,7 @@ function gridView(){
       rows.length ? `<table><tr><th></th><th></th><th>Canción</th><th>BPM</th><th>Qué pasa</th><th></th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: filtra o busca. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
 }
 async function cueFix(){
-  const ids = gridMarked().filter(x => x.why.some(w => w.c==='cues')).map(x => x.id);
+  const ids = gridMarked().filter(x => x.why.some(w => w.c==='cues' || w.c==='cue1')).map(x => x.id);
   setTimeout(()=>{ if(S.view==='rbgrid') renderMain(); }, 150);
   const r = await api().cue_fix(ids);
   if(!r.ok){ taskErr(r); renderMain(); return; }
@@ -3127,7 +3127,7 @@ async function cueUndo(){
 }
 function gridSum(){
   const b = $('grGo'), m = gridMarked(), n = m.length;
-  const c = $('cfGo'), nc = m.filter(x => x.why.some(w => w.c==='cues')).length;
+  const c = $('cfGo'), nc = m.filter(x => x.why.some(w => w.c==='cues' || w.c==='cue1')).length;
   if(c && !running('cue_fix')){ c.disabled = !nc || running('grid_audio'); c.textContent = `🎯 Poner los cues sobre la grilla (${nc})`; }
   if(b){ b.disabled = !n || running('grid_playlist'); b.textContent = running('grid_playlist') ? 'Pasando…' : n ? `Pasar ${n} a Rekordbox` : 'Pasar a Rekordbox'; }
 }

@@ -8,7 +8,8 @@ codificador), así que los cues de MIK caen unos ms antes en Rekordbox.
 Regla (la misma con la que Grillas dudosas marca «cues»): si los cues que están cerca de un tiempo de la grilla caen
 corridos igual (≥ SHIFT_MS, con ≤ 15 ms de diferencia entre ellos), cada uno de esos se pone exactamente sobre su
 tiempo; los demás (los que estaban a propósito en otro lado) se corren lo mismo (la mediana). Loops: el final se
-mueve igual que el inicio. Solo cambia la base de datos (djmdCue y su copia contentCue); la grilla no se toca.
+mueve igual que el inicio. Un solo cue (≥ 25 ms fuera, «Un cue fuera»): se pone sobre su tiempo, como haría la
+cuantización de Rekordbox (13 nov 2026, después de que Frank confirmara la regla con los cues de varias canciones). Solo cambia la base de datos (djmdCue y su copia contentCue); la grilla no se toca.
 """
 import bisect
 import statistics
@@ -28,7 +29,7 @@ def _near(times, c):
     return near, period
 
 
-def plan(grid, cues):
+def plan(grid, cues, single=True):
     """grid [(n, bpm, ms)], cues [(id, InMsec, OutMsec)] -> (mediana, [(id, in_nuevo, out_nuevo)]) o (None, [])."""
     times = [g[2] for g in grid]
     if len(times) < 2:
@@ -44,6 +45,14 @@ def plan(grid, cues):
         if abs(off) <= min(MAX_MS, period * 0.3):
             offs[cid] = (off, near)
     shifted = [o for o, _ in offs.values() if abs(o) >= SHIFT_MS]
+    live = [c for c in cues if c[1] is not None and c[1] >= 0]
+    if single and len(live) == 1 and len(offs) == 1:
+        cid, a, b = live[0]
+        off, near = offs.get(cid, (0, None))
+        if abs(off) < 25:
+            return None, []
+        new_b = b + (near - a) if (b is not None and b > a) else b
+        return off, [(cid, int(near), new_b)]
     if len(shifted) < 2 or len(shifted) < 0.6 * len(offs) or max(shifted) - min(shifted) > 15:
         return None, []
     med = statistics.median(shifted)
