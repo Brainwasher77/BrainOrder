@@ -1,5 +1,5 @@
 {
-  "version": "2.44.1",
-  "build": 102,
-  "notes": "«BPM al doble o a la mitad»: Mixed In Key manda sobre el rango del estilo y ya no se corrige de ida y de vuelta (p. ej. «More» de reguetón o hard techno a 160). Nuevo rango para hard techno (140–180)."
+  "version": "2.44.2",
+  "build": 103,
+  "notes": "«BPM al doble o a la mitad» tiene en cuenta Mixed In Key y el género: si los dos programas dicen 172 pero es reguetón, la sugiere en 86; y una vez corregida por el género, Mixed In Key ya no la devuelve (sin ida y vuelta)."
 }

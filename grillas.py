@@ -196,10 +196,11 @@ def check(t, mik_bpm=None):
     tempo_done = False
     in_sty = lambda b: any(lo <= b <= hi for _, lo, hi in sty)  # noqa: E731
     if mik_bpm:
-        # Mixed In Key manda; el rango del estilo solo se usa sin MIK. Excepción: si MIK dice el doble/la mitad
-        # pero Rekordbox cae en el rango normal del estilo y MIK no, se deja (p. ej. hard techno 160 vs MIK 80).
-        # Así nunca se corrige de ida y de vuelta (antes «More» bajaba por el rango y volvía a subir por MIK).
-        tempo_done = True
+        # MIK y el género cuentan los dos. Si MIK dice el doble/la mitad pero Rekordbox cae en el rango normal del
+        # estilo y MIK no, gana el género (hard techno 160 vs MIK 80). Si MIK está de acuerdo con Rekordbox, el rango
+        # del estilo todavía puede marcarla (reguetón a 172 → ¿86?). Una vez corregida por el género, la regla de
+        # arriba evita que MIK la devuelva: nunca se corrige de ida y de vuelta.
+        tempo_done = abs(bpm - mik_bpm) > 0.6
         r = bpm / mik_bpm
         if sty and (abs(r - 2) < 0.04 or abs(r - 0.5) < 0.01) and in_sty(bpm) and not in_sty(mik_bpm):
             pass
@@ -210,12 +211,13 @@ def check(t, mik_bpm=None):
         elif abs(bpm - mik_bpm) > 0.6:
             add("mik", f"BPM distinto: Rekordbox {_fmt(bpm)}, Mixed In Key {_fmt(mik_bpm)}")
     if not tempo_done and sty and not in_sty(bpm):
+        also = f" (Mixed In Key también dice {_fmt(mik_bpm)})" if mik_bpm else ""
         for name, lo, hi in sty:
             if lo <= bpm * 2 <= hi:
-                add("half", f"BPM a la mitad: {_fmt(bpm)}; en {name} lo normal es {lo}–{hi} (¿{_fmt(bpm * 2)}?)")
+                add("half", f"BPM a la mitad: {_fmt(bpm)}; en {name} lo normal es {lo}–{hi} (¿{_fmt(bpm * 2)}?){also}")
                 break
             if lo <= bpm / 2 <= hi:
-                add("double", f"BPM al doble: {_fmt(bpm)}; en {name} lo normal es {lo}–{hi} (¿{_fmt(bpm / 2)}?)")
+                add("double", f"BPM al doble: {_fmt(bpm)}; en {name} lo normal es {lo}–{hi} (¿{_fmt(bpm / 2)}?){also}")
                 break
     tempos = [g[1] for g in grid if g[1]]
     variable = bool(tempos) and max(tempos) - min(tempos) > 0.1
