@@ -1,5 +1,5 @@
 {
-  "version": "2.45.0",
-  "build": 104,
-  "notes": "«Grillas dudosas» ahora muestra solo lo de la grilla (cues corridos, grilla corrida, el 1 fuera del kick, sin grilla). Todo lo del BPM (doble, mitad, distinto a Mixed In Key, decimales, grilla variable) está en «BPM por corregir»."
+  "version": "2.46.0",
+  "build": 105,
+  "notes": "Grillas dudosas: nuevo «🎯 Poner los cues sobre la grilla». Los cues de Mixed In Key que caen unos ms antes de la grilla (pasa en MP3) quedan justo sobre su tiempo, directo en Rekordbox, con respaldo y deshacer. Los cues nuevos de MIK ya entran alineados."
 }

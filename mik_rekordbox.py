@@ -81,6 +81,26 @@ def cue_rows(path, cues):
     return out
 
 
+def align_to_grid(content, rows):
+    """Cues de MIK que caen todos corridos igual respecto a la grilla de Rekordbox (pasa en MP3: cada programa cuenta
+    distinto el arranque) -> justo sobre sus tiempos, como hace «🎯 Poner los cues sobre la grilla»."""
+    try:
+        import cues_fix
+        import grillas
+        import rekordbox_sync
+        if not content.AnalysisDataPath:
+            return rows
+        grid = grillas.read_grid(rekordbox_sync.RB_DIR / "share", content.AnalysisDataPath)
+        med, ch = cues_fix.plan(grid, [(i, r["InMsec"], -1) for i, r in enumerate(rows)])
+        for i, a, _b in ch:
+            rows[i] = dict(rows[i], InMsec=a, InFrame=a * 150 // 1000)
+        if ch:
+            log(f"MIK: cues de {content.Title!r} corridos {med:.0f} ms respecto a la grilla: ajustados")
+    except Exception as e:
+        log(f"MIK: no pude alinear los cues a la grilla ({e!r}); van como los dejó MIK")
+    return rows
+
+
 def _iso(dt):
     """Fecha local de la base -> «2026-09-24T20:05:51.224+00:00» (como la guarda contentCue)."""
     if dt is None:
@@ -162,6 +182,8 @@ def plan_and_apply(db, cfg, apply=False, progress=None, info=None):
         rows = None
         if want_cues and h.get("cues") and str(c.ID) not in has_hot:
             rows = cue_rows(native(path), h["cues"])
+            if rows and not path.lower().endswith(".flac"):
+                rows = align_to_grid(c, rows)
             if rows:
                 ch["cues"] = len(rows)
         if not ch:

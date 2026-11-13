@@ -6105,6 +6105,169 @@ class Api:
             return {"added": added, "backup": bk.name, "name": self.GRID_NAME}
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
 
+    # ---------- cues corridos: ponerlos sobre la grilla (solo base de datos) ----------
+    def _rb_db_open(self):
+        try:
+            from pyrekordbox import MasterDatabase as DB
+        except ImportError:
+            from pyrekordbox import Rekordbox6Database as DB
+        return DB(path=rekordbox_sync.RB_DIR / "master.db")
+
+    def cue_fix(self, ids):
+        """ids: canciones con los cues corridos igual respecto a la grilla («cues» en Grillas dudosas). Con Rekordbox
+        cerrado y respaldo: cada cue corrido queda justo sobre su tiempo y los demás se corren lo mismo
+        (cues_fix.plan). Solo djmdCue + contentCue; la grilla no se toca. Se puede deshacer (cue_fix_undo)."""
+        from datetime import datetime
+        import cues_fix
+        import grillas
+        import mik_dj
+        import mik_rekordbox
+        import pyrekordbox.masterdb.models as M
+        want = [str(i) for i in dict.fromkeys(ids or [])]
+
+        def run():
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y dale otra vez al botón.")
+            share = rekordbox_sync.RB_DIR / "share"
+            db = self._rb_db_open()
+            undo, done, skipped, moved = [], 0, [], 0
+            try:
+                for k, cid in enumerate(want, 1):
+                    if k % 200 == 0:
+                        self._progress(f"Revisando cues {k}/{len(want)}…", 0.05 + 0.6 * k / len(want))
+                    content = db.get_content(ID=cid)
+                    if content is None:
+                        skipped.append({"id": cid, "why": "no está en la colección"})
+                        continue
+                    grid = grillas.read_grid(share, content.AnalysisDataPath) if content.AnalysisDataPath else []
+                    rows = [c for c in db.query(M.DjmdCue).filter(M.DjmdCue.ContentID == content.ID).all()
+                            if not (c.rb_local_deleted or 0)]
+                    med, ch = cues_fix.plan(grid, [(c.ID, c.InMsec, c.OutMsec) for c in rows])
+                    if not ch:
+                        skipped.append({"id": cid, "why": "los cues no están corridos igual"})
+                        continue
+                    byid = {c.ID: c for c in rows}
+                    path = content.FolderPath or ""
+                    flac = path.lower().endswith(".flac")
+                    upd, ok = [], True
+                    for qid, a, b in ch:
+                        c = byid[qid]
+                        old = {"id": c.ID, "InMsec": c.InMsec, "InFrame": c.InFrame, "OutMsec": c.OutMsec,
+                               "OutFrame": c.OutFrame, "InPointSeekInfo": c.InPointSeekInfo,
+                               "OutPointSeekInfo": c.OutPointSeekInfo}
+                        new = {"InMsec": a, "InFrame": a * 150 // 1000}
+                        if b is not None and b != c.OutMsec:
+                            new.update({"OutMsec": b, "OutFrame": b * 150 // 1000})
+                        if flac and c.InPointSeekInfo:
+                            seek = mik_dj.flac_seek_info(path, a)
+                            if not seek:
+                                ok = False
+                                break
+                            new["InPointSeekInfo"] = seek
+                        upd.append((c, old, new))
+                    if not ok:
+                        skipped.append({"id": cid, "why": "FLAC: no pude ubicar el cue"})
+                        continue
+                    now = datetime.now()
+                    for c, old, new in upd:
+                        for key, val in new.items():
+                            setattr(c, key, val)
+                        c.updated_at = now
+                        undo.append({"content": cid, **old})
+                    mik_rekordbox.rebuild_content_cue(db, content)
+                    done += 1
+                    moved += len(upd)
+                if not done:
+                    db.rollback()
+                    return {"done": 0, "cues": 0, "skipped": skipped}
+                self._progress("Respaldando la librería de Rekordbox…", 0.7)
+                bk = rekordbox_sync.backup()
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                bdir = Path(config.SUPPORT_DIR) / "respaldos" / f"cues-{stamp}"
+                n = 1
+                while bdir.exists():
+                    n += 1
+                    bdir = Path(config.SUPPORT_DIR) / "respaldos" / f"cues-{stamp}-{n}"
+                bdir.mkdir(parents=True)
+                (bdir / "manifest.json").write_text(json.dumps({"db_backup": bk.name, "at": time.time(),
+                                                                "cues": undo}, ensure_ascii=False), "utf-8")
+                self._progress("Guardando en Rekordbox…", 0.85)
+                db.commit()
+            except rekordbox_sync.RekordboxError:
+                raise
+            except Exception as e:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise rekordbox_sync.RekordboxError(f"No pude mover los cues (no se guardó nada): {e}")
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            self._cfg["cue_fix_last"] = {"dir": str(bdir), "n": done, "cues": moved, "at": time.time()}
+            config.save(self._cfg)
+            config.log(f"Cues sobre la grilla: {done} canciones, {moved} cues; respaldo {bdir}")
+            self._progress("Listo.", 1)
+            return {"done": done, "cues": moved, "skipped": skipped, "backup": str(bdir)}
+        return self._task(run, "cue_fix", "Poner los cues sobre la grilla")
+
+    def cue_fix_state(self):
+        last = self._cfg.get("cue_fix_last")
+        if last and not (Path(last.get("dir", "")) / "manifest.json").exists():
+            last = None
+        return {"ok": True, "last": last}
+
+    def cue_fix_undo(self):
+        from datetime import datetime
+        import mik_rekordbox
+        import pyrekordbox.masterdb.models as M
+        last = self._cfg.get("cue_fix_last") or {}
+        bdir = Path(last.get("dir") or "")
+
+        def run():
+            mf = bdir / "manifest.json"
+            if not mf.exists():
+                raise rekordbox_sync.RekordboxError("No encuentro el respaldo de la última corrección de cues.")
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y dale otra vez.")
+            m = json.loads(mf.read_text("utf-8"))
+            rekordbox_sync.backup()
+            db = self._rb_db_open()
+            try:
+                touched = set()
+                now = datetime.now()
+                for o in m["cues"]:
+                    c = db.query(M.DjmdCue).filter(M.DjmdCue.ID == o["id"]).first()
+                    if c is None:
+                        continue
+                    for key in ("InMsec", "InFrame", "OutMsec", "OutFrame", "InPointSeekInfo", "OutPointSeekInfo"):
+                        setattr(c, key, o[key])
+                    c.updated_at = now
+                    touched.add(o["content"])
+                for cid in touched:
+                    content = db.get_content(ID=cid)
+                    if content is not None:
+                        mik_rekordbox.rebuild_content_cue(db, content)
+                db.commit()
+            except Exception as e:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise rekordbox_sync.RekordboxError(f"No pude deshacer (no se cambió nada): {e}")
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            self._cfg["cue_fix_last"] = None
+            config.save(self._cfg)
+            config.log(f"Cues sobre la grilla: deshecho ({len(touched)} canciones) desde {bdir}")
+            return {"undone": len(touched)}
+        return self._task(run, "cue_fix", "Deshacer los cues")
+
     # ---------- corregir BPM al doble DIRECTO en Rekordbox (un botón, sin importar nada) ----------
     def bpm_fix(self, items):
         """items: ids (BPM al doble) o [{id, f}] con f = 0.5 (al doble -> ÷2) o 2 (a la mitad -> ×2).
