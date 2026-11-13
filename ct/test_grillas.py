@@ -105,8 +105,10 @@ def test():
     assert codes(G.check(t)) == ["double"], G.check(t)
     t = dict(base, pls=["Techno oscuro"], grid=make_grid(64, 100, 60000))
     assert codes(G.check(t)) == ["half"], G.check(t)
-    t = dict(base, genre="House", grid=make_grid(127.98, 100, 60000))
+    t = dict(base, genre="House", grid=make_grid(127.8, 100, 60000))
     assert codes(G.check(t)) == ["dec"], G.check(t)
+    t = dict(base, genre="House", grid=make_grid(127.98, 100, 60000))  # centésimas: Rekordbox suele tener razón
+    assert codes(G.check(t)) == [], G.check(t)
     t = dict(base, genre="Salsa", grid=make_grid(96.43, 100, 60000))  # en vivo: decimales normales
     assert codes(G.check(t)) == [], G.check(t)
     t = dict(base, grid=make_grid(172, 100, 60000))
