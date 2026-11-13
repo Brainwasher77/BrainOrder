@@ -6105,6 +6105,171 @@ class Api:
             return {"added": added, "backup": bk.name, "name": self.GRID_NAME}
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
 
+    # ---------- corregir BPM al doble DIRECTO en Rekordbox (un botón, sin importar nada) ----------
+    def bpm_fix(self, ids):
+        """ids: canciones con el BPM al doble. Con Rekordbox cerrado: respalda master.db y los ANLZ, deja la grilla
+        a la mitad en el .DAT (PQTZ) y el .EXT (PQT2), y en master.db el BPM a la mitad y el md5/tamaño de esos
+        archivos. También arregla las que ya tienen la grilla a la mitad pero la columna BPM sigue al doble.
+        Se puede deshacer (bpm_fix_undo)."""
+        import anlz_bpm
+        import grillas
+        want = [str(i) for i in dict.fromkeys(ids or [])]
+
+        def run():
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y dale otra vez al botón.")
+            share = rekordbox_sync.RB_DIR / "share"
+            self._progress("Leyendo tu colección de Rekordbox…", 0.03)
+
+            def q(con):
+                rows = con.execute("""SELECT ID, AnalysisDataPath, BPM FROM djmdContent
+                    WHERE COALESCE(rb_local_deleted, 0) = 0 AND AnalysisDataPath IS NOT NULL""").fetchall()
+                return {str(i): (a, int(b or 0)) for i, a, b in rows}
+            info = self._rb_read(q, "bpm")
+            plan, skipped = [], []
+            for i in want:
+                if i not in info:
+                    skipped.append({"id": i, "why": "no está en la colección"})
+                    continue
+                anlz, bpm = info[i]
+                dat = share / str(anlz).replace("\\", "/").strip("/")
+                ext = dat.with_suffix(".EXT")
+                try:
+                    d0 = dat.read_bytes()
+                    e0 = ext.read_bytes() if ext.exists() else None
+                    d1, e1, new_bpm, n = anlz_bpm.halve(d0, e0)
+                except (OSError, anlz_bpm.AnlzError) as e:
+                    skipped.append({"id": i, "why": str(e)})
+                    continue
+                plan.append({"id": i, "anlz": anlz, "dat": dat, "ext": ext if e1 is not None else None,
+                             "d0": d0, "e0": e0, "d1": d1, "e1": e1, "bpm0": bpm, "bpm1": int(round(new_bpm * 100))})
+            # las que ya tienen la grilla bien pero la columna BPM al doble (p. ej. la canción de la prueba)
+            col = []
+            for t in self._grid_tracks():
+                gb = grillas.grid_bpm(t["grid"]) if t["grid"] else 0
+                if gb and t["id"] not in want and abs(t["db_bpm"] - 2 * gb) < 0.6:
+                    col.append({"id": t["id"], "bpm1": int(round(gb * 100)), "bpm0": int(round(t["db_bpm"] * 100))})
+            if not plan and not col:
+                return {"done": 0, "col": 0, "skipped": skipped}
+            self._progress("Respaldando la librería de Rekordbox…", 0.15)
+            bk = rekordbox_sync.backup()
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            bdir = Path(config.SUPPORT_DIR) / "respaldos" / f"bpm-{stamp}"
+            for p in plan:  # respaldo de los ANLZ antes de tocar nada
+                rel = str(p["anlz"]).replace("\\", "/").strip("/")
+                dst = bdir / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(p["d0"])
+                if p["ext"] is not None:
+                    dst.with_suffix(".EXT").write_bytes(p["e0"])
+            manifest = {"db_backup": bk.name, "at": time.time(),
+                        "items": [{"id": p["id"], "anlz": p["anlz"], "ext": p["ext"] is not None,
+                                   "bpm0": p["bpm0"], "bpm1": p["bpm1"]} for p in plan],
+                        "col": col}
+            bdir.mkdir(parents=True, exist_ok=True)
+            (bdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), "utf-8")
+            written = []
+            try:
+                for k, p in enumerate(plan, 1):
+                    if k % 50 == 0:
+                        self._progress(f"Corrigiendo grillas {k}/{len(plan)}…", 0.2 + 0.5 * k / len(plan))
+                    for path, data in ((p["dat"], p["d1"]), (p["ext"], p["e1"])):
+                        if path is None:
+                            continue
+                        tmp = path.with_name(path.name + ".brainorder.tmp")
+                        tmp.write_bytes(data)
+                        os.replace(tmp, path)
+                        written.append((path, p["d0"] if path == p["dat"] else p["e0"]))
+                self._progress("Guardando el BPM en Rekordbox…", 0.75)
+                self._bpm_db_write([(p["id"], p["bpm1"]) for p in plan] + [(c["id"], c["bpm1"]) for c in col],
+                                   [(p["anlz"], p["d1"], p["e1"]) for p in plan])
+            except Exception as e:
+                for path, old in written:  # sin cambios a medias: los ANLZ vuelven a como estaban
+                    try:
+                        path.write_bytes(old)
+                    except OSError:
+                        pass
+                config.log(f"BPM directo: falló y se deshizo: {e!r}")
+                raise rekordbox_sync.RekordboxError(f"No pude corregir el BPM (no quedó nada cambiado): {e}")
+            self._cfg["bpm_fix_last"] = {"dir": str(bdir), "n": len(plan), "col": len(col), "at": time.time()}
+            config.save(self._cfg)
+            config.log(f"BPM directo: {len(plan)} grillas a la mitad + {len(col)} columnas BPM; respaldo {bdir}")
+            self._progress("Listo.", 1)
+            return {"done": len(plan), "col": len(col), "skipped": skipped, "backup": str(bdir)}
+        return self._task(run, "bpm_fix", "Corregir BPM al doble en Rekordbox")
+
+    def _bpm_db_write(self, bpms, files):
+        """bpms [(id, BPM×100)]; files [(AnalysisDataPath, bytes .DAT, bytes .EXT o None)] -> master.db."""
+        import hashlib
+        try:
+            from pyrekordbox import MasterDatabase as DB
+        except ImportError:
+            from pyrekordbox import Rekordbox6Database as DB
+        from sqlalchemy import text
+        db = DB(path=rekordbox_sync.RB_DIR / "master.db")
+        try:
+            for cid, bpm in bpms:
+                c = db.get_content(ID=cid)
+                if c is not None:
+                    c.BPM = int(bpm)
+            for anlz, d, e in files:
+                base = "/" + str(anlz).replace("\\", "/").strip("/")
+                for path, data in ((base, d), (base[:-4] + ".EXT", e)):
+                    if data is None:
+                        continue
+                    db.session.execute(text("UPDATE contentFile SET Hash = :h, Size = :s WHERE Path = :p"),
+                                       {"h": hashlib.md5(data).hexdigest(), "s": len(data), "p": path})
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    def bpm_fix_state(self):
+        last = self._cfg.get("bpm_fix_last")
+        if last and not (Path(last.get("dir", "")) / "manifest.json").exists():
+            last = None
+        return {"ok": True, "last": last}
+
+    def bpm_fix_undo(self):
+        """Deja como estaban las canciones de la última corrección directa (grillas, BPM y md5)."""
+        last = self._cfg.get("bpm_fix_last") or {}
+        bdir = Path(last.get("dir") or "")
+
+        def run():
+            mf = bdir / "manifest.json"
+            if not mf.exists():
+                raise rekordbox_sync.RekordboxError("No encuentro el respaldo de la última corrección.")
+            if rekordbox_sync.rekordbox_running():
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo y dale otra vez.")
+            m = json.loads(mf.read_text("utf-8"))
+            share = rekordbox_sync.RB_DIR / "share"
+            rekordbox_sync.backup()
+            files = []
+            for it in m["items"]:
+                rel = str(it["anlz"]).replace("\\", "/").strip("/")
+                d = (bdir / rel).read_bytes()
+                e = (bdir / rel).with_suffix(".EXT").read_bytes() if it.get("ext") else None
+                dst = share / rel
+                dst.write_bytes(d)
+                if e is not None:
+                    dst.with_suffix(".EXT").write_bytes(e)
+                files.append((it["anlz"], d, e))
+            self._bpm_db_write([(it["id"], it["bpm0"]) for it in m["items"]] +
+                               [(c["id"], c["bpm0"]) for c in m.get("col", [])], files)
+            self._cfg["bpm_fix_last"] = None
+            config.save(self._cfg)
+            config.log(f"BPM directo: deshecho ({len(m['items'])} canciones) desde {bdir}")
+            return {"undone": len(m["items"])}
+        return self._task(run, "bpm_fix", "Deshacer la corrección de BPM")
+
     # ---------- corregir BPM al doble / a la mitad (XML que importa Rekordbox) ----------
     def bpm_xml_build(self, items):
         """items [{id, f}] (f = 0.5 si el BPM está al doble, 2 si está a la mitad). Un botón:

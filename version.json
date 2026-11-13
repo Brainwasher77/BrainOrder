@@ -1,5 +1,5 @@
 {
-  "version": "2.42.0",
-  "build": 99,
-  "notes": "«BPM al doble o a la mitad» ahora es un solo botón: BrainOrder lee tu colección, arma el XML con el BPM y la grilla corregidos y deja Rekordbox apuntando a él. Ya no hace falta exportar la colección; en Rekordbox solo queda «Importar a la colección»."
+  "version": "2.43.0",
+  "build": 100,
+  "notes": "«BPM al doble o a la mitad»: el botón ahora corrige directo en Rekordbox, sin importar nada. Deja la grilla a la mitad (con el 1 del compás en el kick) y el BPM también, con Rekordbox cerrado y respaldo; se puede deshacer. Las de BPM a la mitad (×2) siguen por XML."
 }
