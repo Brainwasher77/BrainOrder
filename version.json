@@ -1,5 +1,5 @@
 {
-  "version": "2.47.2",
-  "build": 111,
-  "notes": "«BPM con decimales» ya no marca diferencias mínimas como 127,99 o 128,04: ahí Rekordbox suele tener razón."
+  "version": "2.48.0",
+  "build": 112,
+  "notes": "Grillas dudosas más clara: «Un cue fuera» es solo para canciones con un cue. Nuevos: «Grilla vs cues» (todos tus cues caen en el mismo punto, lejos de la grilla) y «Cues dispersos» (la grilla no sigue la canción: tempo en vivo). Las de cues que se van corriendo pasan a BPM por corregir."
 }
