@@ -3027,7 +3027,7 @@ const GRID_C = {nogrid:['Sin grilla','var(--miss)','Rekordbox no la ha analizado
   half:['BPM a la mitad','var(--miss)','Rekordbox le puso la mitad del BPM.'],
   offbeat:['En el contratiempo','var(--miss)','Medido en el audio: los kicks caen entre los tiempos de la grilla.'],
   shift:['Grilla corrida','var(--miss)','Medido en el audio: el kick no cae sobre la grilla.'],
-  drift:['Se va corriendo','var(--miss)','Medido en el audio: al principio cuadra y al final no: el BPM no es exacto.'],
+  drift:['Se va corriendo','var(--miss)','Al principio cuadra y al final no (medido en el audio o por tus cues): el BPM no es exacto.'],
   mik:['Distinto a MIK','var(--org)','Rekordbox y Mixed In Key no están de acuerdo en el BPM.'],
   cues:['Cues fuera','var(--org)','Tus cues (casi siempre en el kick) caen todos corridos igual respecto a la grilla.'],
   down:['El 1 no está en el kick','var(--org)','Medido en el audio: el primer kick no cae en el tiempo 1 del compás.'],
@@ -3049,7 +3049,7 @@ function gridSplit(r, codes, keep){
   const summary = {}; items.forEach(x => new Set(x.why.map(w => w.c)).forEach(c => summary[c] = (summary[c]||0) + 1));
   return Object.assign({}, r, {items, summary});
 }
-function gridSet(r){ GR.raw = r; GR.data = gridSplit(r, BPM_C, false); GR.bpm = gridSplit(r, BPM_C, true); if(typeof BF !== 'undefined'){ BF.sel = null; } GR.sel = new Set(GR.data.items.filter(x => x.sev >= 2).map(x => x.id)); }
+function gridSet(r){ GR.raw = r; GR.data = gridSplit(r, BPM_C, false); GR.bpm = gridSplit(r, BPM_C, true); if(typeof BF !== 'undefined'){ BF.sel = null; } GR.sel = new Set(GR.data.items.filter(x => x.sev >= 2 || x.why.some(w => w.c==='cue1')).map(x => x.id)); }
 // las marcadas que se ven (con el buscador o el filtro puestos, los botones actúan solo sobre esas)
 function gridMarked(){ return gridVisible().filter(x => GR.sel.has(x.id)); }
 function gridVisible(){

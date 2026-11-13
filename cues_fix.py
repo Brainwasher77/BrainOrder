@@ -14,7 +14,7 @@ cuantización de Rekordbox (13 nov 2026, después de que Frank confirmara la reg
 import bisect
 import statistics
 
-SHIFT_MS = 15
+SHIFT_MS = 20  # igual que grillas.SHIFT_MS: lo que Grillas dudosas marca como «cues» es lo que se arregla
 MAX_MS = 80
 
 
@@ -30,9 +30,13 @@ def _near(times, c):
 
 
 def plan(grid, cues, single=True):
-    """grid [(n, bpm, ms)], cues [(id, InMsec, OutMsec)] -> (mediana, [(id, in_nuevo, out_nuevo)]) o (None, [])."""
+    """Los cues que se van corriendo de a poco (grillas.cue_trend) no se tocan: ahí lo que está mal es el BPM.
+    grid [(n, bpm, ms)], cues [(id, InMsec, OutMsec)] -> (mediana, [(id, in_nuevo, out_nuevo)]) o (None, [])."""
     times = [g[2] for g in grid]
     if len(times) < 2:
+        return None, []
+    import grillas
+    if grillas.cue_trend(grid, [c[1] for c in cues]):
         return None, []
     offs = {}
     for cid, a, _b in cues:

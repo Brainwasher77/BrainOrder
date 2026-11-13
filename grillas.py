@@ -158,6 +158,48 @@ def grid_bpm(grid):
     return max(dur.items(), key=lambda kv: kv[1])[0]
 
 
+def cue_trend(grid, cues):
+    """Si los cues se van corriendo de a poco a lo largo de la canción (cada uno un poco más que el anterior),
+    el que está mal es el BPM, no los cues. -> (desde_ms, hasta_ms, bpm_sugerido) o None."""
+    pts = [(c, o) for c, o in zip(sorted(c for c in cues if c is not None and c >= 0), cue_offsets_t(grid, cues))
+           if o is not None]
+    if len(pts) < 3:
+        return None
+    xs = [c for c, _ in pts]
+    ys = [o for _, o in pts]
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    fit = [my + slope * (x - mx) for x in xs]
+    resid = max(abs(y - f) for y, f in zip(ys, fit))
+    change = slope * (xs[-1] - xs[0])
+    if abs(change) < 12 or resid > 6:
+        return None
+    bpm = grid_bpm(grid)
+    return round(fit[0]), round(fit[-1]), (round(bpm / (1 + slope), 2) if bpm else None)
+
+
+def cue_offsets_t(grid, cues):
+    """Como cue_offsets pero alineado con los cues ordenados: None en los que están lejos de un tiempo."""
+    times = [g[2] for g in grid]
+    out = []
+    for c in sorted(c for c in cues if c is not None and c >= 0):
+        i = bisect.bisect_left(times, c)
+        cand = [times[j] for j in (i - 1, i) if 0 <= j < len(times)]
+        if not cand:
+            out.append(None)
+            continue
+        near = min(cand, key=lambda t: abs(t - c))
+        j = times.index(near)
+        period = abs(times[j + 1] - near) if j + 1 < len(times) else (abs(near - times[j - 1]) if j else 500)
+        off = c - near
+        out.append(off if abs(off) <= min(80, period * 0.3) else None)
+    return out
+
+
 def cue_offsets(grid, cues):
     """Distancia (ms, con signo) de cada cue al tiempo más cercano de la grilla. Los que están lejos a
     propósito (en un contratiempo) no cuentan."""
@@ -228,7 +270,12 @@ def check(t, mik_bpm=None):
         add("dec", f"BPM {_fmt(bpm)} con decimales en un estilo de tempo fijo (¿{round(bpm)}?)")
     offs = cue_offsets(grid, t.get("cues") or [])
     off = [o for o in offs if abs(o) >= SHIFT_MS]
-    if len(off) >= 2 and len(off) >= 0.6 * len(offs) and max(off) - min(off) <= 15:
+    tr = cue_trend(grid, t.get("cues") or [])
+    if tr:  # se van corriendo: es el BPM (va a «BPM por corregir»), no los cues
+        a, b, nb = tr
+        add("drift", f"Tus cues se van corriendo de {a:+d} a {b:+d} ms a lo largo de la canción: el BPM no es exacto"
+                     + (f" (¿{_fmt(nb)}?)" if nb else ""))
+    elif len(off) >= 2 and len(off) >= 0.6 * len(offs) and max(off) - min(off) <= 15:
         m = statistics.median(off)
         add("cues", f"Tus {len(off)} cues caen {abs(m):.0f} ms {'después' if m > 0 else 'antes'} de la grilla: "
                     "la grilla está corrida")
