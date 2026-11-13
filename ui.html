@@ -3121,9 +3121,9 @@ async function gridGo(){
   renderMain();
 }
 // ---------- corregir BPM al doble / a la mitad ----------
-// ÷2: directo en Rekordbox (bpm_fix, con Rekordbox cerrado, respaldo y deshacer). ×2: XML para importar (bpm_xml_build).
+// ÷2 y ×2 directo en Rekordbox (bpm_fix, con Rekordbox cerrado, respaldo y deshacer). bpm_xml_build queda en la API (XML).
 // BF.sel: ids marcados (null = todas); BF.res: resultado; BF.last: última corrección directa (para deshacer)
-let BF = {sel:null, res:null, xres:null, q:'', last:undefined};
+let BF = {sel:null, res:null, q:'', last:undefined};
 function bfItems(){
   return (GR.data ? GR.data.items : []).map(x => { const w = x.why.find(w => w.c==='double' || w.c==='half'); return w ? Object.assign({}, x, {fx: w.c==='double' ? 0.5 : 2, fw: w.t}) : null; }).filter(Boolean);
 }
@@ -3134,10 +3134,10 @@ function bfView(){
   if(BF.last === undefined){ BF.last = null; bfState(); }
   const busy = running('bpm_fix') || running('bpm_xml'), all = bfItems(), sel = GR.data ? bfSel() : new Set();
   const head = `<div class="vhead"><h2>🔧 BPM al doble o a la mitad</h2>
-    <span class="sub">Las canciones donde Rekordbox tiene el BPM al doble (o a la mitad) comparado con Mixed In Key o con lo normal de su género. Con un botón las corrijo directo en Rekordbox: la grilla queda a la mitad, con el 1 del compás en el kick, y el BPM también. Tus cues, tags y key no cambian, y antes se respalda todo.</span>
+    <span class="sub">Las canciones donde Rekordbox tiene el BPM al doble (o a la mitad) comparado con Mixed In Key o con lo normal de su género. Con un botón las corrijo directo en Rekordbox: la grilla y el BPM quedan a la mitad o al doble, con el 1 del compás en el kick. Tus cues, tags y key no cambian, y antes se respalda todo.</span>
     <div class="sp"><button onclick="gridLoad()" ${GR.loading?'disabled':''}>${GR.loading?'Revisando…':'⟳ Revisar'}</button></div></div>`;
   const undo = BF.last ? `<div class="box" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>Última corrección: <b>${BF.last.n}</b> canci${BF.last.n===1?'ón':'ones'}${BF.last.col?` (+${BF.last.col} solo la columna BPM)`:''}.</span><button class="ghost" ${busy?'disabled':''} onclick="bfUndo()">↩︎ Deshacer</button></div>` : '';
-  const res = BF.res ? `<div class="box" style="margin-bottom:10px;border-left:4px solid var(--ok)">✅ Listo: <b>${BF.res.done}</b> canci${BF.res.done===1?'ón':'ones'} con el BPM y la grilla a la mitad${BF.res.col?`, y ${BF.res.col} que ya tenían la grilla bien pero la columna BPM al doble`:''}. Abre Rekordbox y míralas.
+  const res = BF.res ? `<div class="box" style="margin-bottom:10px;border-left:4px solid var(--ok)">✅ Listo: <b>${BF.res.done}</b> canci${BF.res.done===1?'ón':'ones'} corregida(s)${BF.res.doubled?` (${BF.res.halved} ÷2 y ${BF.res.doubled} ×2)`:''}${BF.res.col?`, y ${BF.res.col} que ya tenían la grilla bien pero la columna BPM no`:''}. Abre Rekordbox y míralas.
       ${BF.res.skipped && BF.res.skipped.length ? `<br><span class="art">${BF.res.skipped.length} no se pudieron: ${BF.res.skipped.slice(0,5).map(s => esc(s.why)).join(', ')}${BF.res.skipped.length>5?'…':''}</span>` : ''}</div>` : '';
   if(!GR.data) return head + undo + res + `<div class="empty"><p>${GR.err ? esc(GR.err) : 'Leyendo las grillas de tu colección…'}</p></div>`;
   if(!all.length) return head + undo + res + `<div class="empty"><h3>Ninguna con el BPM al doble ni a la mitad 🎉</h3><p>Revisé ${GR.data.total} canciones.</p></div>`;
@@ -3149,17 +3149,13 @@ function bfView(){
       <td><div>${esc(x.title)}</div><div class="art">${esc(x.artist)}${x.genre?` · ${esc(x.genre)}`:''}</div></td>
       <td class="mono" style="white-space:nowrap">${bfFmt(x.bpm)} → <b style="color:var(--ok)">${bfFmt(x.bpm * x.fx)}</b>${x.mik_bpm?`<div class="art">MIK ${esc(String(x.mik_bpm))}</div>`:''}</td>
       <td><span class="art">${esc(x.fw)}</span></td></tr>`).join('');
-  const xr = BF.xres;
   return head + undo + res + `<div class="cards" style="grid-template-columns:repeat(3,1fr)">
       <div class="card"><div class="k">BPM al doble (÷2)</div><div class="v" style="color:var(--miss)">${all.filter(x=>x.fx===0.5).length}</div></div>
       <div class="card"><div class="k">BPM a la mitad (×2)</div><div class="v" style="color:var(--org)">${all.filter(x=>x.fx===2).length}</div></div>
       <div class="card"><div class="k">Marcadas</div><div class="v">${sel.size}</div></div></div>
     <div class="box" style="margin-bottom:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-      <button class="primary" style="font-size:15px;padding:10px 18px" ${busy||!nd?'disabled':''} onclick="bfFix()">${running('bpm_fix')?'Corrigiendo…':`🔧 Corregir ${nd} canci${nd===1?'ón':'ones'}`}</button>
+      <button class="primary" style="font-size:15px;padding:10px 18px" ${busy||!(nd+nh)?'disabled':''} onclick="bfFix()">${running('bpm_fix')?'Corrigiendo…':`🔧 Corregir ${nd+nh} canci${nd+nh===1?'ón':'ones'}`}</button>
       <span class="art">${rbOpen ? '<span style="color:var(--org)">Cierra Rekordbox antes de darle (⌘Q).</span> ' : ''}Directo en Rekordbox, con respaldo; se puede deshacer.</span></div>
-    ${nh ? `<div class="box" style="margin-bottom:10px">Las <b>${nh}</b> con el BPM <b>a la mitad</b> (×2) no se pueden escribir directo: van en un XML para «Importar a la colección» en Rekordbox.
-      <div style="margin-top:8px"><button ${busy?'disabled':''} onclick="bfXml()">📄 Armar XML con las ${nh} ×2</button></div>
-      ${xr ? `<div style="margin-top:8px">✅ ${xr.done} en <span class="lnk" onclick="reveal(${jsq(xr.out)})">${esc(base(xr.out))}</span>${xr.pref && xr.pref.length ? ' (Rekordbox ya apunta a él)' : ''}. En Rekordbox: rekordbox xml → «BrainOrder · BPM corregido» → ⌘A → clic derecho → Importar a la colección.</div>` : ''}</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <input placeholder="Buscar…" value="${esc(BF.q)}" oninput="BF.q=this.value; clearTimeout(BF.t); BF.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
       <button class="ghost" onclick="rows_bf(true)">Marcar las de la lista</button><button class="ghost" onclick="rows_bf(false)">Ninguna</button></div>
@@ -3167,9 +3163,9 @@ function bfView(){
 }
 function rows_bf(on){ const q = (BF.q||'').toLowerCase(), sel = bfSel(); bfItems().filter(x => !q || (x.title+' '+x.artist+' '+x.genre).toLowerCase().includes(q)).forEach(x => on ? sel.add(x.id) : sel.delete(x.id)); renderMain(); }
 async function bfFix(){
-  const sel = bfSel(), ids = bfItems().filter(x => sel.has(x.id) && x.fx===0.5).map(x => x.id);
+  const sel = bfSel(), items = bfItems().filter(x => sel.has(x.id)).map(x => ({id:x.id, f:x.fx}));
   setTimeout(()=>{ if(S.view==='rbbpm') renderMain(); }, 150);
-  const r = await api().bpm_fix(ids);
+  const r = await api().bpm_fix(items);
   if(!r.ok){ taskErr(r); renderMain(); return; }
   BF.res = r; toast(`✅ <b>${r.done}</b> canci${r.done===1?'ón':'ones'} corregida(s) en Rekordbox.`);
   await bfState(); gridLoad();
@@ -3179,12 +3175,6 @@ async function bfUndo(){
   if(!r.ok){ taskErr(r); renderMain(); return; }
   BF.res = null; toast(`↩︎ Deshecho: ${r.undone} canci${r.undone===1?'ón':'ones'} como estaban.`);
   await bfState(); gridLoad();
-}
-async function bfXml(){
-  const sel = bfSel(), items = bfItems().filter(x => sel.has(x.id) && x.fx===2).map(x => ({id:x.id, f:x.fx}));
-  const r = await api().bpm_xml_build(items);
-  if(!r.ok){ taskErr(r); renderMain(); return; }
-  BF.xres = r; renderMain();
 }
 // ---------- canciones sin playlist: elegir a cuál llevarlas ----------
 // NP.data: {rows:[{path, where, artist, title, suggest}], playlists:[{id,name,source}]}

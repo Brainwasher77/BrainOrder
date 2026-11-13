@@ -9,7 +9,9 @@ Qué se toca (con Rekordbox cerrado y respaldo antes):
     nuevos, y de sus entradas (2 bytes por tiempo, formato no documentado) se queda la misma mitad que en PQTZ.
   - master.db: djmdContent.BPM a la mitad y contentFile.Hash/Size (md5 y tamaño) de los ANLZ cambiados.
 Los demás archivos (.2EX, .3EX: onda y otros datos) no se tocan.
-Solo ÷2: para ×2 habría que inventar entradas de PQT2, así que eso sigue por el XML (bpm_xml).
+×2 (BPM a la mitad): se agrega un tiempo entre cada par (en el punto medio; el 1/2/3/4 lento pasa a 1/3/1/3 y
+el nuevo es el siguiente número) y en PQT2 la entrada nueva es el punto medio circular (módulo 1000) de sus dos
+vecinas. Probado por Frank (12 nov 2026, «Mirrors», 77 → 154): grilla bien, onda bien, sin errores.
 """
 import hashlib
 import struct
@@ -88,6 +90,76 @@ def _pqt2(t, start, new):
     struct.pack_into(">I", h, 40, len(kept))
     struct.pack_into(">I", h, 8, lh + 2 * len(kept))
     return bytes(h) + b"".join(kept)
+
+
+def double_beats(beats):
+    """grilla a la mitad -> al doble: un tiempo nuevo entre cada par."""
+    if len(beats) < 2:
+        raise AnlzError("grilla demasiado corta")
+    out = []
+    for k, (b, t, ms) in enumerate(beats):
+        nb = 1 if b in (1, 3) else 3
+        out.append((nb, min(65535, t * 2), ms))
+        if k + 1 < len(beats):
+            out.append((nb % 4 + 1, min(65535, t * 2), int(round((ms + beats[k + 1][2]) / 2))))
+    return out
+
+
+def _cmid(a, b, m=1000):
+    if a >= m or b >= m:  # fuera del rango conocido: promedio simple
+        return int(round((a + b) / 2))
+    d = (b - a) % m
+    if d > m / 2:
+        d -= m
+    return int(round(a + d / 2)) % m
+
+
+def _pqt2_double(t, new):
+    lh = struct.unpack(">I", t[4:8])[0]
+    if lh < 56:
+        raise AnlzError("PQT2 con cabecera desconocida")
+    cnt = struct.unpack(">I", t[40:44])[0]
+    if lh + 2 * cnt > len(t):
+        raise AnlzError("PQT2 cortado")
+    v = [struct.unpack(">H", t[lh + 2 * k:lh + 2 * k + 2])[0] for k in range(cnt)]
+    nv = []
+    for k, x in enumerate(v):
+        nv.append(x)
+        if k + 1 < len(v):
+            nv.append(_cmid(x, v[k + 1]))
+    h = bytearray(t[:lh])
+    struct.pack_into(">HHI", h, 24, *new[0])
+    struct.pack_into(">HHI", h, 32, *new[-1])
+    struct.pack_into(">I", h, 40, len(nv))
+    struct.pack_into(">I", h, 8, lh + 2 * len(nv))
+    return bytes(h) + b"".join(struct.pack(">H", x) for x in nv)
+
+
+def double(dat, ext=None):
+    """Como halve() pero ×2 (BPM a la mitad -> al doble). -> (dat, ext o None, bpm nuevo, n tiempos)"""
+    head, tags = _tags(dat)
+    beats = read_beats(dat)
+    if not beats:
+        raise AnlzError("sin grilla")
+    new = double_beats(beats)
+    d2 = _join(head, [(tag, _pqtz(t, new) if tag == b"PQTZ" else t) for tag, t in tags])
+    e2 = None
+    if ext:
+        h2, t2 = _tags(ext)
+        if any(tag == b"PQT2" for tag, _ in t2):
+            e2 = _join(h2, [(tag, _pqt2_double(t, new) if tag == b"PQT2" else t) for tag, t in t2])
+    if read_beats(d2) != new:
+        raise AnlzError("la grilla nueva no se lee igual")
+    return d2, e2, new[0][1] / 100.0, len(new)
+
+
+def fix(dat, ext, factor):
+    """factor 0.5 (BPM al doble) o 2 (BPM a la mitad)."""
+    if factor == 0.5:
+        return halve(dat, ext)
+    if factor == 2:
+        return double(dat, ext)
+    raise AnlzError(f"factor {factor}")
 
 
 def halve(dat, ext=None):

@@ -30,7 +30,7 @@ def make(first_beat=4, n=16, tempo=18000, t0=159):
     pqtz = tag(b"PQTZ", struct.pack(">III", 0, 0x80000, len(beats)), b"".join(struct.pack(">HHI", *b) for b in beats))
     ppth = tag(b"PPTH", struct.pack(">I", 8), "/a.mp3".encode("utf-16-be"))
     dat = pmai(ppth, pqtz)
-    ents = b"".join(struct.pack(">H", 1000 + k) for k in range(n))
+    ents = b"".join(struct.pack(">H", (100 + 300 * k) % 1000) for k in range(n))
     h2 = (struct.pack(">I", 0) + struct.pack(">I", 0x1000002) + struct.pack(">I", 0)
           + struct.pack(">HHI", *beats[0]) + struct.pack(">HHI", *beats[-1]) + struct.pack(">IIII", n, 7, 0, 0))
     pqt2 = tag(b"PQT2", h2, ents)
@@ -55,7 +55,7 @@ q = dict(t2)[b"PQT2"]
 lh = struct.unpack(">I", q[4:8])[0]
 assert struct.unpack(">HHI", q[24:32]) == nb[0] and struct.unpack(">HHI", q[32:40]) == nb[-1]
 assert struct.unpack(">I", q[40:44])[0] == 8
-assert [struct.unpack(">H", q[lh + 2 * k:lh + 2 * k + 2])[0] for k in range(8)] == [1001, 1003, 1005, 1007, 1009, 1011, 1013, 1015]
+assert [struct.unpack(">H", q[lh + 2 * k:lh + 2 * k + 2])[0] for k in range(8)] == [(100 + 300 * k) % 1000 for k in range(1, 16, 2)]
 assert struct.unpack(">I", q[8:12])[0] == len(q) and dict(t2)[b"PWV5"] == dict(A._tags(ext)[1])[b"PWV5"]
 assert struct.unpack(">I", e2[8:12])[0] == len(e2)
 # primer tiempo en el 1 / en el 3
@@ -70,6 +70,21 @@ for bad in (b"xxxx", pmai(tag(b"PPTH", struct.pack(">I", 0), b""))):
         raise AssertionError("debía fallar")
     except A.AnlzError:
         pass
+# ×2 (BPM a la mitad): un tiempo nuevo entre cada par; PQT2 con el punto medio circular de las vecinas
+dh, eh, bh = make(first_beat=2, n=5, tempo=7700, t0=269)
+d3, e3, bpm3, n3 = A.double(dh, eh)
+nb2 = A.read_beats(d3)
+assert bpm3 == 154.0 and n3 == 9 and nb2[0] == (3, 15400, 269), nb2  # el 2 lento es el 3 rápido
+assert [b[0] for b in nb2] == [3, 4, 1, 2, 3, 4, 1, 2, 3]
+assert [b[2] for b in nb2[::2]] == [b[2] for b in bh] and nb2[1][2] == round((bh[0][2] + bh[1][2]) / 2)
+q = dict(A._tags(e3)[1])[b"PQT2"]
+lh = struct.unpack(">I", q[4:8])[0]
+assert struct.unpack(">I", q[40:44])[0] == 9 and struct.unpack(">HHI", q[24:32]) == nb2[0] and struct.unpack(">HHI", q[32:40]) == nb2[-1]
+assert [struct.unpack(">H", q[lh + 2 * k:lh + 2 * k + 2])[0] for k in range(9)] == [100, 250, 400, 550, 700, 850, 0, 150, 300]
+assert A._cmid(990, 10) == 0 and A._cmid(10, 990) == 0 and A._cmid(100, 300) == 200
+assert A.fix(dh, eh, 2) == (d3, e3, bpm3, n3) and A.fix(dat, ext, 0.5)[0] == d2
+# ÷2 después de ×2 vuelve a la grilla original
+assert A.read_beats(A.halve(d3, e3)[0])[0][2] in (bh[0][2], bh[1][2])
 print("ok anlz_bpm")
 
 # --- API bpm_fix / bpm_fix_undo con una colección falsa
@@ -99,7 +114,7 @@ o._grid_tracks = lambda: [{"id": "1", "grid": [(1, 180.0, 0)], "db_bpm": 180.0},
                           {"id": "8", "grid": [(1, 128.0, 0)], "db_bpm": 128.0}]
 calls = []
 o._bpm_db_write = lambda bpms, files: calls.append((bpms, files))
-r = o.bpm_fix(["1", "9", "404"])
+r = o.bpm_fix(["1", "9", "404"])  # ids sueltos = ÷2
 assert r["ok"] and r["done"] == 1 and r["col"] == 1, r
 assert {s["id"] for s in r["skipped"]} == {"9", "404"}, r
 assert A.read_beats((rb / "share" / rel).read_bytes()) == nb
@@ -125,6 +140,21 @@ u = o.bpm_fix_undo()
 assert u["undone"] == 1 and (rb / "share" / rel).read_bytes() == dat and (rb / "share" / rel).with_suffix(".EXT").read_bytes() == ext
 assert sorted(calls[0][0]) == [("1", 18000), ("7", 18000)] and calls[0][1] == [("/" + rel, dat, ext)]
 assert o.bpm_fix_state()["last"] is None
+# ×2 por la API ({id, f: 2}) y columna BPM a la mitad
+rel2 = "PIONEER/USBANLZ/abc/5678/ANLZ0000.DAT"
+(rb / "share" / rel2).parent.mkdir(parents=True)
+(rb / "share" / rel2).write_bytes(dh)
+(rb / "share" / rel2).with_suffix(".EXT").write_bytes(eh)
+o._rb_read = lambda fn, tag="": {"2": ("/" + rel2, 7700)}
+o._grid_tracks = lambda: [{"id": "5", "grid": [(1, 154.0, 0), (2, 154.0, 390)], "db_bpm": 77.0}]
+calls.clear()
+r2 = o.bpm_fix([{"id": "2", "f": 2}])
+assert r2["done"] == 1 and r2["doubled"] == 1 and r2["col"] == 1, r2
+assert (rb / "share" / rel2).read_bytes() == d3 and sorted(calls[0][0]) == [("2", 15400), ("5", 15400)], calls
+o.bpm_fix_undo()
+assert (rb / "share" / rel2).read_bytes() == dh and sorted(calls[-1][0]) == [("2", 7700), ("5", 7700)]
+o._rb_read = lambda fn, tag="": {"1": ("/" + rel, 18000)}
+o._grid_tracks = lambda: []
 # si falla la base de datos, los ANLZ vuelven a como estaban
 def boom(*a):
     raise RuntimeError("db bloqueada")

@@ -1,5 +1,5 @@
 {
-  "version": "2.43.0",
-  "build": 100,
-  "notes": "«BPM al doble o a la mitad»: el botón ahora corrige directo en Rekordbox, sin importar nada. Deja la grilla a la mitad (con el 1 del compás en el kick) y el BPM también, con Rekordbox cerrado y respaldo; se puede deshacer. Las de BPM a la mitad (×2) siguen por XML."
+  "version": "2.44.0",
+  "build": 101,
+  "notes": "«BPM al doble o a la mitad»: el mismo botón ahora también corrige las que tienen el BPM a la mitad (×2), directo en Rekordbox, con respaldo y deshacer. Ya no hace falta el XML para ninguna."
 }

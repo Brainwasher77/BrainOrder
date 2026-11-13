@@ -6106,14 +6106,25 @@ class Api:
         return self._task(run, "grid_playlist", "Playlist de grillas en Rekordbox", files=True)
 
     # ---------- corregir BPM al doble DIRECTO en Rekordbox (un botón, sin importar nada) ----------
-    def bpm_fix(self, ids):
-        """ids: canciones con el BPM al doble. Con Rekordbox cerrado: respalda master.db y los ANLZ, deja la grilla
-        a la mitad en el .DAT (PQTZ) y el .EXT (PQT2), y en master.db el BPM a la mitad y el md5/tamaño de esos
-        archivos. También arregla las que ya tienen la grilla a la mitad pero la columna BPM sigue al doble.
-        Se puede deshacer (bpm_fix_undo)."""
+    def bpm_fix(self, items):
+        """items: ids (BPM al doble) o [{id, f}] con f = 0.5 (al doble -> ÷2) o 2 (a la mitad -> ×2).
+        Con Rekordbox cerrado: respalda master.db y los ANLZ, corrige la grilla en el .DAT (PQTZ) y el .EXT (PQT2),
+        y en master.db el BPM y el md5/tamaño de esos archivos. También arregla las que ya tienen la grilla bien
+        pero la columna BPM al doble o a la mitad. Se puede deshacer (bpm_fix_undo)."""
         import anlz_bpm
         import grillas
-        want = [str(i) for i in dict.fromkeys(ids or [])]
+        fac = {}
+        for it in items or []:
+            if isinstance(it, dict):
+                try:
+                    f = float(it.get("f") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if it.get("id") and f in (0.5, 2.0):
+                    fac[str(it["id"])] = 0.5 if f == 0.5 else 2
+            elif it:
+                fac[str(it)] = 0.5
+        want = list(fac)
 
         def run():
             if rekordbox_sync.rekordbox_running():
@@ -6137,7 +6148,7 @@ class Api:
                 try:
                     d0 = dat.read_bytes()
                     e0 = ext.read_bytes() if ext.exists() else None
-                    d1, e1, new_bpm, n = anlz_bpm.halve(d0, e0)
+                    d1, e1, new_bpm, n = anlz_bpm.fix(d0, e0, fac[i])
                 except (OSError, anlz_bpm.AnlzError) as e:
                     skipped.append({"id": i, "why": str(e)})
                     continue
@@ -6147,7 +6158,8 @@ class Api:
             col = []
             for t in self._grid_tracks():
                 gb = grillas.grid_bpm(t["grid"]) if t["grid"] else 0
-                if gb and t["id"] not in want and abs(t["db_bpm"] - 2 * gb) < 0.6:
+                if gb and t["id"] not in fac and t["db_bpm"] and (abs(t["db_bpm"] - 2 * gb) < 0.6
+                                                                  or abs(t["db_bpm"] - gb / 2) < 0.3):
                     col.append({"id": t["id"], "bpm1": int(round(gb * 100)), "bpm0": int(round(t["db_bpm"] * 100))})
             if not plan and not col:
                 return {"done": 0, "col": 0, "skipped": skipped}
@@ -6155,6 +6167,10 @@ class Api:
             bk = rekordbox_sync.backup()
             stamp = time.strftime("%Y%m%d-%H%M%S")
             bdir = Path(config.SUPPORT_DIR) / "respaldos" / f"bpm-{stamp}"
+            k = 1
+            while bdir.exists():  # nunca encima de un respaldo anterior
+                k += 1
+                bdir = Path(config.SUPPORT_DIR) / "respaldos" / f"bpm-{stamp}-{k}"
             for p in plan:  # respaldo de los ANLZ antes de tocar nada
                 rel = str(p["anlz"]).replace("\\", "/").strip("/")
                 dst = bdir / rel
@@ -6163,7 +6179,7 @@ class Api:
                 if p["ext"] is not None:
                     dst.with_suffix(".EXT").write_bytes(p["e0"])
             manifest = {"db_backup": bk.name, "at": time.time(),
-                        "items": [{"id": p["id"], "anlz": p["anlz"], "ext": p["ext"] is not None,
+                        "items": [{"id": p["id"], "anlz": p["anlz"], "ext": p["ext"] is not None, "f": fac[p["id"]],
                                    "bpm0": p["bpm0"], "bpm1": p["bpm1"]} for p in plan],
                         "col": col}
             bdir.mkdir(parents=True, exist_ok=True)
@@ -6193,10 +6209,12 @@ class Api:
                 raise rekordbox_sync.RekordboxError(f"No pude corregir el BPM (no quedó nada cambiado): {e}")
             self._cfg["bpm_fix_last"] = {"dir": str(bdir), "n": len(plan), "col": len(col), "at": time.time()}
             config.save(self._cfg)
-            config.log(f"BPM directo: {len(plan)} grillas a la mitad + {len(col)} columnas BPM; respaldo {bdir}")
+            nh = sum(1 for p in plan if fac[p["id"]] == 2)
+            config.log(f"BPM directo: {len(plan) - nh} grillas ÷2, {nh} ×2 + {len(col)} columnas BPM; respaldo {bdir}")
             self._progress("Listo.", 1)
-            return {"done": len(plan), "col": len(col), "skipped": skipped, "backup": str(bdir)}
-        return self._task(run, "bpm_fix", "Corregir BPM al doble en Rekordbox")
+            return {"done": len(plan), "halved": len(plan) - nh, "doubled": nh, "col": len(col), "skipped": skipped,
+                    "backup": str(bdir)}
+        return self._task(run, "bpm_fix", "Corregir BPM al doble / a la mitad en Rekordbox")
 
     def _bpm_db_write(self, bpms, files):
         """bpms [(id, BPM×100)]; files [(AnalysisDataPath, bytes .DAT, bytes .EXT o None)] -> master.db."""
