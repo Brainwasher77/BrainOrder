@@ -1,5 +1,5 @@
 {
-  "version": "2.46.0",
-  "build": 105,
-  "notes": "Grillas dudosas: nuevo «🎯 Poner los cues sobre la grilla». Los cues de Mixed In Key que caen unos ms antes de la grilla (pasa en MP3) quedan justo sobre su tiempo, directo en Rekordbox, con respaldo y deshacer. Los cues nuevos de MIK ya entran alineados."
+  "version": "2.46.1",
+  "build": 106,
+  "notes": "Arreglado: el buscador no hacía nada en Grillas dudosas, BPM por corregir, Sin Mixed In Key y otras secciones."
 }
