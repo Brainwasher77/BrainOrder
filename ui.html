@@ -311,7 +311,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="rbchg" onclick="show('rbchg')"><div class="row"><span class="name">Cambios en Rekordbox</span><span class="cnt mono" id="nRb">–</span></div></a>
         <a data-v="rblost" onclick="show('rblost')"><div class="row"><span class="name">Perdidas en Rekordbox</span><span class="cnt mono" id="nLost">–</span></div></a>
         <a data-v="rbgrid" onclick="show('rbgrid')"><div class="row"><span class="name">Grillas dudosas</span><span class="cnt mono" id="nGrid">–</span></div></a>
-        <a data-v="rbbpm" onclick="show('rbbpm')"><div class="row"><span class="name">BPM al doble o a la mitad</span><span class="cnt mono" id="nBpm">–</span></div></a>
+        <a data-v="rbbpm" onclick="show('rbbpm')"><div class="row"><span class="name">BPM por corregir</span><span class="cnt mono" id="nBpm">–</span></div></a>
         <a data-v="hist" onclick="show('hist')"><div class="row"><span class="name">Historial</span><span class="cnt mono" id="nHist">–</span></div></a>
         <a data-v="rules" onclick="show('rules')"><div class="row"><span class="name">Reglas</span><span class="cnt mono" id="nRules">–</span></div></a>
         <a data-v="folders" onclick="show('folders')"><div class="row"><span class="name">Playlists nuevas</span><span class="cnt mono" id="nFolders">–</span></div></a>
@@ -1913,7 +1913,7 @@ function renderCore(){
   if($('nMeta')) $('nMeta').innerHTML = MD.data ? (MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length ? `<span style="color:var(--org)">${MD.data.rows.filter(x=>x.problems.some(p=>p!=='género')).length}</span>` : '0') : '–';
   if($('nNoPl')) $('nNoPl').innerHTML = NP.data ? (NP.data.rows.length ? `<span style="color:var(--org)">${NP.data.rows.length}</span>` : '0') : '–';
   if($('nLost')){ const nl = LO.data ? LO.data.items.length + (LO.data.rescue||[]).length : null; $('nLost').innerHTML = nl === null ? '–' : (nl ? `<span style="color:var(--org)">${nl}</span>` : '0'); }
-  if($('nBpm')){ const nb = GR.data ? bfItems().length : null; $('nBpm').innerHTML = nb === null ? '–' : (nb ? `<span style="color:var(--miss)">${nb}</span>` : '0'); }
+  if($('nBpm')){ const nb = GR.bpm ? bfItems().length + bfOther().length : null; $('nBpm').innerHTML = nb === null ? '–' : (nb ? `<span style="color:var(--miss)">${nb}</span>` : '0'); }
   if($('nGrid')){ const ng = GR.data ? GR.data.items.length : null; $('nGrid').innerHTML = ng === null ? '–' : (ng ? `<span style="color:var(--org)">${ng}</span>` : '0'); }
   $('nRb').innerHTML = RBC.data && RBC.data.changes.length ? `<span style="color:var(--org)">${RBC.data.changes.length}</span>` : '–';
   $('nDups').textContent = DUP.scan ? DUP.scan.groups.length : '–';
@@ -3030,7 +3030,14 @@ async function gridLoad(){
   catch(e){ GR.err = String(e); }
   GR.loading = false; render();
 }
-function gridSet(r){ GR.data = r; if(typeof BF !== 'undefined'){ BF.sel = null; } GR.sel = new Set(r.items.filter(x => x.sev >= 2).map(x => x.id)); }
+// Grillas dudosas = solo la grilla (cues, corrida, el 1, sin grilla). Lo del BPM va en «BPM al doble o a la mitad».
+const BPM_C = ['double','half','mik','dec','var','drift'];
+function gridSplit(r, codes, keep){
+  const items = r.items.map(x => { const why = x.why.filter(w => codes.includes(w.c) === keep); return why.length ? Object.assign({}, x, {why, sev: Math.max(...why.map(w => w.s||1))}) : null; }).filter(Boolean);
+  const summary = {}; items.forEach(x => new Set(x.why.map(w => w.c)).forEach(c => summary[c] = (summary[c]||0) + 1));
+  return Object.assign({}, r, {items, summary});
+}
+function gridSet(r){ GR.raw = r; GR.data = gridSplit(r, BPM_C, false); GR.bpm = gridSplit(r, BPM_C, true); if(typeof BF !== 'undefined'){ BF.sel = null; } GR.sel = new Set(GR.data.items.filter(x => x.sev >= 2).map(x => x.id)); }
 function gridVisible(){
   const q = (GR.q||'').toLowerCase();
   return (GR.data ? GR.data.items : []).filter(x => (!GR.f || x.why.some(w => w.c===GR.f) || (GR.f==='audio' && x.audio)) &&
@@ -3069,7 +3076,7 @@ function gridView(){
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button ${busy||!d.decoder||!GR.sel.size?'disabled':''} onclick="gridAudio(false)">${running('grid_audio')?'Midiendo…':`🎧 Medir las marcadas (${GR.sel.size})`}</button>
         <button class="ghost" ${busy||!d.decoder||!d.to_measure?'disabled':''} onclick="gridAudio(true)" title="Las que aún no están medidas, de a 250">🎧 Medir toda la colección${d.to_measure?` (faltan ${d.to_measure})`:''}</button></div></div>
-    <div class="box" style="margin-bottom:10px"><b>Cómo arreglarlas en Rekordbox:</b> pásalas a una playlist con el botón de abajo; en cada una abre la edición de grilla, pon el cabezal en el primer kick y usa «fijar el 1 aquí»; si al final se corre, ajusta el BPM (en electrónica, redondo); escucha con el metrónomo y <b>bloquea</b> la pista. BPM al doble/mitad: ×2 o ÷2, o todas de una vez en <a class="lnk" onclick="show('rbbpm')">BPM al doble o a la mitad</a>. Sin grilla: «Analizar» (Normal para electrónica, Dinámico solo para música en vivo).
+    <div class="box" style="margin-bottom:10px"><b>Cómo arreglarlas en Rekordbox:</b> pásalas a una playlist con el botón de abajo; en cada una abre la edición de grilla, pon el cabezal en el primer kick y usa «fijar el 1 aquí»; si al final se corre, ajusta el BPM (en electrónica, redondo); escucha con el metrónomo y <b>bloquea</b> la pista. BPM al doble/mitad: ×2 o ÷2, o todas de una vez en <a class="lnk" onclick="show('rbbpm')">BPM por corregir</a>. Sin grilla: «Analizar» (Normal para electrónica, Dinámico solo para música en vivo).
       ${d.hidden ? `<br><span class="art">${d.hidden} marcada(s) como «Está bien» no se muestran. <a class="lnk" onclick="gridShowHidden()">Mostrarlas otra vez</a></span>` : ''}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <select onchange="GR.f=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit">
@@ -3125,7 +3132,10 @@ async function gridGo(){
 // BF.sel: ids marcados (null = todas); BF.res: resultado; BF.last: última corrección directa (para deshacer)
 let BF = {sel:null, res:null, q:'', last:undefined};
 function bfItems(){
-  return (GR.data ? GR.data.items : []).map(x => { const w = x.why.find(w => w.c==='double' || w.c==='half'); return w ? Object.assign({}, x, {fx: w.c==='double' ? 0.5 : 2, fw: w.t}) : null; }).filter(Boolean);
+  return (GR.bpm ? GR.bpm.items : []).map(x => { const w = x.why.find(w => w.c==='double' || w.c==='half'); return w ? Object.assign({}, x, {fx: w.c==='double' ? 0.5 : 2, fw: w.t}) : null; }).filter(Boolean);
+}
+function bfOther(){  // problemas de BPM que todavía no se corrigen con el botón (solo para revisar)
+  return (GR.bpm ? GR.bpm.items : []).filter(x => !x.why.some(w => w.c==='double' || w.c==='half'));
 }
 async function bfState(){ try{ const r = await api().bpm_fix_state(); BF.last = r.last || null; }catch(e){ BF.last = null; } if(S.view==='rbbpm') renderMain(); }
 function bfSel(){ const all = bfItems(); if(BF.sel === null) BF.sel = new Set(all.map(x => x.id)); return BF.sel; }
@@ -3133,14 +3143,19 @@ function bfFmt(b){ return b ? String(Math.round(b*100)/100) : '—'; }
 function bfView(){
   if(BF.last === undefined){ BF.last = null; bfState(); }
   const busy = running('bpm_fix') || running('bpm_xml'), all = bfItems(), sel = GR.data ? bfSel() : new Set();
-  const head = `<div class="vhead"><h2>🔧 BPM al doble o a la mitad</h2>
+  const head = `<div class="vhead"><h2>🔧 BPM por corregir</h2>
     <span class="sub">Las canciones donde Rekordbox tiene el BPM al doble (o a la mitad) comparado con Mixed In Key o con lo normal de su género. Con un botón las corrijo directo en Rekordbox: la grilla y el BPM quedan a la mitad o al doble, con el 1 del compás en el kick. Tus cues, tags y key no cambian, y antes se respalda todo.</span>
     <div class="sp"><button onclick="gridLoad()" ${GR.loading?'disabled':''}>${GR.loading?'Revisando…':'⟳ Revisar'}</button></div></div>`;
   const undo = BF.last ? `<div class="box" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>Última corrección: <b>${BF.last.n}</b> canci${BF.last.n===1?'ón':'ones'}${BF.last.col?` (+${BF.last.col} solo la columna BPM)`:''}.</span><button class="ghost" ${busy?'disabled':''} onclick="bfUndo()">↩︎ Deshacer</button></div>` : '';
   const res = BF.res ? `<div class="box" style="margin-bottom:10px;border-left:4px solid var(--ok)">✅ Listo: <b>${BF.res.done}</b> canci${BF.res.done===1?'ón':'ones'} corregida(s)${BF.res.doubled?` (${BF.res.halved} ÷2 y ${BF.res.doubled} ×2)`:''}${BF.res.col?`, y ${BF.res.col} que ya tenían la grilla bien pero la columna BPM no`:''}. Abre Rekordbox y míralas.
       ${BF.res.skipped && BF.res.skipped.length ? `<br><span class="art">${BF.res.skipped.length} no se pudieron: ${BF.res.skipped.slice(0,5).map(s => esc(s.why)).join(', ')}${BF.res.skipped.length>5?'…':''}</span>` : ''}</div>` : '';
   if(!GR.data) return head + undo + res + `<div class="empty"><p>${GR.err ? esc(GR.err) : 'Leyendo las grillas de tu colección…'}</p></div>`;
-  if(!all.length) return head + undo + res + `<div class="empty"><h3>Ninguna con el BPM al doble ni a la mitad 🎉</h3><p>Revisé ${GR.data.total} canciones.</p></div>`;
+  const oth = bfOther(), othHtml = oth.length ? `<h3 style="margin:18px 0 6px">Otros problemas de BPM <span class="art">(${oth.length} · por ahora para revisar; el botón todavía no los corrige)</span></h3>
+    <table><tr><th></th><th>Canción</th><th>BPM</th><th>Por qué</th></tr>${oth.slice(0, 300).map(x => `<tr><td style="width:34px">${pvBtn({source:x.path, id:'o'+x.id, name:x.title, artists:[x.artist]})}</td>
+      <td><div>${esc(x.title)}</div><div class="art">${esc(x.artist)}${x.genre?` · ${esc(x.genre)}`:''}</div></td>
+      <td class="mono">${bfFmt(x.bpm)}${x.mik_bpm?`<div class="art">MIK ${esc(String(x.mik_bpm))}</div>`:''}</td>
+      <td>${x.why.map(w => `<div><span class="chip" style="cursor:default;color:${(GRID_C[w.c]||[])[1]||'var(--text)'}">${(GRID_C[w.c]||[w.c])[0]}</span> <span class="art">${esc(w.t)}</span></div>`).join('')}</td></tr>`).join('')}</table>${oth.length>300?`<div class="art">Mostrando 300 de ${oth.length}.</div>`:''}` : '';
+  if(!all.length) return head + undo + res + `<div class="empty"><h3>Ninguna con el BPM al doble ni a la mitad 🎉</h3><p>Revisé ${GR.data.total} canciones.</p></div>` + othHtml;
   const q = (BF.q||'').toLowerCase(), rows = all.filter(x => !q || (x.title+' '+x.artist+' '+x.genre).toLowerCase().includes(q));
   const nd = all.filter(x => sel.has(x.id) && x.fx===0.5).length, nh = all.filter(x => sel.has(x.id) && x.fx===2).length;
   const rbOpen = GR.data.rekordbox_running;
@@ -3159,7 +3174,7 @@ function bfView(){
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <input placeholder="Buscar…" value="${esc(BF.q)}" oninput="BF.q=this.value; clearTimeout(BF.t); BF.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\'Buscar…\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="flex:1;min-width:140px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit">
       <button class="ghost" onclick="rows_bf(true)">Marcar las de la lista</button><button class="ghost" onclick="rows_bf(false)">Ninguna</button></div>
-    <table><tr><th></th><th></th><th>Canción</th><th>BPM</th><th>Por qué</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: busca para ver otras. «Marcar las de la lista» marca todas las del filtro.</div>`:''}`;
+    <table><tr><th></th><th></th><th>Canción</th><th>BPM</th><th>Por qué</th></tr>${tb}</table>${rows.length>500?`<div class="art">Mostrando 500 de ${rows.length}: busca para ver otras. «Marcar las de la lista» marca todas las del filtro.</div>`:''}` + othHtml;
 }
 function rows_bf(on){ const q = (BF.q||'').toLowerCase(), sel = bfSel(); bfItems().filter(x => !q || (x.title+' '+x.artist+' '+x.genre).toLowerCase().includes(q)).forEach(x => on ? sel.add(x.id) : sel.delete(x.id)); renderMain(); }
 async function bfFix(){

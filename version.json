@@ -1,5 +1,5 @@
 {
-  "version": "2.44.2",
-  "build": 103,
-  "notes": "«BPM al doble o a la mitad» tiene en cuenta Mixed In Key y el género: si los dos programas dicen 172 pero es reguetón, la sugiere en 86; y una vez corregida por el género, Mixed In Key ya no la devuelve (sin ida y vuelta)."
+  "version": "2.45.0",
+  "build": 104,
+  "notes": "«Grillas dudosas» ahora muestra solo lo de la grilla (cues corridos, grilla corrida, el 1 fuera del kick, sin grilla). Todo lo del BPM (doble, mitad, distinto a Mixed In Key, decimales, grilla variable) está en «BPM por corregir»."
 }
