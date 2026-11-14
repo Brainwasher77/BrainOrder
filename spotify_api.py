@@ -182,6 +182,9 @@ def _forbidden(detail):
     return None
 
 
+_LOCAL_FORM = None  # cuál forma de quitar archivos locales aceptó Spotify (se prueba primero la próxima vez)
+
+
 class Spotify:
     def __init__(self, client_id: str, redirect_uri: str):
         self.client_id = client_id.strip()
@@ -494,6 +497,86 @@ class Spotify:
             r = self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in uris[i:i + 100]]})
             snap = (r or {}).get("snapshot_id") or snap
         return snap
+
+    def _uris_now(self, pid):
+        """-> (snapshot, [uri en cada posición]) leído ahora de Spotify (incluye archivos locales)."""
+        for _ in range(2):
+            snap = (self.get(f"/playlists/{pid}", {"fields": "snapshot_id"}) or {}).get("snapshot_id")
+            uris = [((it.get("item") or it.get("track")) or {}).get("uri") or ""
+                    for it in self.paged(f"/playlists/{pid}/items", {"limit": 100, "additional_types": "track"})]
+            again = (self.get(f"/playlists/{pid}", {"fields": "snapshot_id"}) or {}).get("snapshot_id")
+            if snap == again:
+                return snap, uris
+        return again, uris
+
+    def remove_local(self, pid, items):
+        """Archivos locales de Spotify (spotify:local:…): Spotify no los quita por uri como a las demás; hay que
+        darle la POSICIÓN y el snapshot de la playlist. items: [{"uri", "nth"}] (nth = cuál de las apariciones
+        de esa uri, contando desde 0, por si está repetida). Se prueban las formas que Spotify acepta y se
+        comprueba releyendo la playlist: nunca se da por quitada una que sigue ahí.
+        -> {"removed": n, "left": [items que siguen], "snapshot"}"""
+        from collections import Counter
+        want = [dict(x) for x in items or [] if str(x.get("uri") or "").startswith("spotify:local:")]
+        if not want:
+            return {"removed": 0, "left": [], "snapshot": None}
+        snap, cur = self._uris_now(pid)
+        before = Counter(cur)
+        need = Counter(x["uri"] for x in want)
+        goal = {u: max(0, before[u] - n) for u, n in need.items()}  # cuántas deben quedar de cada una
+
+        def positions(cur):
+            have, out = Counter(cur), []
+            for u in need:
+                k = have[u] - goal[u]
+                if k <= 0:
+                    continue
+                idx = [i for i, v in enumerate(cur) if v == u]
+                pick = sorted({idx[int(x.get("nth") or 0)] for x in want
+                               if x["uri"] == u and int(x.get("nth") or 0) < len(idx)}) if have[u] == before[u] else []
+                out += pick if len(pick) == k else idx[-k:]  # cambió la playlist: las últimas apariciones
+            return sorted(out)
+
+        tries = [
+            lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {"positions": pos, "snapshot_id": snap}),
+            lambda pos: self.send("DELETE", f"/playlists/{pid}/tracks", {"positions": pos, "snapshot_id": snap}),
+            lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {
+                "items": [{"uri": cur[i], "positions": [i]} for i in pos], "snapshot_id": snap}),
+            lambda pos: self.send("DELETE", f"/playlists/{pid}/tracks", {
+                "tracks": [{"uri": cur[i], "positions": [i]} for i in pos], "snapshot_id": snap}),
+        ]
+        # por uri quita TODAS sus apariciones: solo sirve si no tiene que quedar ninguna
+        if all(g == 0 for g in goal.values()):
+            tries.append(lambda pos: self.send("DELETE", f"/playlists/{pid}/items",
+                                               {"items": [{"uri": u} for u in need]}))
+        global _LOCAL_FORM
+        if _LOCAL_FORM is not None and _LOCAL_FORM < len(tries):  # la forma que funcionó la última vez, primero
+            tries.insert(0, tries.pop(_LOCAL_FORM))
+        order = list(range(len(tries)))
+        if _LOCAL_FORM is not None and _LOCAL_FORM < len(order):
+            order.insert(0, order.pop(_LOCAL_FORM))
+        for n, t in zip(order, tries):
+            pos = positions(cur)
+            if not pos:
+                break
+            prev = sum(cur.count(u) for u in need)
+            try:
+                t(pos)
+            except SpotifyPaused:
+                raise
+            except SpotifyError:  # esta forma no la acepta (o se cortó): se relee por si igual se hizo
+                pass
+            snap, cur = self._uris_now(pid)
+            have = Counter(cur)
+            if sum(have[u] for u in need) < prev:
+                _LOCAL_FORM = n
+            if any(have[u] < goal[u] for u in need):  # se fue de más (no debería): no se sigue probando
+                break
+        have = Counter(cur)
+        left = []
+        for u in need:
+            extra = have[u] - goal[u]
+            left += [x for x in want if x["uri"] == u][:max(0, extra)]
+        return {"removed": len(want) - len(left), "left": left, "snapshot": snap}
 
     def save_to_library(self, uris):
         # /me/library recibe las uris en la dirección (?uris=a,b), no en el cuerpo

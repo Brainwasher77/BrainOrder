@@ -1325,7 +1325,8 @@ async function plCommonGo(){
   if(f.kept) msg += `<br><span class="art">${f.kept} archivo(s) se quedaron donde estaban (otra versión o chocaban por nombre).</span>`;
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">${f.skipped.length} no se movieron: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
   if(x.spotify) msg += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: se quitan allá solas en cuanto lo permita (aquí ya no aparecen).` : `<br>🟢 Spotify: listo.`;
-  if(x.no_uri) msg += `<br><span style="color:var(--org)">${x.no_uri} eran archivos locales de Spotify y no se pudieron quitar allá: quítalas a mano en Spotify.</span>`;
+  if(x.no_uri){ const mn = (x.manual||[]).slice(0,3).map(n=>'«'+esc(n)+'»').join(', ');
+    msg += `<br><span style="color:var(--org)">Spotify no dejó quitar ${x.no_uri} archivo(s) local(es)${mn?` (${mn})`:''}: quítalos a mano en Spotify.</span>`; }
   if(x.still) msg += `<br><span style="color:var(--org)">${x.still} siguen en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
   if(x.rekordbox) msg += `<br>🎛️ ${esc((x.rekordbox.labels||['Tu programa de DJ']).join(', '))}: también salieron de tu playlist original de allá.`;
   toast(msg);
@@ -1631,13 +1632,16 @@ async function tmDone(res, dj){
     : `✅ ${song} ya no est${x.count>1?'án':'á'} en <b>«${esc(x.name)}»</b>.`;
   if(f.moved) msg += `<br>📁 ${f.home ? `Archivo a <code>${esc(short(f.to))}</code>` : ''}${f.home && f.dup ? ' · ' : ''}${f.dup ? `copia repetida a <code>${esc(short(f.dup_dir))}</code>` : ''}.` + undoLink(f);
   if(f.kept) msg += `<br><span class="art">Su archivo se quedó donde estaba (otra versión o chocaba por nombre).</span>`;
-  if(x.shared) msg += `<br><span class="art">${x.shared>1?'Los archivos se quedaron':'El archivo se quedó'} en «${esc(x.name)}»: la otra vez que estaba la canción lo sigue usando.</span>`;
+  if(x.shared){ const sn = (x.shared_names||[]).slice(0,3).map(n=>'«'+esc(n)+'»').join(', ');
+    msg += `<br><span class="art">${x.shared>1 ? `${x.shared} canciones estaban repetidas` : `${sn||'La canción'} estaba dos veces`} en «${esc(x.name)}»${x.shared>1&&sn?` (${sn}${x.shared>3?'…':''})`:''}: se quitó una y el archivo se queda en su carpeta porque la otra lo sigue usando.</span>`; }
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">No se movió: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
   const sps = [x.spotify, x.spotify_src].filter(Boolean);
   if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ Spotify está en pausa: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;
   if(x.no_file) msg += `<br><span style="color:var(--org)">No entró a «${esc(x.into)}»: es de carpeta y no tienes el archivo.</span>`;
   if(x.not_found) msg += `<br><span style="color:var(--org)">No la encontré en Spotify para ponerla en Me gusta.</span>`;
-  if(x.no_uri > 0) msg += `<br><span style="color:var(--org)">Es un archivo local de Spotify: quítala a mano en Spotify.</span>`;
+  if(x.local_done) msg += `<br>🟢 ${x.local_done>1 ? `${x.local_done} archivos locales de Spotify también se quitaron` : 'El archivo local de Spotify también se quitó'} allá.`;
+  if(x.no_uri > 0){ const mn = (x.manual||[]).slice(0,3).map(n=>'«'+esc(n)+'»').join(', ');
+    msg += `<br><span style="color:var(--org)">Spotify no dejó quitar ${x.no_uri>1?`${x.no_uri} archivos locales`:'el archivo local'}${mn?` ${mn}`:''}: quítal${x.no_uri>1?'os':'o'} a mano en Spotify.</span>`; }
   if(x.still) msg += `<br><span style="color:var(--org)">Sigue en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
   if(x.rekordbox) msg += `<br>🎛️ ${esc((x.rekordbox.labels||['Tu programa de DJ']).join(', '))}: también en tu playlist original de allá.`;
   toast(msg);

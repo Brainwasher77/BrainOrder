@@ -2798,9 +2798,18 @@ class Api:
             uris = list(dict.fromkeys(job.get("uris") or []))
             snap = sp.remove_items(job["pid"], uris) if uris else None
             self._sp_drop(job["pid"], uris, snap)
+            out = {"removed": len(uris)}
+            if job.get("local"):  # archivos locales de Spotify: por posición, y se comprueba releyendo
+                lr = sp.remove_local(job["pid"], job["local"])
+                self._sp_drop_local(job["pid"], job["local"], lr.get("left") or [])
+                out["local_removed"], out["local_left"] = lr["removed"], len(lr.get("left") or [])
+                out["local_left_names"] = [self._local_name(x["uri"]) for x in lr.get("left") or []]
+                if lr.get("left"):
+                    config.log(f"Spotify no dejó quitar {len(lr['left'])} archivo(s) local(es) de «{job.get('name')}»: "
+                              + ", ".join(x["uri"] for x in lr["left"][:5]))
             if job.get("id"):
                 cola_spotify.remove(job["id"])
-            return {"removed": len(uris)}
+            return out
         if k == "merge_add":
             import cola_spotify
             pid = job["pid"]
@@ -2877,6 +2886,52 @@ class Api:
                 cur["snapshot"] = cur["analyzed_snapshot"] = snap
         if gone:
             self._update_sp(put)
+
+    def _sp_drop_local(self, pid, items, left=()):
+        """Saca de la caché los archivos locales quitados (items [{"uri", "nth"}]), menos los que siguen (left)."""
+        from collections import Counter
+        keep = Counter(x["uri"] for x in left or [])
+        gone = Counter(x["uri"] for x in items or [])
+        for u in keep:
+            gone[u] -= keep[u]
+        if not +gone:
+            return
+
+        def put(data):
+            cur = next((x for x in data["playlists"] if x["id"] == pid), None)
+            if cur is None or cur.get("tracks") is None:
+                return
+            todo, out = Counter(+gone), []
+            for t in reversed(cur["tracks"]):
+                u = str(t.get("id") or "")[len("local:"):] if str(t.get("id") or "").startswith("local:") else None
+                if u and todo[u] > 0:
+                    todo[u] -= 1
+                    continue
+                out.append(t)
+            cur["tracks"] = out[::-1]
+            cur["total"] = len(cur["tracks"])
+        self._update_sp(put)
+
+    @staticmethod
+    def _local_name(uri):
+        """spotify:local:artista:álbum:título:segundos -> «Artista - Título»."""
+        import urllib.parse
+        p = [urllib.parse.unquote_plus(x) for x in str(uri).split(":")[2:]]
+        art, tit = (p[0] if p else ""), (p[2] if len(p) > 2 else "")
+        return " - ".join(x for x in (art, tit) if x) or str(uri)
+
+    @staticmethod
+    def _local_items(rows, all_rows):
+        """Filas que son archivos locales de Spotify -> [{"uri", "nth"}] (nth = cuál aparición de esa uri)."""
+        from collections import Counter
+        seen, nth = Counter(), {}
+        for r in sorted(all_rows or [], key=lambda r: r.get("pos", 0)):
+            i = str(r.get("id") or "")
+            if i.startswith("local:spotify:local:"):
+                nth[r.get("pos")] = seen[i]
+                seen[i] += 1
+        return [{"uri": str(r["id"])[len("local:"):], "nth": nth.get(r.get("pos"), 0)} for r in rows
+                if str(r.get("id") or "").startswith("local:spotify:local:")]
 
     def _sp_append(self, pid, uris, meta, snap, drop_ids=()):
         """Lo que se acaba de agregar en Spotify se suma a la caché (sin volver a leer la playlist).
@@ -3379,11 +3434,18 @@ class Api:
                 res["rekordbox"] = self._rb_write([{"ref": rbl, "remove": outp + [ch0.get(x, x) for x in outp]}])
             if sl == "spotify":
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in lrows if self._SP_ID.fullmatch(r.get("id") or "")))
-                res["no_uri"] = len(lrows) - len(uris)
-                if uris:
-                    res["spotify"] = self._spotify_do({"kind": "remove", "pid": lose_pid, "name": L["name"], "uris": uris})
+                local = self._local_items(lrows, L.get("tracks"))
+                res["no_uri"] = len(lrows) - len(uris) - len(local)
+                if uris or local:
+                    job = {"kind": "remove", "pid": lose_pid, "name": L["name"], "uris": uris}
+                    if local:
+                        job["local"] = local
+                    res["spotify"] = self._spotify_do(job)
+                    res["no_uri"] += res["spotify"].get("local_left", 0)
+                    res["manual"] = res["spotify"].get("local_left_names") or []
                     if res["spotify"].get("state") == "queued":
                         self._sp_drop(lose_pid, uris)  # mientras Spotify lo permite, en BrainOrder ya no están
+                        self._sp_drop_local(lose_pid, local)
             else:
                 ch = mv.get("changes") or {}
                 gone = {nk(r["source"]) for r in lrows if r.get("source")} | {nk(v) for v in ch.values()}
@@ -3647,6 +3709,7 @@ class Api:
                     seen.add(nk(src))
                     if nk(src) in stay:
                         res["shared"] = res.get("shared", 0) + 1
+                        res.setdefault("shared_names", []).append(r.get("name") or Path(src).stem)
                         continue
                     if B is not None:
                         kr = b_by_id.get(r.get("id")) or {}
@@ -3760,11 +3823,20 @@ class Api:
                     rows = [r for r in rows if r["pos"] not in tw]
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in rows if self._SP_ID.fullmatch(r.get("id") or "")))
                 pend = [r for r in rows if str(r.get("id") or "").startswith(FC.PREFIX)]  # aún esperaban para entrar
-                res["no_uri"] = len(rows) - len(uris) - len(pend)
-                if uris:
-                    res["spotify_src"] = self._spotify_do({"kind": "remove", "pid": src_pid, "name": A["name"], "uris": uris})
+                local = self._local_items(rows, A.get("tracks"))
+                res["no_uri"] = len(rows) - len(uris) - len(pend) - len(local)
+                if uris or local:
+                    job = {"kind": "remove", "pid": src_pid, "name": A["name"], "uris": uris}
+                    if local:
+                        job["local"] = local
+                    res["spotify_src"] = self._spotify_do(job)
+                    res["no_uri"] += res["spotify_src"].get("local_left", 0)
+                    res["manual"] = res["spotify_src"].get("local_left_names") or []
+                    res["local_done"] = res["spotify_src"].get("local_removed", 0)
                     if res["spotify_src"].get("state") == "queued":
                         self._sp_drop(src_pid, uris)  # mientras Spotify lo permite, en BrainOrder ya no están
+                        self._sp_drop_local(src_pid, local)
+                        res["local_queued"] = len(local)
                 if pend:
                     import cola_spotify
                     gone_ids = {r["id"] for r in pend}

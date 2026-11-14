@@ -1,5 +1,5 @@
 {
-  "version": "2.48.0",
-  "build": 112,
-  "notes": "Grillas dudosas más clara: «Un cue fuera» es solo para canciones con un cue. Nuevos: «Grilla vs cues» (todos tus cues caen en el mismo punto, lejos de la grilla) y «Cues dispersos» (la grilla no sigue la canción: tempo en vivo). Las de cues que se van corriendo pasan a BPM por corregir."
+  "version": "2.48.1",
+  "build": 113,
+  "notes": "Quitar canciones: los archivos locales de Spotify ahora también se quitan allá desde BrainOrder (por posición, comprobando después); si Spotify no deja, el aviso dice cuáles quitar a mano. Aviso más claro cuando la canción estaba repetida en la playlist."
 }
