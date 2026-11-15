@@ -2913,6 +2913,23 @@ class Api:
         self._update_sp(put)
 
     @staticmethod
+    def _fc_gone_members(pid, rows, all_rows, stay=()):
+        """Playlist de carpeta: la canción que sale puede ser un archivo que la playlist RECUERDA (lo moviste o
+        se apartó) y que hoy se ve con el archivo de otra fila (la misma canción en otra versión). Quitarla por
+        su archivo no basta: hay que olvidar ese recuerdo por el id de la canción (artista + título del nombre).
+        -> rutas recordadas a olvidar (nunca las que siguen usando las filas que se quedan)."""
+        import unicodedata
+        from fuentes import carpetas as FC
+        nk = (lambda x: os.path.normcase(os.path.normpath(unicodedata.normalize("NFC", str(x)))))
+        out_pos = {r.get("pos") for r in rows}
+        kept = [r for r in all_rows or [] if r.get("pos") not in out_pos]
+        out_ids = {r.get("id") for r in rows if str(r.get("id") or "").startswith(FC.PREFIX)} - {r.get("id") for r in kept}
+        if not out_ids:
+            return []
+        keep_src = {nk(r["source"]) for r in kept if r.get("source")} | set(stay or ())
+        return [m for m in FC.members(pid) if nk(m) not in keep_src and FC.track_id(m) in out_ids]
+
+    @staticmethod
     def _local_name(uri):
         """spotify:local:artista:álbum:título:segundos -> «Artista - Título»."""
         import urllib.parse
@@ -3449,7 +3466,8 @@ class Api:
             else:
                 ch = mv.get("changes") or {}
                 gone = {nk(r["source"]) for r in lrows if r.get("source")} | {nk(v) for v in ch.values()}
-                FC.forget(lose_pid, [m for m in FC.members(lose_pid) if nk(m) in gone])
+                FC.forget(lose_pid, [m for m in FC.members(lose_pid) if nk(m) in gone]
+                          + self._fc_gone_members(lose_pid, lrows, L.get("tracks")))
                 meta = next((m for m in FC.list_playlists(self._cfg) if m["id"] == lose_pid), None)
                 if meta:
                     tracks = FC.tracks(self._cfg, meta)
@@ -3850,7 +3868,8 @@ class Api:
                     self._update_sp(put)
             else:
                 gone = ({nk(r["source"]) for r in rows if r.get("source")} - stay) | {nk(v) for v in ch.values()}
-                FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone])
+                FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone]
+                          + self._fc_gone_members(src_pid, rows, A.get("tracks"), stay))
             # Rekordbox: la playlist original de las que nacieron allá cambia igual
             ops = []
             if rbb:
