@@ -4871,64 +4871,176 @@ class Api:
 
     def shortcuts_remove(self, path):
         """Quita una carpeta de accesos directos sin perder nada (ver accesos.py)."""
-        import accesos
-        from fuentes import carpetas as FC
-
         def run():
-            root = str(Path(path))
-            if root not in [str(Path(r)) for r in self._cfg.get("library_roots") or []]:
-                raise unificar.UnifyError("Esa carpeta no está en tus carpetas de música.")
-            music = [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or [])
-            self._progress("Revisando los accesos directos…", 0.05)
-            sc = accesos.scan(root, music)
-            # playlists que importaste DESDE esa carpeta: su carpeta se deja (si no, desaparecerían)
-            keep_dirs = [e["path"] for e in FC.entries(self._cfg) if e.get("path") and estructura.inside(e["path"], root)]
-            kept = lambda p: any(estructura.inside(p, d) for d in keep_dirs)
-            links = {k: v for k, v in sc["links"].items() if not kept(k)}
-            audio = [a for a in sc["audio"] if not kept(a)]
-            res = {"links": len(links), "broken": len(sc["broken"]), "kept_playlists": [Path(d).name for d in keep_dirs]}
-            # 1) Rekordbox y tus otros programas: al archivo real
-            rb = unificar.rb_paths(self._progress) or set()
-            rb_links = [k for k in links if k in rb]
-            if (rb_links or audio) and rekordbox_sync.rekordbox_running():
-                raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para que sus canciones dejen de "
-                                                    "apuntar a los accesos directos antes de quitarlos.")
-            self._dj_precheck()
-            if rb_links:
-                self._progress("Corrigiendo Rekordbox…", 0.3)
-                rekordbox_sync.backup()
-                pc = {k: links[k] for k in rb_links if links[k] not in rb}
-                dup = {k: links[k] for k in rb_links if links[k] in rb}
-                res["rekordbox"] = unificar._rb_apply(pc, dup)
-            if links:
-                self._dj_fix(links)
-            # 2) música real que estaba ahí -> _Sin Playlist (nunca se borra)
-            if audio:
-                self._progress("Mudando la música que no era acceso directo…", 0.5)
-                nopl = Path(self._cfg["dest_root"]) / self.NOPL_NAME
-                nopl.mkdir(parents=True, exist_ok=True)
-                mv = organizador.relocate([(a, str(nopl)) for a in audio], self._cfg, self._progress)
-                ch = mv.get("changes") or {}
-                if ch:
-                    self._dj_fix(ch)
-                    res["op_id"] = historial.record("relocate", f"Música de «{Path(root).name}» a {self.NOPL_NAME}",
-                                                    list(ch.items()))
-                res["audio_moved"] = len(ch)
-                res["audio_left"] = len(audio) - len(ch)
-            # 3) a la Papelera y fuera de tus carpetas de música
-            self._progress("Mandando los accesos directos a la Papelera…", 0.8)
-            left_audio = res.get("audio_left", 0)
-            if not keep_dirs and not left_audio:
-                res["trash"] = accesos.to_trash([root])
-                self._cfg["library_roots"] = [r for r in self._cfg.get("library_roots") or [] if str(Path(r)) != root]
-                res["root_removed"] = True
-            else:
-                res["trash"] = accesos.to_trash([k for k in list(links) + sc["broken"] if not kept(k)])
+            res = self._shortcuts_clean(path)
             config.save(self._cfg)
             with self._state:
                 analysis = self._build_analysis(light=True) if self._analysis() else None
             return {"result": res, "analysis": analysis}
         return self._task(run, "shortcuts", "Quitar accesos directos", files=True)
+
+    # ---------- juntar toda tu música en tu carpeta de playlists (2.50.0) ----------
+    def _gather_roots(self):
+        """Tus «otras carpetas de música» que se pueden juntar (no descargas ni tu carpeta de playlists)."""
+        dest, inbox = self._cfg.get("dest_root"), self._cfg.get("inbox")
+        return [r for r in self._cfg.get("library_roots") or [] if r and os.path.isdir(r)
+                and not estructura.inside(r, dest) and not (inbox and estructura.inside(r, inbox))]
+
+    def _gather_plan(self, roots, analysis):
+        import juntar
+        from fuentes import carpetas as FC
+        dest = self._cfg["dest_root"]
+        keep = [e["path"] for e in FC.entries(self._cfg) if e.get("path")
+                and any(estructura.inside(e["path"], r) for r in roots)]
+        return juntar.plan(analysis, roots, dest, Path(dest) / self.NOPL_NAME, keep, plataforma.same_recording,
+                           lambda n: biblioteca.norm(Path(n).stem)), keep
+
+    def gather_info(self):
+        """Para «Juntar todo en tu carpeta de playlists»: qué pasaría con cada una de tus otras carpetas."""
+        def run():
+            import accesos
+            roots = self._gather_roots()
+            if not roots:
+                return {"items": []}
+            analysis = self._analysis() or []
+            self._progress("Revisando tus otras carpetas de música…", 0.2)
+            pl, keep = self._gather_plan(roots, analysis)
+            music = [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or [])
+            items = []
+            for r in roots:
+                n = pl["by_root"].get(str(r)) or {}
+                try:
+                    sc = accesos.scan(r, music)
+                    links, broken = len(sc["links"]), len(sc["broken"])
+                except Exception as e:
+                    config.log(f"juntar: accesos de {r}: {e!r}")
+                    links = broken = 0
+                ex = [os.path.relpath(o[0], r) for o in pl["ops"] if estructura.inside(o[0], r)][:5]
+                items.append({"path": r, "name": Path(r).name, **n, "links": links, "broken": broken,
+                              "total": sum(n.get(k, 0) for k in ("home", "nopl", "dup")), "examples": ex,
+                              "kept_playlists": [Path(k).name for k in keep if estructura.inside(k, r)]})
+            return {"items": items, "dest": Path(self._cfg["dest_root"]).name, "nopl": self.NOPL_NAME,
+                    "analyzed": bool(analysis)}
+        return self._task(run, "gather_info", "Revisar otras carpetas")
+
+    def gather_run(self, paths):
+        """Junta en tu carpeta de playlists la música de las carpetas elegidas: cada canción a la carpeta de su
+        playlist (o a _Sin Playlist), la misma grabación repetida a _duplicados, Rekordbox y tus programas
+        apuntando al archivo nuevo (sin perder cues) y, si la carpeta queda sin música, sus accesos directos a la
+        Papelera y fuera de tus carpetas de música. Todo queda en Historial."""
+        def run():
+            roots = [r for r in self._gather_roots() if str(Path(r)) in {str(Path(p)) for p in paths or []}]
+            if not roots:
+                raise unificar.UnifyError("Elige al menos una carpeta.")
+            with self._state:
+                self._set_stage(0, 25)
+                analysis = self._analysis()
+                if not analysis:
+                    analysis = self._build_analysis(light=True) or []
+            pl, keep = self._gather_plan(roots, analysis)
+            ops = pl["ops"]
+            res = {"moved": 0, "home": 0, "nopl": 0, "dup": 0, "skipped": [], "folders": []}
+            for n in pl["by_root"].values():
+                for k in ("home", "nopl", "dup"):
+                    res[k] += n.get(k, 0)
+            if ops:
+                rb = unificar.rb_paths(self._progress) or set()
+                if any(o[0] in rb for o in ops) and rekordbox_sync.rekordbox_running():
+                    raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para juntar tu música "
+                                                        "(hay que corregir las rutas de esas canciones allá).")
+                self._dj_precheck()
+                self._set_stage(25, 75)
+                self._progress(f"Juntando {len(ops)} canción(es) en «{Path(self._cfg['dest_root']).name}»…", 0)
+                for o in ops:
+                    Path(o[1]).mkdir(parents=True, exist_ok=True)
+                mv = organizador.relocate(ops, self._cfg, self._progress)
+                ch = mv.get("changes") or {}
+                dup_of = {ch[a]: b for a, b in pl["dup_of"].items() if a in ch}
+                if ch:
+                    self._dj_fix(ch)
+                    res["op_id"] = historial.record("relocate", f"Juntar en «{Path(self._cfg['dest_root']).name}»: "
+                                                    + ", ".join(Path(r).name for r in roots), list(ch.items()),
+                                                    {"dup_of": dup_of} if dup_of else None)
+                    pinned = set(self._cfg.get("pinned_paths") or [])
+                    if pinned & set(ch):
+                        self._cfg["pinned_paths"] = sorted((pinned - set(ch)) | {ch[p] for p in pinned & set(ch)})
+                res["moved"], res["skipped"] = len(ch), mv.get("skipped") or []
+            # accesos directos y la carpeta: lo de «Quitar accesos directos»
+            self._set_stage(75, 90)
+            for r in roots:
+                try:
+                    sc = self._shortcuts_clean(r)
+                    res["folders"].append({"name": Path(r).name, "removed": bool(sc.get("root_removed")),
+                                           "links": sc.get("links", 0), "broken": sc.get("broken", 0),
+                                           "left": sc.get("audio_left", 0), "kept": sc.get("kept_playlists") or []})
+                except Exception as e:
+                    config.log(f"juntar: accesos de {r}: {e!r}")
+                    res["folders"].append({"name": Path(r).name, "error": str(e)})
+                if os.path.isdir(r):
+                    self._remove_if_empty(Path(r))
+            config.save(self._cfg)
+            self._set_stage(90, 100)
+            with self._state:
+                analysis = self._build_analysis(light=True)
+            config.log(f"Juntar en la carpeta de playlists: {res}")
+            return {"result": res, "analysis": analysis}
+        return self._task(run, "gather", "Juntar tu música", files=True)
+
+    def _shortcuts_clean(self, path):
+        """Lo de shortcuts_remove (con _files tomado): accesos directos -> archivo real en tus programas y a la
+        Papelera; música real -> _Sin Playlist; carpeta fuera de tus carpetas de música si queda sin música."""
+        import accesos
+        from fuentes import carpetas as FC
+        root = str(Path(path))
+        if root not in [str(Path(r)) for r in self._cfg.get("library_roots") or []]:
+            raise unificar.UnifyError("Esa carpeta no está en tus carpetas de música.")
+        music = [self._cfg.get("dest_root")] + list(self._cfg.get("library_roots") or [])
+        self._progress("Revisando los accesos directos…", 0.05)
+        sc = accesos.scan(root, music)
+        # playlists que importaste DESDE esa carpeta: su carpeta se deja (si no, desaparecerían)
+        keep_dirs = [e["path"] for e in FC.entries(self._cfg) if e.get("path") and estructura.inside(e["path"], root)]
+        kept = lambda p: any(estructura.inside(p, d) for d in keep_dirs)
+        links = {k: v for k, v in sc["links"].items() if not kept(k)}
+        audio = [a for a in sc["audio"] if not kept(a)]
+        res = {"links": len(links), "broken": len(sc["broken"]), "kept_playlists": [Path(d).name for d in keep_dirs]}
+        # 1) Rekordbox y tus otros programas: al archivo real
+        rb = unificar.rb_paths(self._progress) or set()
+        rb_links = [k for k in links if k in rb]
+        if (rb_links or audio) and rekordbox_sync.rekordbox_running():
+            raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para que sus canciones dejen de "
+                                                "apuntar a los accesos directos antes de quitarlos.")
+        self._dj_precheck()
+        if rb_links:
+            self._progress("Corrigiendo Rekordbox…", 0.3)
+            rekordbox_sync.backup()
+            pc = {k: links[k] for k in rb_links if links[k] not in rb}
+            dup = {k: links[k] for k in rb_links if links[k] in rb}
+            res["rekordbox"] = unificar._rb_apply(pc, dup)
+        if links:
+            self._dj_fix(links)
+        # 2) música real que estaba ahí -> _Sin Playlist (nunca se borra)
+        if audio:
+            self._progress("Mudando la música que no era acceso directo…", 0.5)
+            nopl = Path(self._cfg["dest_root"]) / self.NOPL_NAME
+            nopl.mkdir(parents=True, exist_ok=True)
+            mv = organizador.relocate([(a, str(nopl)) for a in audio], self._cfg, self._progress)
+            ch = mv.get("changes") or {}
+            if ch:
+                self._dj_fix(ch)
+                res["op_id"] = historial.record("relocate", f"Música de «{Path(root).name}» a {self.NOPL_NAME}",
+                                                list(ch.items()))
+            res["audio_moved"] = len(ch)
+            res["audio_left"] = len(audio) - len(ch)
+        # 3) a la Papelera y fuera de tus carpetas de música
+        self._progress("Mandando los accesos directos a la Papelera…", 0.8)
+        left_audio = res.get("audio_left", 0)
+        if not keep_dirs and not left_audio:
+            res["trash"] = accesos.to_trash([root])
+            self._cfg["library_roots"] = [r for r in self._cfg.get("library_roots") or [] if str(Path(r)) != root]
+            res["root_removed"] = True
+        else:
+            res["trash"] = accesos.to_trash([k for k in list(links) + sc["broken"] if not kept(k)])
+        return res
 
     # ---------- carpeta de playlists renombrada / carpetas como en Rekordbox (2.31.0) ----------
     def _pl_folder_names(self, root):

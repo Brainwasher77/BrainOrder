@@ -1,5 +1,5 @@
 {
-  "version": "2.49.0",
-  "build": 115,
-  "notes": "Grupos como carpetas: si quieres (se pregunta al abrir), cada grupo es una subcarpeta en Rekordbox y en tu carpeta de música, y la playlist se muda al cambiarle el grupo."
+  "version": "2.50.0",
+  "build": 116,
+  "notes": "Juntar toda tu música: lo de tus otras carpetas (Playlists rekordbox, DJ Library…) pasa a la carpeta de su playlist en tu carpeta principal, con Rekordbox al día."
 }

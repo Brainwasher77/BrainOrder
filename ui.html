@@ -305,6 +305,7 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
         <a data-v="stats" onclick="show('stats')"><div class="row"><span class="name">Estadísticas</span><span class="cnt mono" id="nPct">–</span></div></a>
         <a data-v="mik" onclick="show('mik')"><div class="row"><span class="name">Sin Mixed In Key</span><span class="cnt mono" id="nMik">–</span></div></a>
         <a data-v="dups" onclick="show('dups')"><div class="row"><span class="name">Duplicados</span><span class="cnt mono" id="nDups">–</span></div></a>
+        <a data-v="gather" onclick="show('gather')"><div class="row"><span class="name">Juntar toda tu música</span><span class="cnt mono" id="nGather">–</span></div></a>
         <a data-v="unify" onclick="show('unify')"><div class="row"><span class="name">Unificar repetidos</span><span class="cnt mono" id="nUni">–</span></div></a>
         <a data-v="dupclean" onclick="show('dupclean')"><div class="row"><span class="name">Vaciar _duplicados</span><span class="cnt mono" id="nDupC">–</span></div></a>
         <a data-v="conn" onclick="show('conn')"><div class="row"><span class="name">Conexiones</span><span class="cnt mono" id="nConn">–</span></div></a>
@@ -2016,6 +2017,7 @@ function renderMainCore(){
   const m = $('main');
   if(S.view==='unify'){ m.innerHTML = unifyView(); return; }
   if(S.view==='dupclean'){ m.innerHTML = dcView(); return; }
+  if(S.view==='gather'){ m.innerHTML = gatherView(); return; }
   if(S.view==='rules'){ m.innerHTML = rulesView(); return; }
   if(S.view==='conn'){ m.innerHTML = connView(); return; }
   if(S.view==='hist'){ m.innerHTML = histView(); return; }
@@ -2582,7 +2584,50 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='gather' && S.view!=='gather') gatherLoad(); if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+
+// ---------- juntar toda tu música en tu carpeta de playlists (2.50.0) ----------
+let GA = {data:null, sel:new Set(), loading:false};
+async function gatherLoad(){
+  GA.loading = true; if(S.view==='gather') renderMain();
+  const r = await api().gather_info(); GA.loading = false;
+  if(!r.ok){ GA.data = null; taskErr(r); if(S.view==='gather') renderMain(); return; }
+  GA.data = r; GA.sel = new Set((r.items||[]).filter(x=>x.total||x.links||x.broken).map(x=>x.path));
+  const n = (r.items||[]).reduce((a,x)=>a+(x.total||0),0), el = $('nGather'); if(el) el.textContent = n || '✓';
+  if(S.view==='gather') renderMain();
+}
+function gatherView(){
+  const d = GA.data, dest = esc((d&&d.dest) || (S.settings.dest_root||'').split(/[\\/]/).pop());
+  const head = `<div class="vhead"><h2>📦 Juntar toda tu música en «${dest}»</h2>
+    <span class="sub">Lo que tienes en tus <b>otras carpetas de música</b> (Ajustes) hoy se usa donde está y nunca se mueve. Aquí lo traes a tu carpeta de playlists: cada canción va a la carpeta de su playlist (también las de subcarpetas, como <i>Brainwasher › Soft</i> o <i>Crossover › ADC</i>); la que no está en ninguna playlist va a <code>${esc((d&&d.nopl)||'_Sin Playlist')}</code>; si ya tienes la misma grabación, la de afuera va a <code>_duplicados</code>; si es otra versión con el mismo nombre, entra como «Canción (2)». Rekordbox y tus programas quedan apuntando al archivo nuevo (sin perder cues) y los accesos directos van a la Papelera. Nunca se borra música y todo queda en Historial para deshacer.</span></div>`;
+  if(GA.loading || running('gather_info')) return head + '<div class="empty"><p>Revisando tus otras carpetas…</p></div>';
+  if(!d) return head + `<div class="empty"><button class="primary" onclick="gatherLoad()">Revisar mis otras carpetas</button></div>`;
+  if(!(d.items||[]).length) return head + `<div class="empty"><h3>No tienes otras carpetas de música 🎉</h3><p class="art">Toda tu música ya vive en «${dest}».</p></div>`;
+  const rows = d.items.map(x => `<label class="box" style="display:flex;gap:12px;align-items:flex-start;margin:0 0 10px;cursor:pointer">
+      <input type="checkbox" ${GA.sel.has(x.path)?'checked':''} data-p="${esc(x.path)}" onchange="this.checked?GA.sel.add(this.dataset.p):GA.sel.delete(this.dataset.p); renderMain()" style="margin-top:3px">
+      <span style="flex:1"><b>📁 ${esc(x.name)}</b> <span class="art">${esc(short(x.path))}</span><br>
+      <span class="art">${x.total ? `<b>${x.total}</b> canción(es): ${x.home} a la carpeta de su playlist${x.renamed?` (${x.renamed} con otro nombre)`:''}, ${x.nopl} a ${esc(d.nopl)}, ${x.dup} repetida(s) a _duplicados.` : 'Sin música propia.'}
+        ${x.links||x.broken ? ` ${x.links} acceso(s) directo(s)${x.broken?`, ${x.broken} roto(s)`:''} a la Papelera.` : ''}
+        ${(x.kept_playlists||[]).length ? `<br>Se quedan: ${x.kept_playlists.map(esc).join(', ')} (playlists que importaste desde ahí).` : ''}
+        ${(x.examples||[]).length ? `<br>Ej.: ${x.examples.map(esc).join(' · ')}` : ''}</span></span></label>`).join('');
+  const tot = d.items.filter(x=>GA.sel.has(x.path)).reduce((a,x)=>a+(x.total||0),0), busy = running('gather');
+  return head + (d.analyzed ? '' : `<div class="box" style="border-color:var(--org);margin-bottom:12px">Todavía no hay análisis: dale <b>Analizar</b> primero para saber a qué playlist va cada canción (si no, todo iría a ${esc(d.nopl)}).</div>`)
+    + rows + `<div class="actions" style="justify-content:flex-start"><button onclick="gatherLoad()">↻ Volver a revisar</button>
+      <button class="primary" ${busy||!GA.sel.size?'disabled':''} onclick="gatherGo()">${busy?'Juntando…':`📦 Juntar ${tot} canción(es) en «${dest}»`}</button></div>
+    <p class="art">Rekordbox tiene que estar cerrado (se respalda antes). Si una carpeta queda sin música, sale de tus carpetas de música.</p>`;
+}
+async function gatherGo(){
+  const paths = [...GA.sel]; if(!paths.length) return;
+  setTimeout(()=>{ if(S.view==='gather') renderMain(); }, 150);
+  const r = await api().gather_run(paths); if(!r.ok){ taskErr(r); renderMain(); return; }
+  if(r.analysis) setAnalysis(r.analysis); loadHist();
+  const x = r.result || {};
+  toast(`📦 Listo: ${x.moved} canción(es) en tu carpeta de playlists — ${x.home} a su playlist, ${x.nopl} a _Sin Playlist, ${x.dup} repetida(s) a _duplicados.`
+    + ((x.skipped||[]).length ? `<br><span style="color:var(--org)">${x.skipped.length} no se movieron (${esc(x.skipped[0].file)}: ${esc(x.skipped[0].why)}…)</span>` : '')
+    + (x.folders||[]).map(f => f.error ? `<br><span style="color:var(--org)">«${esc(f.name)}»: ${esc(f.error)}</span>`
+        : (f.removed ? `<br>«${esc(f.name)}» ya no está en tus carpetas de música (a la Papelera).` : '')).join('') + undoLink(x));
+  GA.data = null; gatherLoad(); scLoad(); fdLoad();
+}
 
 // ---------- conexiones: fuentes y programas de DJ ----------
 let CX = null;
