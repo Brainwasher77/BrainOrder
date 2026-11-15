@@ -370,7 +370,9 @@ function paintTasks(){
   const keys = Object.keys(T), box = $('tasks');
   box.classList.toggle('on', keys.length>0);
   $('prog').classList.toggle('busy', keys.length>0);
-  if(keys.length) $('progTxt').textContent = keys.length===1 ? 'Trabajando…' : `${keys.length} tareas en curso`;
+  if(keys.length){ const t = T[keys[0]];  // decir QUÉ está haciendo, no solo «Trabajando…»
+    $('progTxt').textContent = keys.length===1 ? `${t.label}${t.state==='queued'?' (en cola)':''}${t.msg?': '+t.msg:'…'}` : `${keys.length} tareas en curso: ${keys.map(k=>T[k].label).join(', ')}`;
+    $('progTxt').title = keys.map(k => `${T[k].label}${T[k].msg?' — '+T[k].msg:''}`).join('\n'); }
   box.innerHTML = keys.map(k => { const t=T[k];
     return `<div class="trow${t.state==='queued'?' queued':''}" data-key="${esc(k)}"><b>${esc(t.label)}</b><span class="tm">${esc(t.msg||'')}</span>
       <div class="pbar"><i style="width:${t.pct||0}%"></i></div><span class="tp mono">${t.state==='queued'?'–':(t.pct||0)+'%'}</span>
