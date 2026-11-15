@@ -2599,14 +2599,14 @@ async function gatherLoad(){
 function gatherView(){
   const d = GA.data, dest = esc((d&&d.dest) || (S.settings.dest_root||'').split(/[\\/]/).pop());
   const head = `<div class="vhead"><h2>📦 Juntar toda tu música en «${dest}»</h2>
-    <span class="sub">Lo que tienes en tus <b>otras carpetas de música</b> (Ajustes) hoy se usa donde está y nunca se mueve. Aquí lo traes a tu carpeta de playlists: cada canción va a la carpeta de su playlist (también las de subcarpetas, como <i>Brainwasher › Soft</i> o <i>Crossover › ADC</i>); la que no está en ninguna playlist va a <code>${esc((d&&d.nopl)||'_Sin Playlist')}</code>; si ya tienes la misma grabación, la de afuera va a <code>_duplicados</code>; si es otra versión con el mismo nombre, entra como «Canción (2)». Rekordbox y tus programas quedan apuntando al archivo nuevo (sin perder cues) y los accesos directos van a la Papelera. Nunca se borra música y todo queda en Historial para deshacer.</span></div>`;
+    <span class="sub">Lo que tienes en tus <b>otras carpetas de música</b> (Ajustes) hoy se usa donde está y nunca se mueve. Aquí lo traes a tu carpeta de playlists: cada canción va a la carpeta de su playlist (también las de subcarpetas, como <i>Brainwasher › Soft</i> o <i>Crossover › ADC</i>); la que no está en ninguna playlist va a <code>${esc((d&&d.nopl)||'_Sin Playlist')}</code>; si ya tienes una canción con el mismo nombre, es repetida y la de afuera va a <code>_duplicados</code> (no se crean copias «Canción (2)»). Rekordbox y tus programas quedan apuntando al archivo nuevo (sin perder cues) y los accesos directos van a la Papelera. Nunca se borra música y todo queda en Historial para deshacer.</span></div>`;
   if(GA.loading || running('gather_info')) return head + '<div class="empty"><p>Revisando tus otras carpetas…</p></div>';
   if(!d) return head + `<div class="empty"><button class="primary" onclick="gatherLoad()">Revisar mis otras carpetas</button></div>`;
   if(!(d.items||[]).length) return head + `<div class="empty"><h3>No tienes otras carpetas de música 🎉</h3><p class="art">Toda tu música ya vive en «${dest}».</p></div>`;
   const rows = d.items.map(x => `<label class="box" style="display:flex;gap:12px;align-items:flex-start;margin:0 0 10px;cursor:pointer">
       <input type="checkbox" ${GA.sel.has(x.path)?'checked':''} data-p="${esc(x.path)}" onchange="this.checked?GA.sel.add(this.dataset.p):GA.sel.delete(this.dataset.p); renderMain()" style="margin-top:3px">
       <span style="flex:1"><b>📁 ${esc(x.name)}</b> <span class="art">${esc(short(x.path))}</span><br>
-      <span class="art">${x.total ? `<b>${x.total}</b> canción(es): ${x.home} a la carpeta de su playlist${x.renamed?` (${x.renamed} con otro nombre)`:''}, ${x.nopl} a ${esc(d.nopl)}, ${x.dup} repetida(s) a _duplicados.` : 'Sin música propia.'}
+      <span class="art">${x.total ? `<b>${x.total}</b> canción(es): ${x.home} a la carpeta de su playlist, ${x.nopl} a ${esc(d.nopl)}, ${x.dup} repetida(s) a _duplicados.` : 'Sin música propia.'}
         ${x.links||x.broken ? ` ${x.links} acceso(s) directo(s)${x.broken?`, ${x.broken} roto(s)`:''} a la Papelera.` : ''}
         ${(x.kept_playlists||[]).length ? `<br>Se quedan: ${x.kept_playlists.map(esc).join(', ')} (playlists que importaste desde ahí).` : ''}
         ${(x.examples||[]).length ? `<br>Ej.: ${x.examples.map(esc).join(' · ')}` : ''}</span></span></label>`).join('');
@@ -2614,7 +2614,7 @@ function gatherView(){
   return head + (d.analyzed ? '' : `<div class="box" style="border-color:var(--org);margin-bottom:12px">Todavía no hay análisis: dale <b>Analizar</b> primero para saber a qué playlist va cada canción (si no, todo iría a ${esc(d.nopl)}).</div>`)
     + rows + `<div class="actions" style="justify-content:flex-start"><button onclick="gatherLoad()">↻ Volver a revisar</button>
       <button class="primary" ${busy||!GA.sel.size?'disabled':''} onclick="gatherGo()">${busy?'Juntando…':`📦 Juntar ${tot} canción(es) en «${dest}»`}</button></div>
-    <p class="art">Rekordbox tiene que estar cerrado (se respalda antes). Si una carpeta queda sin música, sale de tus carpetas de música.</p>`;
+    <p class="art">Rekordbox tiene que estar cerrado (se respalda antes). Las carpetas y subcarpetas que quedan vacías se borran; si una carpeta queda sin música, sus accesos directos y lo que quede va a la Papelera y sale de tus carpetas de música.</p>`;
 }
 async function gatherGo(){
   const paths = [...GA.sel]; if(!paths.length) return;

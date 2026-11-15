@@ -25,7 +25,7 @@ def w(p, data=b"x"):
 
 
 # tu carpeta de playlists (con subcarpetas como en Rekordbox)
-w(BL / "Crossover" / "ADC" / "Rumba ADC" / "Chipi.m4a", b"otra")        # mismo nombre, otra grabación
+w(BL / "Crossover" / "ADC" / "Rumba ADC" / "Chipi.m4a", b"otra")        # mismo nombre, otra duración: igual es repetida
 w(BL / "Brainwasher" / "Soft" / "Jungle House" / "Ferrari.mp3", b"igual")  # misma grabación
 w(BL / "Pop" / "Latch.mp3", b"pop")
 # afuera, con subcarpetas
@@ -33,6 +33,7 @@ a = w(PR / "Crossover" / "MGNO" / "Electronica-Dance" / "Tema A.mp3")
 b = w(PR / "Desembale" / "Chipi.m4a", b"mia")
 c = w(PR / "Brainwasher" / "Soft" / "Ferrari.mp3", b"igual")
 d = w(PR / "Desembale" / "Huerfana.mp3")
+h = w(PR / "Desembale" / "Latch.mp3".replace("Latch", "Tema A"), b"distinta")  # sin playlist, mismo nombre que una que entra
 e = w(PR / "Desembale" / "Latch.mp3", b"pop")                    # sin playlist pero ya está en BRAIN LIBRARY
 f = w(DJ / "Merengue" / "Tiburon.aif")
 w(PR / "Desembale" / "_duplicados" / "vieja.mp3")                 # lo de _duplicados no se toca
@@ -52,12 +53,14 @@ pl = juntar.plan(analysis, [str(PR), str(DJ)], str(BL), str(BL / "_Sin Playlist"
                  lambda n: Path(n).stem.lower())
 ops = {o[0]: (o[1], o[2]) for o in pl["ops"]}
 assert ops[a] == (home("Electronica-Dance"), None), ops[a]
-assert ops[b] == (home("Crossover", "ADC", "Rumba ADC"), "Chipi (2).m4a"), ops[b]  # otra versión: otro nombre
+assert ops[b][0] == home("_duplicados", "Rumba ADC") and pl["dup_of"][b] == home("Crossover", "ADC", "Rumba ADC", "Chipi.m4a"), ops[b]
 assert ops[c][0] == home("_duplicados", "Jungle House") and pl["dup_of"][c] == home("Brainwasher", "Soft", "Jungle House", "Ferrari.mp3")
 assert ops[d] == (home("_Sin Playlist"), None) and ops[f] == (home("Merengue"), None)
 assert ops[e][0].startswith(home("_duplicados")) and pl["dup_of"][e] == home("Pop", "Latch.mp3")
-assert g not in ops and len(ops) == 6, sorted(ops)
-assert pl["by_root"][str(PR)] == {"home": 2, "nopl": 1, "dup": 2, "renamed": 1, "kept": 1}, pl["by_root"]
+assert ops[str(PR / "Desembale" / "_duplicados" / "vieja.mp3")][0] == home("_duplicados", "Playlists rekordbox", "Desembale", "_duplicados")
+assert ops[h] == (home("_Sin Playlist"), None), ops[h]  # en BRAIN LIBRARY todavía no hay «Tema A»: no es repetida
+assert g not in ops and len(ops) == 8, sorted(ops)
+assert pl["by_root"][str(PR)] == {"home": 1, "nopl": 2, "dup": 4, "kept": 1}, pl["by_root"]
 print("plan ok")
 
 # ------------------------------------------------ BrainOrder: mueve, anota y deja la carpeta fuera
@@ -100,13 +103,17 @@ o._shortcuts_clean = lambda r: CLEAN.append(r) or {"root_removed": r == str(DJ),
 assert [Path(x).name for x in o._gather_roots()] == ["Playlists rekordbox", "DJ Library"]
 r = o.gather_run([str(PR), str(DJ)])
 res = r["result"]
-assert r["ok"] and res["moved"] == 6 and (res["home"], res["nopl"], res["dup"]) == (3, 1, 2), res
-assert (BL / "Electronica-Dance" / "Tema A.mp3").exists() and (BL / "Crossover" / "ADC" / "Rumba ADC" / "Chipi (2).m4a").exists()
+assert r["ok"] and res["moved"] == 8 and (res["home"], res["nopl"], res["dup"]) == (2, 2, 4), res
+assert (BL / "Electronica-Dance" / "Tema A.mp3").exists() and (BL / "_duplicados" / "Rumba ADC" / "Chipi.m4a").exists()
+assert not (BL / "Crossover" / "ADC" / "Rumba ADC" / "Chipi (2).m4a").exists()
 assert (BL / "Crossover" / "ADC" / "Rumba ADC" / "Chipi.m4a").read_bytes() == b"otra"  # no se pisó
 assert (BL / "Merengue" / "Tiburon.aif").exists() and (BL / "_Sin Playlist" / "Huerfana.mp3").exists()
-assert (PR / "Importada" / "Mia.mp3").exists() and (PR / "Desembale" / "_duplicados" / "vieja.mp3").exists()
+assert (PR / "Importada" / "Mia.mp3").exists()
+# las carpetas que quedaron solas se borran (la de la playlist importada se queda)
+assert not (PR / "Desembale").exists() and not (PR / "Crossover").exists() and not (PR / "Brainwasher" / "Soft").exists(), \
+    sorted(str(x) for x in PR.rglob("*"))
 label, items, extra = REC[0]
-assert "Playlists rekordbox" in label and len(items) == 6 and len(extra["dup_of"]) == 2, REC
+assert "Playlists rekordbox" in label and len(items) == 8 and len(extra["dup_of"]) == 3, REC
 assert CLEAN == [str(PR), str(DJ)] and not DJ.exists() or not any(DJ.rglob("*.aif")), list(DJ.rglob("*"))
 print("juntar ok")
 print("OK")
