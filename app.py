@@ -20,6 +20,7 @@ import biblioteca  # noqa: E402
 import reglas  # noqa: E402
 import historial  # noqa: E402
 import estructura  # noqa: E402
+import grupos  # noqa: E402
 import orden  # noqa: E402
 import destinos  # noqa: E402
 import mik_dj  # noqa: E402
@@ -152,6 +153,7 @@ class Api:
         #  _files: mover archivos y tocar Rekordbox. Una sola tarea a la vez; las demás esperan en cola.
         self._state = threading.RLock()
         self._files = threading.Lock()
+        self._grp_changed = False   # el vigilante de Rekordbox cambió algún grupo (para avisar a la ventana)
         self._reg = threading.Lock()
         self._running = {}          # clave de tarea -> id
         self._queued, self._cancel = set(), set()  # tareas esperando su turno / que pediste cancelar
@@ -384,6 +386,9 @@ class Api:
             "ui": {**UI_DEFAULTS, **(self._cfg.get("ui") or {})},
             "stats_hidden": list(self._cfg.get("stats_hidden") or []),
             "pl_groups": dict(self._cfg.get("pl_groups") or {}),
+            # grupos como carpetas (Rekordbox + disco): se le pregunta a cada usuario una vez
+            "groups_folders": self._cfg.get("groups_folders"),
+            "groups_ask": self._cfg.get("groups_folders") is None,
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -1302,7 +1307,7 @@ class Api:
                         changed = self._rb_tree_refresh()
                         if changed or self._mirror_stale(analysis):
                             analysis = self._build_analysis(light=True)
-                        if self._cfg.get("rb_mirror", True):
+                        if self._mirror_on():
                             mirror = self._mirror_apply(analysis)
                             if mirror:
                                 analysis = self._build_analysis(light=True)
@@ -1393,7 +1398,8 @@ class Api:
                             config.log(f"Rekordbox manda (antes de Organizar): {e!r}")
                         # no pisar playlists con cambios tuyos en Rekordbox que aún no decidiste
                         pend = self._rb_pending_pids()
-                        cfg_k = {**self._cfg, "_rb_pending": pend, "_rb_base": rb_cambios.load_baseline()}
+                        cfg_k = {**self._cfg, "_rb_pending": pend, "_rb_base": rb_cambios.load_baseline(),
+                                 "_rb_place": self._rb_place_map()}
                         if auto:  # el análisis cambió con lo que pasaste
                             analysis = self._analysis() or analysis
                             target = [p for p in analysis if p["id"] == pid] if pid else analysis
@@ -1657,9 +1663,11 @@ class Api:
 
     def set_pl_group(self, pids, group=""):
         """Pone una o varias playlists en un grupo («Techno», «Para eventos»…). Grupo vacío = sin grupo.
-        Solo cambia cómo se ven en BrainOrder: no toca carpetas, Spotify ni programas de DJ."""
+        Con grupos como carpetas (cfg groups_folders) además quedan pendientes de mudarse en Rekordbox y en el
+        disco (la pantalla llama a groups_apply); si no, solo cambia cómo se ven en BrainOrder."""
         g = self._group_name(group)
         cur = dict(self._cfg.get("pl_groups") or {})
+        before = dict(cur)
         g = next((v for v in cur.values() if g and v.casefold() == g.casefold()), g)  # «techno» = «Techno»
         for pid in ([pids] if isinstance(pids, str) else list(pids or [])):
             if g:
@@ -1667,8 +1675,9 @@ class Api:
             else:
                 cur.pop(pid, None)
         self._cfg["pl_groups"] = cur
+        moved = self._grp_queue(before, cur)
         config.save(self._cfg)
-        return {"ok": True, "pl_groups": cur}
+        return {"ok": True, "pl_groups": cur, "folders": self._groups_on(), "moved": moved}
 
     def rename_pl_group(self, old, new=""):
         """Renombra un grupo en todas sus playlists (o lo deshace si el nombre nuevo está vacío).
@@ -1677,11 +1686,202 @@ class Api:
         if not old:
             return {"ok": False, "error": "Falta el grupo."}
         cur = dict(self._cfg.get("pl_groups") or {})
+        before = dict(cur)
         same = next((v for v in cur.values() if g and v.casefold() == g.casefold()), g)
         cur = {k: (same if v == old else v) for k, v in cur.items() if v != old or g}
         self._cfg["pl_groups"] = cur
+        moved = self._grp_queue(before, cur)
         config.save(self._cfg)
-        return {"ok": True, "pl_groups": cur}
+        return {"ok": True, "pl_groups": cur, "folders": self._groups_on(), "moved": moved}
+
+    # ---------- grupos como carpetas (en Rekordbox y en el disco) ----------
+    def _groups_on(self):
+        return self._cfg.get("groups_folders") is True
+
+    def _grp_queue(self, before, after):
+        """Con grupos como carpetas: las playlists cuyo grupo cambió quedan pendientes de mudarse en Rekordbox
+        (cfg grp_moves). El disco las sigue solo (ver _tree). -> cuántas cambiaron."""
+        if not self._groups_on():
+            return 0
+        pend = dict(self._cfg.get("grp_moves") or {})
+        n = 0
+        for pid in set(before) | set(after):
+            if grupos.norm(before.get(pid, "")) != grupos.norm(after.get(pid, "")):
+                pend[pid] = grupos.to_trail(after.get(pid, ""))
+                n += 1
+        self._cfg["grp_moves"] = pend
+        return n
+
+    def _tree(self):
+        """Subcarpetas de cada playlist en el disco: las de Rekordbox y, con grupos como carpetas, las del grupo."""
+        return grupos.effective_tree(self._cfg.get("rb_tree") or {}, self._cfg.get("pl_groups") or {},
+                                     self._cfg.get("grp_moves") or {}, self._groups_on(),
+                                     self._cfg.get("rb_mirror", True))
+
+    def _mirror_on(self):
+        return bool(self._cfg.get("rb_mirror", True) or self._groups_on())
+
+    def _rb_place_map(self):
+        """Para Organizar en Rekordbox: dónde va cada playlist (las pendientes y las que aún no están allá)."""
+        if not self._groups_on():
+            return {}
+        import rb_cambios
+        there = {(b or {}).get("pid") for b in rb_cambios.load_baseline().values()}
+        out = {pid: grupos.to_trail(g) for pid, g in (self._cfg.get("pl_groups") or {}).items()
+               if pid not in there and grupos.to_trail(g)}
+        out.update({pid: list(t) for pid, t in (self._cfg.get("grp_moves") or {}).items()})
+        return out
+
+    def _rb_present(self, state):
+        import rb_cambios
+        from fuentes import carpetas as FC
+        refs = {str(e["ref"]): FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("program") == "rekordbox"}
+        return estructura.present(state, rb_cambios.load_baseline(), refs)
+
+    def groups_folders_preview(self):
+        """Para la pregunta del inicio: qué pasaría si tus grupos pasan a ser carpetas."""
+        try:
+            import rb_cambios
+            rb_on = destinos.DESTINATIONS["rekordbox"].enabled(self._cfg)
+            state = None
+            if rb_on:
+                try:
+                    state = rb_cambios.read_state(self._cfg)
+                except Exception as e:
+                    config.log(f"grupos como carpetas (vista previa): {e!r}")
+            tree, present = {}, set()
+            if state:
+                from fuentes import carpetas as FC
+                refs = {str(e["ref"]): FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("program") == "rekordbox"}
+                tree = estructura.trails(state, rb_cambios.load_baseline(), self._analysis() or [], refs)
+                present = self._rb_present(state)
+            groups = self._cfg.get("pl_groups") or {}
+            plan = grupos.activation_plan(groups, tree, present, "rekordbox")
+            names = {p["id"]: p["name"] for p in self._analysis() or []}
+            grouped = [pid for pid, g in plan["groups"].items() if grupos.to_trail(g) and pid in names]
+            return {"ok": True, "rekordbox": bool(rb_on), "rb_found": bool(state),
+                    "folder": self._cfg.get("rekordbox_folder") or "BrainOrder",
+                    "root": Path(self._cfg.get("dest_root") or "").name,
+                    "groups": len({grupos.norm(plan["groups"][p]).casefold() for p in grouped}),
+                    "playlists": len(grouped),
+                    "from_rb": len([p for p in plan["from_rb"] if p in names]),
+                    "examples": sorted({grupos.norm(plan["groups"][p]) for p in grouped})[:6],
+                    "conflicts": [{"name": names.get(c["pid"], c["pid"]), "group": c["group"], "folder": c["folder"]}
+                                  for c in plan["conflicts"] if c["pid"] in names][:30]}
+        except Exception as e:
+            config.log(traceback.format_exc())
+            return {"ok": False, "error": str(e)}
+
+    def groups_folders_set(self, on, conflict="rekordbox"):
+        """Respuesta a la pregunta del inicio (o en Ajustes). on=None: «decidir después» (se vuelve a preguntar).
+        Al activarlo: las que ya están en subcarpetas de Rekordbox sin grupo toman esa subcarpeta como grupo; si
+        no coinciden manda conflict; las demás quedan pendientes de mudarse (la pantalla llama a groups_apply)."""
+        import rb_cambios
+        if on is None:
+            return {"ok": True, "groups_folders": None}
+        on = bool(on)
+        was = self._groups_on()
+        self._cfg["groups_folders"] = on
+        self._cfg["groups_conflict"] = "group" if conflict == "group" else "rekordbox"
+        out = {"ok": True, "groups_folders": on, "moves": 0, "from_rb": 0, "conflicts": 0}
+        if on and not was:
+            state = None
+            if destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+                try:
+                    state = rb_cambios.read_state(self._cfg)
+                except Exception as e:
+                    config.log(f"grupos como carpetas: no pude leer Rekordbox: {e!r}")
+            tree, present = {}, set()
+            if state:
+                from fuentes import carpetas as FC
+                refs = {str(e["ref"]): FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("program") == "rekordbox"}
+                tree = estructura.trails(state, rb_cambios.load_baseline(), self._analysis() or [], refs)
+                present = self._rb_present(state)
+                self._cfg["rb_tree"] = tree
+            plan = grupos.activation_plan(self._cfg.get("pl_groups") or {}, tree, present,
+                                          self._cfg["groups_conflict"])
+            self._cfg["pl_groups"] = {k: v for k, v in plan["groups"].items() if grupos.to_trail(v)}
+            self._cfg["grp_moves"] = plan["moves"] if state else {}
+            out.update(moves=len(plan["moves"]), from_rb=len(plan["from_rb"]), conflicts=len(plan["conflicts"]))
+        elif not on:
+            self._cfg["grp_moves"] = {}  # vuelven a ser solo para ordenar: nada se muda (lo hecho se queda)
+        config.save(self._cfg)
+        out["pl_groups"] = dict(self._cfg.get("pl_groups") or {})
+        config.log(f"Grupos como carpetas: {'sí' if on else 'no'} ({out})")
+        return out
+
+    def _grp_rb_run(self, interactive=False):
+        """Muda en Rekordbox las playlists cuyo grupo cambió (necesita Rekordbox cerrado; si está abierto queda
+        pendiente y se hace al cerrarlo). -> resultado o None si no había nada / había que esperar."""
+        import rb_cambios
+        pend = dict(self._cfg.get("grp_moves") or {})
+        if not pend:
+            return None
+        if not destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+            self._cfg["grp_moves"] = {}  # sin Rekordbox: solo el disco (que no espera)
+            config.save(self._cfg)
+            return None
+        if rekordbox_sync.rekordbox_running():
+            if interactive:
+                raise rekordbox_sync.RekordboxError("Rekordbox está abierto: ciérralo para pasar tus grupos a carpetas "
+                                                    "(queda pendiente y se hace solo al cerrarlo).")
+            return None
+        from fuentes import carpetas as FC
+        rid_of = {}
+        for rid, b in rb_cambios.load_baseline().items():
+            if (b or {}).get("pid"):
+                rid_of.setdefault(b["pid"], str(rid))
+        for e in FC.entries(self._cfg):
+            if e.get("program") == "rekordbox" and e.get("ref"):
+                rid_of[FC.entry_pid(e)] = str(e["ref"])
+        jobs = [{"ref": rid_of[pid], "trail": t, "pid": pid} for pid, t in pend.items() if pid in rid_of]
+        res = {"moved": 0, "folders_removed": 0, "missing": len(pend) - len(jobs), "done": []}
+        if jobs:
+            res = rekordbox_sync.place(self._cfg, jobs, self._progress)
+        done = set(res.get("done") or [])
+        # hechas, y las que no están en Rekordbox (nacen en su carpeta al Organizar: _rb_place_map)
+        self._cfg["grp_moves"] = {pid: t for pid, t in pend.items()
+                                  if pid in rid_of and rid_of[pid] not in done}
+        config.save(self._cfg)
+        if res.get("moved"):
+            self._rb_log([f"🏷 {res['moved']} playlist(s) movida(s) a la carpeta de su grupo en Rekordbox"
+                          + (f"; {res['folders_removed']} carpeta(s) vacía(s) quitada(s)" if res.get("folders_removed") else "")])
+        try:
+            self._rb_tree_refresh()
+        except Exception as e:
+            config.log(f"árbol de Rekordbox después de mover grupos: {e!r}")
+        return res
+
+    def _grp_apply_locked(self, interactive=False):
+        """Rekordbox + disco (con _files tomado). -> {"rekordbox": …, "disk": …, "waiting": bool}"""
+        out = {"rekordbox": None, "disk": None, "waiting": False}
+        try:
+            out["rekordbox"] = self._grp_rb_run(interactive=interactive)
+        except rekordbox_sync.RekordboxError as e:
+            out["error"] = str(e)
+        if rekordbox_sync.rekordbox_running() and destinos.DESTINATIONS["rekordbox"].available(self._cfg):
+            # los archivos de tu librería no se mueven con Rekordbox abierto (se corrigen sus rutas allá)
+            out["waiting"] = True
+            return out
+        with self._state:
+            analysis = self._analysis() or []
+            if self._mirror_stale(analysis):
+                analysis = self._build_analysis(light=True)
+            out["disk"] = self._mirror_apply(analysis)
+            if out["disk"]:
+                self._build_analysis(light=True)
+        return out
+
+    def groups_apply(self):
+        """Botón / después de cambiar grupos: muda las playlists a la carpeta de su grupo en Rekordbox y en tu
+        carpeta de música. Con Rekordbox abierto queda pendiente y se hace solo al cerrarlo."""
+        def run():
+            self._set_stage(0, 100)
+            self._progress("Pasando tus grupos a carpetas…")
+            res = self._grp_apply_locked(interactive=False)
+            return {"result": res, "analysis": self._analysis(), "pl_groups": dict(self._cfg.get("pl_groups") or {}),
+                    "pending": len(self._cfg.get("grp_moves") or {})}
+        return self._task(run, "groups_apply", "Grupos como carpetas", files=True)
 
     def pin(self, paths):
         """Fijar archivos donde están: Reorganizar no los vuelve a proponer."""
@@ -3107,6 +3307,10 @@ class Api:
         if old in gr:
             gr[new] = gr.pop(old)
             self._cfg["pl_groups"] = gr
+        gm = dict(self._cfg.get("grp_moves") or {})
+        if old in gm:
+            gm[new] = gm.pop(old)
+            self._cfg["grp_moves"] = gm
         po = self._cfg.get("playlist_origin") or {}
         if old in po:
             po[new] = po.pop(old)
@@ -4402,7 +4606,7 @@ class Api:
                     self._update_sp(lambda d: d.update(playlists=[x for x in d["playlists"] if x["id"] not in keep] + fresh))
                 self._rb_tree_refresh(state)
                 analysis = self._build_analysis(light=True)
-                mirror = self._mirror_apply(analysis) if self._cfg.get("rb_mirror", True) else None
+                mirror = self._mirror_apply(analysis) if self._mirror_on() else None
                 if mirror:
                     analysis = self._build_analysis(light=True)
                 reportes.write_reports(analysis, self._cfg)
@@ -4634,7 +4838,7 @@ class Api:
                 op_id = None
             with self._state:
                 analysis = self._build_analysis(light=True)
-                mirror = self._mirror_apply(analysis) if self._cfg.get("rb_mirror", True) else None
+                mirror = self._mirror_apply(analysis) if self._mirror_on() else None
                 if mirror:
                     analysis = self._build_analysis(light=True)
                 reportes.write_reports(analysis, self._cfg)
@@ -4849,7 +5053,7 @@ class Api:
         """Ruta de subcarpetas de cada playlist en Rekordbox (cfg rb_tree). -> True si cambió."""
         import rb_cambios
         tree = {}
-        if self._cfg.get("rb_mirror", True) and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+        if self._mirror_on() and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
             if state is None:
                 try:
                     state = rb_cambios.read_state(self._cfg)
@@ -4861,6 +5065,17 @@ class Api:
             from fuentes import carpetas as FC
             refs = {str(e["ref"]): FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("program") == "rekordbox"}
             tree = estructura.trails(state, rb_cambios.load_baseline(), self._analysis() or [], refs)
+            if self._groups_on():
+                # grupos como carpetas: lo que moviste de subcarpeta en Rekordbox cambia el grupo aquí
+                present = estructura.present(state, rb_cambios.load_baseline(), refs)
+                g, pend, ch = grupos.follow_rekordbox(self._cfg.get("pl_groups") or {}, tree, present,
+                                                      self._cfg.get("grp_moves") or {})
+                if g != (self._cfg.get("pl_groups") or {}) or pend != (self._cfg.get("grp_moves") or {}):
+                    self._cfg["pl_groups"], self._cfg["grp_moves"] = g, pend
+                    config.save(self._cfg)
+                    if ch:
+                        config.log(f"Grupos tomados de Rekordbox: {len(ch)} playlist(s)")
+                        self._grp_changed = True
         if tree != (self._cfg.get("rb_tree") or {}):
             self._cfg["rb_tree"] = tree
             config.save(self._cfg)
@@ -4869,7 +5084,7 @@ class Api:
 
     def _mirror_folders(self, loaded):
         """Carpeta hogar de cada playlist: la ruta de subcarpetas que tiene en Rekordbox."""
-        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        tree = self._tree()
         if not tree:
             return loaded
         dest = Path(self._cfg["dest_root"])
@@ -4878,7 +5093,7 @@ class Api:
 
     def _mirror_stale(self, analysis):
         from fuentes import carpetas as FC
-        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        tree = self._tree()
         dest = Path(self._cfg["dest_root"])
         dir_pids = {FC.entry_pid(e) for e in FC.entries(self._cfg) if e.get("path")}
         for a in analysis or []:
@@ -4894,10 +5109,10 @@ class Api:
     def _mirror_plan(self, analysis):
         from fuentes import carpetas as FC
         dest = Path(self._cfg["dest_root"])
-        tree = (self._cfg.get("rb_tree") or {}) if self._cfg.get("rb_mirror", True) else {}
+        tree = self._tree()
         dir_entries = [e for e in FC.entries(self._cfg) if e.get("path")]
         dir_pids = {FC.entry_pid(e) for e in dir_entries}
-        moves, settled = estructura.plan(analysis, self._cfg, dir_pids, biblioteca.resolve_folder,
+        moves, settled = estructura.plan(analysis, {**self._cfg, "rb_tree": tree}, dir_pids, biblioteca.resolve_folder,
                                          self._cfg.get("pinned_paths") or [])
         others = {estructura._norm(a["folder"]) for a in analysis or [] if a.get("folder")} | \
             {estructura._norm(e["path"]) for e in dir_entries}
@@ -4925,7 +5140,7 @@ class Api:
             analysis = self._analysis() or []
             moves, _ = self._mirror_plan(analysis)
             stale = self._mirror_stale(analysis)
-            return {"ok": True, "on": bool(self._cfg.get("rb_mirror", True)),
+            return {"ok": True, "on": bool(self._cfg.get("rb_mirror", True)), "groups": self._groups_on(),
                     "count": len(moves), "files": sum(len(m["files"]) for m in moves), "stale": stale,
                     "nested": len(self._cfg.get("rb_tree") or {}),
                     "items": [{"name": m["name"], "from": m["from"], "to": m["to"], "files": len(m["files"])}
@@ -5361,6 +5576,24 @@ class Api:
                             self._window.evaluate_js(f"window.onRbAuto && onRbAuto({payload})")
                     except Exception as e:
                         config.log(f"mover playlists a la carpeta de BrainOrder: {e!r}")
+                if self._cfg.get("grp_moves") and not rekordbox_sync.rekordbox_running() and \
+                        self._files.acquire(blocking=False):
+                    # cerraste Rekordbox: las playlists cuyo grupo cambiaste pasan a la carpeta del grupo (allá y en el disco)
+                    try:
+                        gr = self._grp_apply_locked()
+                        rbr, disk = gr.get("rekordbox") or {}, gr.get("disk") or {}
+                        msg = []
+                        if rbr.get("moved"):
+                            msg.append(f"🏷 {rbr['moved']} playlist(s) en la carpeta de su grupo en Rekordbox")
+                        if disk.get("moved"):
+                            msg.append(f"📂 {disk['moved']} archivo(s) mudado(s) a la carpeta de su grupo")
+                        if msg and self._window:
+                            self._window.evaluate_js(f"window.onRbAuto && onRbAuto({json.dumps({'done': msg, 'asked': [], 'moves': 0})})")
+                            self._window.evaluate_js(f"window.onGroups && onGroups({json.dumps(self._cfg.get('pl_groups') or {})})")
+                    except Exception as e:
+                        config.log(f"grupos como carpetas al cerrar Rekordbox: {e!r}")
+                    finally:
+                        self._files.release()
                 if self._cfg.get("rb_moves") and not self._files.locked() and not rekordbox_sync.rekordbox_running():
                     # cerraste Rekordbox: se mudan los archivos que sacaste de playlists de carpeta
                     try:
@@ -5375,6 +5608,15 @@ class Api:
                 if mt is None or mt == last_mtime or self._files.locked():
                     continue
                 last_mtime = mt
+                if self._groups_on():
+                    # moviste una playlist de subcarpeta en Rekordbox: su grupo cambia aquí
+                    try:
+                        self._grp_changed = False
+                        self._rb_tree_refresh()
+                        if self._grp_changed and self._window:
+                            self._window.evaluate_js(f"window.onGroups && onGroups({json.dumps(self._cfg.get('pl_groups') or {})})")
+                    except Exception as e:
+                        config.log(f"grupos desde Rekordbox: {e!r}")
                 if self._rb_master():
                     res = self._rb_auto()
                     if res and (res["done"] or res["asked"]) and self._window:

@@ -1769,7 +1769,7 @@ function plGroupPick(ids, title){
   modal(`<h3>🏷 ${esc(title || (one ? `Grupo de «${one.name}»` : `Poner ${GRP.pick.length} playlists en un grupo`))}</h3>
     <input id="grpName" class="inp" placeholder="Escribe un grupo nuevo (ej. Techno, Bodas, Crossover)…" value="${esc(cur)}" maxlength="40" autocomplete="off" onkeydown="if(event.key==='Enter') grpSetGo()">
     ${gl.length?`<div class="art" style="margin-top:10px">o elige uno que ya tienes:</div><div class="chips">${gl.map(g=>`<button class="ghost chip ${g===cur?'on':''}" data-g="${esc(g)}" onclick="grpSetGo(this.dataset.g)">${esc(g)} <span class="art">${plGroupCount(g)}</span></button>`).join('')}</div>`:''}
-    <div class="art" style="margin-top:8px">Los grupos solo ordenan tus playlists aquí en BrainOrder (la lista de la izquierda y al elegir una para fusionar o comparar). No cambian carpetas, Spotify ni tus programas de DJ.</div>
+    <div class="art" style="margin-top:8px">${grpModeTxt()}</div>
     <div class="actions">${GRP.pick.some(id=>(S.plGroups||{})[id])?`<button onclick="grpSetGo('')">Quitar del grupo</button>`:''}<button onclick="closeModal()">Cancelar</button><button class="primary" onclick="grpSetGo()">Guardar</button></div>`);
   setTimeout(()=>{ const i=$('grpName'); if(i){ i.focus(); i.select(); } }, 30);
 }
@@ -1783,6 +1783,7 @@ async function grpSetGo(name){
   paintPlNav(); if(S.view==='plgroups') renderMain();
   const n = ids.length, one = n===1 ? (S.analysis||[]).find(p=>p.id===ids[0]) : null;
   toast(g ? `🏷 ${one?`«${esc(one.name)}»`:`${n} playlists`} en el grupo <b>«${esc(g)}»</b>.` : `${one?`«${esc(one.name)}»`:`${n} playlists`} sin grupo.`);
+  if(r.folders && r.moved) groupsApply();
 }
 function grpRename(g){
   modal(`<h3>✏️ Renombrar el grupo «${esc(g)}»</h3>
@@ -1799,6 +1800,55 @@ async function grpRenameGo(g, to){
   S.plGroups = r.pl_groups; closeModal(); if(GRP.pf===g) GRP.pf = n || '*';
   paintPlNav(); if(S.view==='plgroups') renderMain();
   toast(n ? `✅ El grupo «${esc(g)}» ahora es <b>«${esc(n)}»</b>.` : `Grupo «${esc(g)}» deshecho: sus playlists quedaron sin grupo (no se borró nada).`);
+  if(r.folders && r.moved) groupsApply();
+}
+// ---------- grupos como carpetas en Rekordbox y en el disco (2.49.0) ----------
+function grpModeTxt(){
+  const f = esc(S.settings.rekordbox_folder||'BrainOrder'), root = esc((S.settings.dest_root||'').split(/[\\/]/).pop()||'tu carpeta de música');
+  return S.groupsFolders===true
+    ? `📂 Tus grupos son <b>carpetas</b>: la playlist pasa a la subcarpeta del grupo dentro de «${f}» en Rekordbox y su música a <code>${root}/&lt;grupo&gt;/&lt;playlist&gt;</code>. Con «/» haces una carpeta dentro de otra (ej. <i>Crossover / MGNO</i>). Rekordbox tiene que estar cerrado; si está abierto, se hace solo al cerrarlo. Spotify no cambia (su API no deja manejar carpetas).`
+    : `Los grupos solo ordenan tus playlists aquí en BrainOrder (la lista de la izquierda y al elegir una para fusionar o comparar). No cambian carpetas, Spotify ni tus programas de DJ.`;
+}
+async function groupsApply(){
+  const r = await api().groups_apply(); if(!r.ok){ taskErr(r); return; }
+  if(r.analysis) setAnalysis(r.analysis); if(r.pl_groups){ S.plGroups = r.pl_groups; paintPlNav(); }
+  const x = r.result || {}, rb = x.rekordbox || {}, d = x.disk || {}, msg = [];
+  if(rb.moved) msg.push(`🏷 ${rb.moved} playlist(s) en la carpeta de su grupo en Rekordbox${rb.folders_removed?` (${rb.folders_removed} carpeta(s) vacía(s) quitada(s))`:''}`);
+  if(d.moved) msg.push(`📂 ${d.moved} archivo(s) mudado(s) a la carpeta de su grupo`);
+  if(x.waiting || r.pending) msg.push('⏳ Rekordbox está abierto: lo que falta se hace solo cuando lo cierres');
+  if(x.error) msg.push(`<span style="color:var(--org)">${esc(x.error)}</span>`);
+  toast(msg.length ? msg.join('<br>') + (d.op_id ? undoLink(d) : '') : '📂 Todo ya estaba en la carpeta de su grupo.');
+  loadHist(); if(S.view==='plgroups') renderMain();
+}
+window.onGroups = g => { S.plGroups = g || {}; paintPlNav(); if(S.view==='plgroups') renderMain(); };
+async function groupsAsk(){
+  if($('mbg').classList.contains('show')){ setTimeout(groupsAsk, 4000); return; }  // otro diálogo abierto: después
+  let pv = {}; try{ pv = await api().groups_folders_preview() || {}; }catch(e){}
+  if($('mbg').classList.contains('show')){ setTimeout(groupsAsk, 4000); return; }
+  const f = esc(pv.folder || S.settings.rekordbox_folder || 'BrainOrder'), root = esc(pv.root || 'tu carpeta de música'), c = pv.conflicts || [];
+  const now = pv.playlists ? `<p class="art">Hoy tienes <b>${pv.playlists}</b> playlist(s) en <b>${pv.groups}</b> grupo(s)${(pv.examples||[]).length?` (${pv.examples.map(esc).join(', ')}${pv.groups>pv.examples.length?'…':''})`:''}${pv.from_rb?`; ${pv.from_rb} de ellas ya están en subcarpetas de Rekordbox y tomarían esa subcarpeta como grupo`:''}.</p>` : '';
+  const cf = c.length ? `<div class="box" style="border-color:var(--org);margin:10px 0"><b>${c.length} playlist(s) tienen un grupo distinto a la subcarpeta donde están en Rekordbox</b>
+      <div class="art" style="margin:6px 0;max-height:120px;overflow:auto">${c.slice(0,12).map(x=>`«${esc(x.name)}»: grupo <b>${esc(x.group)}</b> · en Rekordbox <b>${esc(x.folder)}</b>`).join('<br>')}${c.length>12?'<br>…':''}</div>
+      <label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="grpCf" value="rekordbox" checked> 👑 Manda Rekordbox: se quedan donde están allá y el grupo cambia a esa subcarpeta</label>
+      <label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="grpCf" value="group"> 🏷 Manda el grupo: se mudan a la carpeta de su grupo (en Rekordbox y en el disco)</label></div>` : '';
+  modal(`<h3>📂 ¿Tus grupos de playlists pasan a ser carpetas?</h3>
+    <p class="art">Ahora los grupos pueden ser <b>carpetas de verdad</b>: el grupo <i>Techno</i> sería la subcarpeta «Techno» dentro de «${f}» en Rekordbox, y en tu disco <code>${root}/Techno/&lt;playlist&gt;</code>. Lo que muevas de subcarpeta en Rekordbox cambia el grupo aquí, y al revés. Con «/» haces una carpeta dentro de otra (<i>Crossover / MGNO</i>).</p>
+    ${pv.ok && !pv.rekordbox ? `<p class="art">No usas Rekordbox en este computador: solo cambiarían las carpetas de tu disco.</p>` : ''}
+    ${now}${cf}
+    <p class="art">Cada canción sigue viviendo en una sola carpeta (sin copias), los movimientos quedan en el Historial para deshacer y Rekordbox se respalda antes. Spotify no cambia: su API no deja manejar carpetas. Lo puedes cambiar cuando quieras en «🏷 Grupos».</p>
+    <div class="actions"><button onclick="closeModal();if(S.view==='plgroups')renderMain();toast('Te lo vuelvo a preguntar la próxima vez que abras BrainOrder.')">Decidir después</button>
+      <button onclick="groupsPick(false)">No, solo para ordenar aquí</button>
+      <button class="primary" onclick="groupsPick(true)">Sí, que sean carpetas</button></div>`);
+}
+async function groupsPick(on){
+  const cf = (document.querySelector('input[name=grpCf]:checked')||{}).value || 'rekordbox';
+  closeModal();
+  const r = await api().groups_folders_set(on, cf); if(!r.ok){ toast(esc(r.error||'No se pudo'), true); return; }
+  S.groupsFolders = r.groups_folders; if(r.pl_groups){ S.plGroups = r.pl_groups; paintPlNav(); }
+  if(S.view==='plgroups') renderMain();
+  if(!on){ toast('🏷 Listo: los grupos solo ordenan tus playlists aquí en BrainOrder.'); return; }
+  toast(`📂 Listo: tus grupos son carpetas.${r.from_rb?` ${r.from_rb} playlist(s) tomaron como grupo su subcarpeta de Rekordbox.`:''} Ahora acomodo Rekordbox y tu carpeta de música…`);
+  groupsApply();
 }
 function grpMenu(g){ return [['#', g], ['✏️ Renombrar grupo…', () => grpRename(g)], ['🏷 Ver y ordenar este grupo', () => { GRP.pf = g; GRP.pq = ''; show('plgroups'); }],
   ['✕ Deshacer el grupo', () => grpRenameGo(g, ''), false, 'Sus playlists quedan sin grupo; no se borra nada']]; }
@@ -1854,7 +1904,11 @@ function plGroupsView(){
   if(!S.analysis) return '<div class="empty"><p>Cargando tus playlists…</p></div>';
   const gl = plGroupList(), none = S.analysis.filter(p=>!plGroup(p)).length;
   return `<div class="rules"><h2 style="margin-top:0">🏷 Grupos de playlists</h2>
-    <p class="hint" style="margin-top:-6px">Ponle un grupo a cada playlist (género, evento, lo que te sirva) y en la lista de la izquierda quedan juntas, con un buscador arriba. Al fusionar o comparar también puedes escribir para encontrarla. Solo cambia cómo las ves aquí: no toca carpetas, Spotify ni tus programas de DJ.</p>
+    <p class="hint" style="margin-top:-6px">Ponle un grupo a cada playlist (género, evento, lo que te sirva) y en la lista de la izquierda quedan juntas, con un buscador arriba. Al fusionar o comparar también puedes escribir para encontrarla.</p>
+    <div class="box" style="margin:0 0 12px;border-color:${S.groupsFolders===true?'var(--ok)':'var(--line)'}">
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${S.groupsFolders===true?'checked':''} onchange="this.checked ? groupsAsk() : groupsPick(false)" style="margin-top:3px">
+      <span><b>📂 Mis grupos son carpetas (en Rekordbox y en mi disco)</b><br><span class="art">${grpModeTxt()}</span></span></label>
+      ${S.groupsFolders===true ? `<div style="margin-top:8px"><button ${running('groups_apply')?'disabled':''} onclick="groupsApply()">${running('groups_apply')?'Acomodando…':'📂 Acomodar ya'}</button></div>` : ''}</div>
     <div class="chips">
       <button class="ghost chip ${GRP.pf==='*'?'on':''}" onclick="pgFilter('*')">Todas <span class="art">${S.analysis.length}</span></button>
       ${gl.map(g=>`<button class="ghost chip ${GRP.pf===g?'on':''}" data-g="${esc(g)}" onclick="pgFilter(this.dataset.g)" title="Clic derecho o ✏️ para renombrarlo">${esc(g)} <span class="art">${plGroupCount(g)}</span></button>`).join('')}
@@ -4271,7 +4325,7 @@ window.addEventListener('pywebviewready', async () => {
   const st = await api().get_state();
   S.connected = st.connected; S.settings = st.settings; S.analysis = st.analysis; S.rev = st.rev; S.foreign = st.foreign || {}; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   S.home = st.home || ''; S.win = !!st.win; S.inboxCount = st.inbox_count || 0; S.pinned = new Set(st.pinned || []); S.version = st.version || {};
-  PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.plGroups = st.pl_groups || {}; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
+  PREF = {...PREF, ...(st.ui||{})}; S.statsHidden = st.stats_hidden || []; S.plGroups = st.pl_groups || {}; S.groupsFolders = st.groups_folders; S.spPause = st.spotify_paused || null; S.spQueue = st.spotify_queue || 0; S.rbMik = st.rb_mik || {}; S.rules = st.rules || {}; S.formats = st.formats || []; S.sources = st.sources || {}; S.dests = st.destinations || {};
   setTimeout(checkUpdates, 1500);
   loadHist(); setTimeout(rbLoad, 2500); setTimeout(fdLoad, 3000); setTimeout(scLoad, 3500);
   setTimeout(async () => { try{ const ri = await api().root_info(); if(ri.renamed) onRootRenamed(ri.renamed); }catch(e){} }, 1200);
@@ -4281,6 +4335,7 @@ window.addEventListener('pywebviewready', async () => {
   S.settings.setup_done = !!st.setup_done;
   if(!st.setup_done){ openWizard(); return; }
   if(st.order_ask) setTimeout(orderAsk, 900);
+  if(st.groups_ask) setTimeout(groupsAsk, st.order_ask ? 2500 : 1200);  // grupos como carpetas: se pregunta a cada usuario una vez
   // las playlists de otros ya no salen en una ventana al abrir: quedan en su sección «Playlists de otros»
 });
 $('mbg').addEventListener('click', e => { if(e.target.id==='mbg') closeModal(); });

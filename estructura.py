@@ -46,6 +46,16 @@ def trails(state, baseline, analysis, ref_pids=None):
     return out
 
 
+def present(state, baseline, ref_pids=None):
+    """pids de BrainOrder que están dentro de su carpeta en Rekordbox (sueltas o en subcarpetas)."""
+    out = set()
+    for rid in (state or {}):
+        pid = (ref_pids or {}).get(rid) or (baseline.get(rid) or {}).get("pid")
+        if pid:
+            out.add(pid)
+    return out
+
+
 def parent_for(dest_root, trail):
     p = Path(dest_root)
     for part in trail or []:

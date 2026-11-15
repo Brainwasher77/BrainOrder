@@ -186,6 +186,101 @@ def _our_tree(db, cfg, create=True):
     return root, rb_arbol.playlists(rows, rid), False
 
 
+def _folder_chain(db, root, trail, create=True):
+    """La subcarpeta trail (["Techno", "Hard"]) dentro de la carpeta de BrainOrder; se crea si falta.
+    -> la carpeta (root si trail está vacío) o None si no existe y create=False."""
+    cur = root
+    for name in trail or []:
+        nxt = _find_child(db, cur.ID, name, 1)
+        if nxt is None:
+            # «techno» y «Techno» son la misma carpeta
+            nxt = next((p for p in db.get_playlist(ParentID=cur.ID)
+                        if (p.Attribute or 0) == 1 and str(p.Name).casefold() == str(name).casefold()), None)
+        if nxt is None:
+            if not create:
+                return None
+            nxt = db.create_playlist_folder(name, parent=cur)
+        cur = nxt
+    return cur
+
+
+def _place(db, root, pl, trail):
+    """Mueve la playlist a su subcarpeta (grupo). -> id de la carpeta de donde salió, o None si ya estaba."""
+    to = _folder_chain(db, root, trail)
+    if str(pl.ParentID) == str(to.ID):
+        return None
+    old = str(pl.ParentID)
+    db.move_playlist(pl, parent=to)
+    return old
+
+
+def _drop_empty(db, root, folder_ids):
+    """Quita las subcarpetas que quedaron vacías al sacar sus playlists (solo dentro de la carpeta de
+    BrainOrder; nunca la carpeta principal). -> cuántas se quitaron."""
+    n, seen = 0, set()
+    for fid in folder_ids or []:
+        cur = db.get_playlist(ID=str(fid)) if fid else None
+        while cur is not None and str(cur.ID) != str(root.ID) and (cur.Attribute or 0) == 1 \
+                and str(cur.ID) not in seen:
+            seen.add(str(cur.ID))
+            if any(True for _ in db.get_playlist(ParentID=cur.ID)):
+                break
+            parent = cur.ParentID
+            db.delete_playlist(cur)
+            n += 1
+            cur = db.get_playlist(ID=str(parent)) if parent and str(parent) != "root" else None
+    return n
+
+
+def place(cfg, jobs, progress=None):
+    """Grupos como carpetas: lleva cada playlist a la subcarpeta de su grupo dentro de la carpeta de BrainOrder
+    (creándola si falta) y quita las subcarpetas que queden vacías. jobs: [{"ref": id en Rekordbox, "trail":
+    [subcarpetas]}] (trail vacío = suelta en la carpeta principal). Rekordbox cerrado y respaldo antes.
+    -> {"moved", "folders_removed", "missing", "done": [refs], "backup"}"""
+    try:
+        from pyrekordbox import MasterDatabase as Rekordbox6Database
+    except ImportError:
+        from pyrekordbox import Rekordbox6Database
+    if rekordbox_running():
+        raise RekordboxError("Rekordbox está abierto. Ciérralo para pasar tus grupos a carpetas.")
+    bk = backup()
+    db = Rekordbox6Database(path=RB_DIR / "master.db")
+    out = {"moved": 0, "folders_removed": 0, "missing": 0, "done": [], "backup": bk.name}
+    try:
+        root, inside, _m = _our_tree(db, cfg)
+        left = []
+        for i, j in enumerate(jobs, 1):
+            pl = db.get_playlist(ID=str(j["ref"])) if j.get("ref") else None
+            if pl is None or str(pl.ID) not in inside:
+                out["missing"] += 1  # no está en la carpeta de BrainOrder: nada que mover (si nace, nace en su carpeta)
+                out["done"].append(str(j.get("ref")))
+                continue
+            if progress:
+                progress(f"Rekordbox {i}/{len(jobs)}: «{pl.Name}» → {' / '.join(j.get('trail') or []) or 'carpeta principal'}")
+            old = _place(db, root, pl, j.get("trail") or [])
+            if old is not None:
+                left.append(old)
+                out["moved"] += 1
+            out["done"].append(str(j["ref"]))
+        out["folders_removed"] = _drop_empty(db, root, left)
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log(f"Error pasando grupos a carpetas en Rekordbox: {e!r}")
+        raise RekordboxError(f"No pude mover las playlists a sus carpetas en Rekordbox (no se guardó nada): {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    log(f"Rekordbox: grupos como carpetas: {out['moved']} movida(s), {out['folders_removed']} carpeta(s) vacía(s) "
+        f"quitada(s) (respaldo {bk.name})")
+    return out
+
+
 def _pick(inside, name, prefer=None, loose_only=True):
     """La playlist de BrainOrder dentro del árbol: la de la foto (prefer = su id, esté donde esté, también si la
     metiste en una subcarpeta) o, si no, una SUELTA con ese nombre. Nunca se casa por nombre con una playlist
@@ -326,6 +421,8 @@ def sync(analysis, cfg, progress=None):
         stats["skipped"] = [p["name"] for p in analysis if p["id"] in skip]
         analysis = [p for p in analysis if p["id"] not in skip]
         baseline = {}
+        place_at = cfg.get("_rb_place") or {}  # {pid: [subcarpetas]} con grupos como carpetas
+        left_dirs = []
         for i, pl in enumerate(analysis, 1):
             if progress:
                 progress(f"Rekordbox {i}/{len(analysis)}: {pl['name']}")
@@ -338,10 +435,20 @@ def sync(analysis, cfg, progress=None):
             hit = _pick(inside, pl["name"], base_ids.get(pl["id"]))
             playlist = db.get_playlist(ID=hit) if hit else None
             created = playlist is None
+            trail = place_at.get(pl["id"])
             if created:
-                playlist = db.create_playlist(pl["name"], parent=root)
-                inside[str(playlist.ID)] = {"name": pl["name"], "folder": []}
+                # grupos como carpetas: la nueva nace dentro de la carpeta de su grupo
+                parent = _folder_chain(db, root, trail) if trail else root
+                playlist = db.create_playlist(pl["name"], parent=parent)
+                inside[str(playlist.ID)] = {"name": pl["name"], "folder": list(trail or [])}
                 stats["playlists_created"] += 1
+            elif pl["id"] in place_at and \
+                    [x.casefold() for x in inside.get(str(playlist.ID), {}).get("folder") or []] != \
+                    [x.casefold() for x in trail or []]:
+                old = _place(db, root, playlist, trail or [])
+                if old is not None:
+                    left_dirs.append(old)
+                    stats["placed"] = stats.get("placed", 0) + 1
             songs = sorted(playlist.Songs, key=lambda s: s.TrackNo or 0)
             current = [rb_path(s.Content.FolderPath) if s.Content else None for s in songs]
             if master and not created:
@@ -376,6 +483,8 @@ def sync(analysis, cfg, progress=None):
                 if content is not None:
                     db.add_to_playlist(playlist, content)
             stats["playlists_updated"] += 1
+        if left_dirs:
+            stats["folders_removed"] = _drop_empty(db, root, left_dirs)
         db.commit()
         stats["baseline"] = baseline
     except RekordboxError:

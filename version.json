@@ -1,5 +1,5 @@
 {
-  "version": "2.48.2",
-  "build": 114,
-  "notes": "Repetidas en playlists de carpeta: «Quitar las de más» ya saca la repetida aunque se vea con el mismo archivo que la otra (antes volvía a salir)."
+  "version": "2.49.0",
+  "build": 115,
+  "notes": "Grupos como carpetas: si quieres (se pregunta al abrir), cada grupo es una subcarpeta en Rekordbox y en tu carpeta de música, y la playlist se muda al cambiarle el grupo."
 }
