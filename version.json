@@ -1,5 +1,5 @@
 {
-  "version": "2.50.1",
-  "build": 117,
-  "notes": "Juntar toda tu música: si ya tienes una canción con el mismo nombre, la de afuera va a _duplicados (no se crean copias «Canción (2)»)."
+  "version": "2.50.2",
+  "build": 118,
+  "notes": "Mover miles de canciones ya no se queda horas en «Corrigiendo rutas en Rekordbox»: la colección se lee una vez y se muestra el avance."
 }

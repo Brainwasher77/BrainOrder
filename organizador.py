@@ -163,7 +163,7 @@ def relocate(ops, cfg, progress=None):
         if need_rb and any(src in rb for src in changes):
             if progress:
                 progress("Corrigiendo rutas en Rekordbox…")
-            rb_stats = unificar._rb_apply({k: v for k, v in changes.items() if k in rb}, {}, {})
+            rb_stats = unificar._rb_apply({k: v for k, v in changes.items() if k in rb}, {}, {}, progress)
     except Exception as e:
         log(f"Reorganizar falló, deshaciendo: {e!r}")
         for src, dst in reversed(moved):

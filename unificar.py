@@ -491,7 +491,7 @@ def apply(pl, cfg, merge_ids, dup_ids, remove_empty, progress=None):
     return res
 
 
-def _rb_apply(path_change, dup_of, retired=None):
+def _rb_apply(path_change, dup_of, retired=None, progress=None):
     """Corrige la colección de Rekordbox después de mover archivos.
     path_change {ruta vieja: ruta nueva}: la pista apunta a la ruta nueva.
     dup_of {repetida apartada: la que se conserva}: la repetida se UNE a la que se conserva (toma su lugar
@@ -499,7 +499,9 @@ def _rb_apply(path_change, dup_of, retired=None):
       _duplicados y se perdía en cuanto vaciabas esa carpeta.
     También se corrigen las pistas que apuntan a un ACCESO DIRECTO (alias / symlink) hacia un archivo
     movido: antes el acceso directo quedaba roto y la canción perdida.
-    Todo en una sola transacción: si algo falla no se guarda nada."""
+    Todo en una sola transacción: si algo falla no se guarda nada.
+    Rápido con miles de canciones (2.50.2): la colección se lee UNA vez y se busca por ruta en memoria (antes
+    cada canción recorría toda la colección y 19.000 canciones tardaban horas). progress(texto, fracción)."""
     try:
         from pyrekordbox import MasterDatabase as DB
     except ImportError:
@@ -510,8 +512,21 @@ def _rb_apply(path_change, dup_of, retired=None):
     stats = {"paths": 0, "repointed": 0, "merged": 0, "links": 0}
     undo, anlz = [], []
     try:
+        by_path = {}
+        for c0 in db.get_content():
+            if c0.FolderPath:
+                by_path.setdefault(rekordbox_sync._k(c0.FolderPath), c0)
+
         def content(path):
-            return rekordbox_sync.content_by_path(db, path)
+            return by_path.get(rekordbox_sync._k(path)) if path else None
+
+        total = max(1, len(path_change) + len(dup_of))
+        done = [0]
+
+        def tick():
+            done[0] += 1
+            if progress and (done[0] % 250 == 0 or done[0] == total):
+                progress(f"Corrigiendo rutas en Rekordbox: {done[0]}/{total}", done[0] / total)
 
         link_idx = None
 
@@ -532,12 +547,19 @@ def _rb_apply(path_change, dup_of, retired=None):
             if other is not None and str(other.ID) != str(c.ID):
                 RC.merge(db, c, other, undo)
                 stats["merged"] += 1
+                if by_path.get(rekordbox_sync._k(c.FolderPath)) is c:
+                    by_path.pop(rekordbox_sync._k(c.FolderPath), None)  # c salió de la colección
                 return other
+            old_k = rekordbox_sync._k(c.FolderPath or "")
             RC.set_path(db, c, new, undo, anlz)
+            if by_path.get(old_k) is c:
+                by_path.pop(old_k, None)
+            by_path[rekordbox_sync._k(new)] = c
             stats["paths"] += 1
             return c
 
         for old, new in path_change.items():
+            tick()
             c = content(old)
             if c is not None:
                 put(c, new)
@@ -547,6 +569,7 @@ def _rb_apply(path_change, dup_of, retired=None):
                     stats["links"] += 1
 
         for old, keep in dup_of.items():
+            tick()
             dcs = [x for x in [content(old)] + links_to(old) if x is not None]
             kc = content(keep)
             if kc is None:
@@ -566,7 +589,11 @@ def _rb_apply(path_change, dup_of, retired=None):
                 else:
                     RC.merge(db, dc, kc, undo)
                     stats["merged"] += 1
+        if progress:
+            progress("Guardando Rekordbox…", 1.0)
         db.commit()
+        if progress and len(anlz) > 200:
+            progress(f"Corrigiendo los análisis de {len(anlz)} canción(es) en Rekordbox…", 1.0)
         RC.write_anlz(anlz)
         return stats
     except Exception:
