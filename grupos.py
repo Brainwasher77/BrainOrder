@@ -12,8 +12,13 @@ Con grupos-carpetas, grupo y subcarpeta de Rekordbox son LO MISMO:
   - la mueves de subcarpeta en Rekordbox -> su grupo cambia en BrainOrder (Rekordbox manda en lo que hagas allá);
   - al activarlo, si una playlist ya está en una subcarpeta de Rekordbox con otro grupo en BrainOrder, manda
     lo que elegiste (cfg "groups_conflict": "rekordbox" | "group").
+Carpeta por defecto (2.51.0, pedido de Frank): con grupos como carpetas, toda playlist SIN grupo va a la carpeta
+«Organizar» (cfg "groups_default"), en Rekordbox, en tus otros programas de DJ y en el disco. Quitarle el grupo a
+una playlist = mandarla a «Organizar»; sacarla a la carpeta principal en Rekordbox = vuelve a «Organizar».
 Aquí solo hay cálculo (sin archivos ni Rekordbox), para poder probarlo.
 """
+
+DEFAULT = "Organizar"
 
 SEP = " / "
 
@@ -35,7 +40,12 @@ def same(a, b):
     return norm(a).casefold() == norm(b).casefold()
 
 
-def effective_tree(rb_tree, groups, pending, folders_on, mirror_on=True):
+def trail_for(pid, groups, default=""):
+    """Subcarpetas de una playlist según su grupo (o la carpeta por defecto si no tiene)."""
+    return to_trail((groups or {}).get(pid) or default)
+
+
+def effective_tree(rb_tree, groups, pending, folders_on, mirror_on=True, default="", pids=()):
     """Ruta de subcarpetas de cada playlist en el DISCO: la de Rekordbox (si «Mis carpetas igual que en
     Rekordbox» está activo) y, con grupos-carpetas, la de su grupo (va primero aunque Rekordbox todavía no
     se haya movido, así el disco no tiene que esperar a que cierres Rekordbox)."""
@@ -46,8 +56,14 @@ def effective_tree(rb_tree, groups, pending, folders_on, mirror_on=True):
         t = to_trail(g)
         if t:
             out[pid] = t
+    if default:
+        for pid in pids or ():
+            if not to_trail((groups or {}).get(pid)):
+                out[pid] = to_trail(default)  # sin grupo: a «Organizar»
     for pid, t in (pending or {}).items():
-        if not t:
+        if t:
+            out[pid] = list(t)
+        else:
             out.pop(pid, None)  # le quitaste el grupo: vuelve a la carpeta principal
     return out
 
@@ -80,7 +96,7 @@ def activation_plan(groups, rb_tree, present, conflict="rekordbox"):
     return {"groups": new, "moves": moves, "from_rb": sorted(from_rb), "conflicts": conflicts}
 
 
-def follow_rekordbox(groups, rb_tree, present, pending):
+def follow_rekordbox(groups, rb_tree, present, pending, default=""):
     """Lo que moviste de subcarpeta en Rekordbox cambia el grupo en BrainOrder. Las que tienen una mudanza
     pendiente no se tocan (todavía no se hizo) y la mudanza se da por hecha cuando Rekordbox ya coincide.
     -> (grupos, pendientes, cambiadas[pid])"""
@@ -95,6 +111,16 @@ def follow_rekordbox(groups, rb_tree, present, pending):
         if pid in pending:
             continue
         rg = to_group((rb_tree or {}).get(pid) or [])
+        if default and not rg:
+            # suelta en la carpeta principal: con carpeta por defecto, va a «Organizar» (y queda sin grupo)
+            if groups.pop(pid, None):
+                changed.append(pid)
+            pending[pid] = to_trail(default)
+            continue
+        if default and same(rg, default):
+            if groups.pop(pid, None):  # en «Organizar» = sin grupo
+                changed.append(pid)
+            continue
         if not same(groups.get(pid, ""), rg):
             if rg:
                 groups[pid] = rg

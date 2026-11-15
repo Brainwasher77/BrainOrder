@@ -167,6 +167,34 @@ class _Backup:
             shutil.rmtree(old, ignore_errors=True)
 
 
+def _ours(sub, parent, name):
+    """Crates de la playlist `name` dentro del crate padre (a cualquier profundidad)."""
+    last = _crate_name(name)
+    return [f for f in sub.glob(f"{parent}%%*.crate") if f.stem.split("%%")[-1] == last] if sub.is_dir() else []
+
+
+def _has_children(sub, f):
+    return any(sub.glob(f"{glob_escape(f.stem)}%%*.crate"))
+
+
+def glob_escape(s):
+    return re.sub(r"([*?\[])", r"[\1]", s)
+
+
+def _drop_crate(sub, f, b, parent):
+    """Quita el crate f y, hacia arriba, las subcarpetas (crates de grupo) que quedaron vacías."""
+    b.save(f)
+    f.unlink()
+    parts = f.stem.split("%%")
+    while len(parts) > 2:  # nunca el crate padre de BrainOrder
+        parts = parts[:-1]
+        up = sub / ("%%".join(parts) + ".crate")
+        if not up.exists() or _has_children(sub, up) or crate_tracks(up.read_bytes()):
+            break
+        b.save(up)
+        up.unlink()
+
+
 def _write(path, data, backup):
     path = Path(path)
     if path.exists() and path.read_bytes() == data:
@@ -208,7 +236,19 @@ def sync(analysis, cfg, progress=None):
             b = backups.setdefault(str(sdir), _Backup(sdir))
             sub = sdir / "Subcrates"
             _write(sub / f"{parent}.crate", build_crate([]), b)
-            target = sub / f"{parent}%%{_crate_name(pl['name'])}.crate"
+            trails = cfg.get("_trails")
+            trail = [_crate_name(x) for x in (trails.get(pl["id"]) or [])] if trails else []
+            target = sub / ("%%".join([parent] + trail + [_crate_name(pl["name"])]) + ".crate")
+            if trails:
+                # grupos como carpetas: un crate (vacío) por subcarpeta y fuera la de otra subcarpeta
+                for k in range(1, len(trail) + 1):
+                    gc = sub / ("%%".join([parent] + trail[:k]) + ".crate")
+                    if not gc.exists():
+                        _write(gc, build_crate([]), b)
+                for old in _ours(sub, parent, pl["name"]):
+                    if old != target and not _has_children(sub, old):
+                        _drop_crate(sub, old, b, parent)
+                        changed = True
             if not rels and not target.exists():
                 continue
             changed |= _write(target, build_crate(rels), b)
@@ -264,7 +304,9 @@ def edit(cfg, renames=None, deletes=None):
         return None
     sub = home_serato(cfg) / "Subcrates"
     parent = _crate_name(cfg.get("rekordbox_folder") or "BrainOrder")
-    f = lambda name: sub / f"{parent}%%{_crate_name(name)}.crate"
+    def f(name):  # también dentro de subcarpetas (grupos como carpetas)
+        hit = [x for x in _ours(sub, parent, name) if not _has_children(sub, x)]
+        return hit[0] if hit else sub / f"{parent}%%{_crate_name(name)}.crate"
     if not any(f(o).exists() for o in renames) and not any(f(n).exists() for n in deletes):
         return {"renamed": 0, "deleted": 0}
     if running():
@@ -274,12 +316,13 @@ def edit(cfg, renames=None, deletes=None):
     for old, new in renames.items():
         if not f(old).exists():
             continue
-        b.save(f(old))
+        src = f(old)
+        b.save(src)
         if f(new).exists():
-            f(old).unlink()
+            src.unlink()
             out["deleted"] += 1
         else:
-            os.replace(f(old), f(new))
+            os.replace(src, src.with_name("%%".join(src.stem.split("%%")[:-1] + [_crate_name(new)]) + ".crate"))
             out["renamed"] += 1
     for name in deletes:
         if f(name).exists():

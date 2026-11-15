@@ -41,7 +41,14 @@ def sync(analysis, cfg, progress=None):
                 artist = ", ".join(r.get("artists") or [])
                 lines.append(f"#EXTINF:-1,{artist} - {r['name']}" if artist else f"#EXTINF:-1,{r['name']}")
                 lines.append(r["source"])
-        target = sub / f"{safe_name(pl['name'])}.m3u8"
+        trails = cfg.get("_trails")
+        tdir = sub.joinpath(*[safe_name(x) for x in (trails.get(pl["id"]) or [])]) if trails else sub
+        tdir.mkdir(parents=True, exist_ok=True)
+        target = tdir / f"{safe_name(pl['name'])}.m3u8"
+        if trails:  # grupos como carpetas: la de otra subcarpeta con el mismo nombre se quita
+            for old in sub.rglob(target.name):
+                if old != target and old.is_file():
+                    old.unlink()
         text = "\n".join(lines) + "\n"
         if target.exists() and target.read_text("utf-8", "replace") == text:
             continue
@@ -49,6 +56,12 @@ def sync(analysis, cfg, progress=None):
         tmp.write_text(text, "utf-8")
         os.replace(tmp, target)
         stats["playlists_updated"] += 1
+    if cfg.get("_trails"):
+        for d in sorted((x for x in sub.rglob("*") if x.is_dir()), key=lambda x: -len(x.parts)):
+            try:
+                d.rmdir()  # solo si quedó vacía
+            except OSError:
+                pass
     log(f"M3U: {stats}")
     return stats
 
@@ -62,7 +75,9 @@ def edit(cfg, renames=None, deletes=None):
     if not folder(cfg):
         return None
     sub = Path(folder(cfg)) / safe_name(cfg.get("rekordbox_folder") or "BrainOrder")
-    f = lambda name: sub / f"{safe_name(name)}.m3u8"
+    def f(name):  # también en subcarpetas (grupos como carpetas)
+        hit = next((x for x in sub.rglob(f"{safe_name(name)}.m3u8") if x.is_file()), None) if sub.is_dir() else None
+        return hit or sub / f"{safe_name(name)}.m3u8"
     out = {"renamed": 0, "deleted": 0}
     for old, new in (renames or {}).items():
         if f(old).exists():
@@ -70,9 +85,10 @@ def edit(cfg, renames=None, deletes=None):
                 f(old).unlink()
                 out["deleted"] += 1
             else:
-                text = f(old).read_text("utf-8", "replace").replace(f"#PLAYLIST:{old}", f"#PLAYLIST:{new}", 1)
-                f(new).write_text(text, "utf-8")
-                f(old).unlink()
+                src = f(old)
+                text = src.read_text("utf-8", "replace").replace(f"#PLAYLIST:{old}", f"#PLAYLIST:{new}", 1)
+                (src.parent / f"{safe_name(new)}.m3u8").write_text(text, "utf-8")
+                src.unlink()
                 out["renamed"] += 1
     for name in deletes or []:
         if f(name).exists():

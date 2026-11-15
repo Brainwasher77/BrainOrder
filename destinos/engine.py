@@ -132,6 +132,43 @@ class Library:
         q = f"INSERT INTO Playlist ({', '.join(vals)}) VALUES ({', '.join('?' * len(vals))})"
         return self.db.execute(q, list(vals.values())).lastrowid  # el trigger la encadena al final
 
+    def subtree(self, root_id):
+        """[(id, title, parentListId)] de todo lo que cuelga de root_id (carpetas y playlists)."""
+        out, stack = [], [root_id]
+        while stack:
+            cur = stack.pop()
+            for r in self.db.execute("SELECT id, title, parentListId FROM Playlist WHERE parentListId = ?", (cur,)):
+                out.append(r)
+                stack.append(r[0])
+        return out
+
+    def has_children(self, list_id):
+        return self.db.execute("SELECT 1 FROM Playlist WHERE parentListId = ? LIMIT 1", (list_id,)).fetchone() is not None
+
+    def drop(self, list_id):
+        self.db.execute("DELETE FROM PlaylistEntity WHERE listId = ?", (list_id,))
+        self.db.execute("DELETE FROM Playlist WHERE id = ?", (list_id,))  # el trigger re-encadena la lista
+
+    def place(self, root_id, trail, title):
+        """La playlist title dentro de root/trail… (grupos como carpetas). La que se llame igual en otra
+        subcarpeta de root se quita, y las subcarpetas que queden vacías también. -> (id, se movió?)"""
+        parent = root_id
+        for t in trail:
+            parent = self.playlist(t, parent)
+        target = self.playlist(title, parent)
+        moved = False
+        for i, t, par in self.subtree(root_id):
+            if t == title and i != target and not self.has_children(i):
+                self.drop(i)
+                moved = True
+                while par != root_id and not self.has_children(par) and not self.entries(par):
+                    up = self.db.execute("SELECT parentListId FROM Playlist WHERE id = ?", (par,)).fetchone()
+                    self.drop(par)
+                    if not up:
+                        break
+                    par = up[0]
+        return target, moved
+
     def entries(self, list_id):
         """Pistas de la playlist en orden (siguiendo nextEntityId)."""
         rows = self.db.execute("SELECT id, trackId, nextEntityId FROM PlaylistEntity WHERE listId = ?",
@@ -202,7 +239,12 @@ def sync(analysis, cfg, progress=None):
                         stats["tracks_added"] += 1
                     if tid not in ids:
                         ids.append(tid)
-                if lib.set_entries(lib.playlist(pl["name"], folder), ids):
+                trails = cfg.get("_trails")
+                if trails:
+                    lid, moved = lib.place(folder, trails.get(pl["id"]) or [], pl["name"])
+                else:
+                    lid, moved = lib.playlist(pl["name"], folder), False
+                if lib.set_entries(lid, ids) or moved:
                     stats["playlists_updated"] += 1
     except sqlite3.Error as e:
         raise EngineError(f"Error escribiendo en Engine DJ (no se guardó nada): {e}")
@@ -261,7 +303,11 @@ def edit(cfg, renames=None, deletes=None):
     folder = cfg.get("rekordbox_folder") or "BrainOrder"
     with sqlite3.connect(f"file:{db_path(cfg)}?mode=ro", uri=True) as ro:
         f = ro.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (folder,)).fetchone()
-        names = {r[0] for r in ro.execute("SELECT title FROM Playlist WHERE parentListId = ?", (f[0],))} if f else set()
+        names, stack = set(), [f[0]] if f else []
+        while stack:  # también las de subcarpetas (grupos como carpetas)
+            for i, t in ro.execute("SELECT id, title FROM Playlist WHERE parentListId = ?", (stack.pop(),)):
+                names.add(t)
+                stack.append(i)
     if not any(o in names for o in renames) and not any(n in names for n in deletes):
         return {"renamed": 0, "deleted": 0}
     _open(cfg)
@@ -271,7 +317,8 @@ def edit(cfg, renames=None, deletes=None):
     try:
         with lib.db:
             fid = lib.db.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = 0", (folder,)).fetchone()[0]
-            lid = lambda t: (lib.db.execute("SELECT id FROM Playlist WHERE title = ? AND parentListId = ?", (t, fid)).fetchone() or [None])[0]
+            def lid(t):  # la playlist (no una subcarpeta) con ese nombre, a cualquier profundidad
+                return next((i for i, tt, _p in lib.subtree(fid) if tt == t and not lib.has_children(i)), None)
 
             def drop(i):
                 lib.db.execute("DELETE FROM PlaylistEntity WHERE listId = ?", (i,))

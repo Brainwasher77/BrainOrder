@@ -1,5 +1,5 @@
 {
-  "version": "2.50.4",
-  "build": 120,
-  "notes": "Abajo a la izquierda ya no dice solo «Trabajando…»: dice qué tarea está corriendo y en qué va."
+  "version": "2.51.0",
+  "build": 121,
+  "notes": "Grupos como carpetas: las playlists sin grupo quedan en la carpeta «Organizar», y los grupos ahora también son carpetas en Traktor, Serato, Engine DJ y M3U. Lo que llega a una carpeta donde ya hay una canción con ese nombre va a _duplicados (en Rekordbox se une a la que se queda)."
 }

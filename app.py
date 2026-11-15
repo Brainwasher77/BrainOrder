@@ -389,6 +389,7 @@ class Api:
             # grupos como carpetas (Rekordbox + disco): se le pregunta a cada usuario una vez
             "groups_folders": self._cfg.get("groups_folders"),
             "groups_ask": self._cfg.get("groups_folders") is None,
+            "groups_default": self._groups_default(),
             "rb_mik": {"auto": self._cfg.get("rb_mik_auto", True), "comment": self._cfg.get("rb_mik_comment", "key_energy"),
                        "cues": self._cfg.get("rb_mik_cues", True)},
             "sources": self._sources_status(),
@@ -1403,6 +1404,9 @@ class Api:
                         if auto:  # el análisis cambió con lo que pasaste
                             analysis = self._analysis() or analysis
                             target = [p for p in analysis if p["id"] == pid] if pid else analysis
+                    if k != "rekordbox" and self._groups_on():
+                        # grupos como carpetas: también en Traktor, Serato, Engine DJ y M3U (sin grupo: «Organizar»)
+                        cfg_k = {**cfg_k, "_trails": self._dj_trails()}
                     # una playlist que creaste en este mismo programa no se duplica dentro de la carpeta de BrainOrder
                     st = m.sync([p for p in target if p.get("origin") != k], cfg_k, self._progress)
                     if k == "rekordbox" and isinstance(st, dict):
@@ -1685,6 +1689,20 @@ class Api:
         old, g = self._group_name(old), self._group_name(new)
         if not old:
             return {"ok": False, "error": "Falta el grupo."}
+        d = self._groups_default()
+        if d and grupos.same(old, d):
+            # la carpeta de las sin grupo («Organizar»): cambia su nombre (no se puede deshacer)
+            if not g:
+                return {"ok": False, "error": f"«{d}» es la carpeta de las playlists sin grupo: no se deshace (puedes renombrarla)."}
+            groups = self._cfg.get("pl_groups") or {}
+            pend = dict(self._cfg.get("grp_moves") or {})
+            for pid in self._group_pids():
+                if not grupos.to_trail(groups.get(pid)):
+                    pend[pid] = grupos.to_trail(g)
+            self._cfg["groups_default"] = g
+            self._cfg["grp_moves"] = pend
+            config.save(self._cfg)
+            return {"ok": True, "pl_groups": dict(groups), "folders": True, "moved": len(pend), "groups_default": g}
         cur = dict(self._cfg.get("pl_groups") or {})
         before = dict(cur)
         same = next((v for v in cur.values() if g and v.casefold() == g.casefold()), g)
@@ -1707,16 +1725,35 @@ class Api:
         n = 0
         for pid in set(before) | set(after):
             if grupos.norm(before.get(pid, "")) != grupos.norm(after.get(pid, "")):
-                pend[pid] = grupos.to_trail(after.get(pid, ""))
+                pend[pid] = grupos.trail_for(pid, after, self._groups_default())
                 n += 1
         self._cfg["grp_moves"] = pend
         return n
 
-    def _tree(self):
-        """Subcarpetas de cada playlist en el disco: las de Rekordbox y, con grupos como carpetas, las del grupo."""
+    def _groups_default(self):
+        """Carpeta de las playlists sin grupo (con grupos como carpetas): «Organizar»."""
+        return (self._cfg.get("groups_default", grupos.DEFAULT) or "") if self._groups_on() else ""
+
+    def _group_pids(self, pids=None):
+        if pids is not None:
+            return list(pids)
+        return [a["id"] for a in self._analysis() or [] if not a.get("ignored")]
+
+    def _tree(self, pids=None):
+        """Subcarpetas de cada playlist en el disco: las de Rekordbox y, con grupos como carpetas, las del grupo
+        (las sin grupo, en «Organizar»)."""
         return grupos.effective_tree(self._cfg.get("rb_tree") or {}, self._cfg.get("pl_groups") or {},
                                      self._cfg.get("grp_moves") or {}, self._groups_on(),
-                                     self._cfg.get("rb_mirror", True))
+                                     self._cfg.get("rb_mirror", True), self._groups_default(),
+                                     self._group_pids(pids) if self._groups_on() else ())
+
+    def _dj_trails(self):
+        """Para Traktor, Serato, Engine DJ y M3U: {pid: [subcarpetas]} dentro de la carpeta de BrainOrder (solo con
+        grupos como carpetas; si no, quedan sueltas como siempre)."""
+        if not self._groups_on():
+            return {}
+        d, g = self._groups_default(), self._cfg.get("pl_groups") or {}
+        return {pid: grupos.trail_for(pid, g, d) for pid in self._group_pids()}
 
     def _mirror_on(self):
         return bool(self._cfg.get("rb_mirror", True) or self._groups_on())
@@ -1727,8 +1764,9 @@ class Api:
             return {}
         import rb_cambios
         there = {(b or {}).get("pid") for b in rb_cambios.load_baseline().values()}
-        out = {pid: grupos.to_trail(g) for pid, g in (self._cfg.get("pl_groups") or {}).items()
-               if pid not in there and grupos.to_trail(g)}
+        d, groups = self._groups_default(), self._cfg.get("pl_groups") or {}
+        out = {pid: grupos.trail_for(pid, groups, d) for pid in set(groups) | set(self._group_pids())
+               if pid not in there and grupos.trail_for(pid, groups, d)}
         out.update({pid: list(t) for pid, t in (self._cfg.get("grp_moves") or {}).items()})
         return out
 
@@ -1807,7 +1845,8 @@ class Api:
             self._cfg["grp_moves"] = {}  # vuelven a ser solo para ordenar: nada se muda (lo hecho se queda)
         config.save(self._cfg)
         out["pl_groups"] = dict(self._cfg.get("pl_groups") or {})
-        config.log(f"Grupos como carpetas: {'sí' if on else 'no'} ({out})")
+        out["groups_default"] = self._groups_default()
+        config.log(f"Grupos como carpetas: {'sí' if on else 'no'} ({ {k: v for k, v in out.items() if k != 'pl_groups'} })")
         return out
 
     def _grp_rb_run(self, interactive=False):
@@ -1869,7 +1908,23 @@ class Api:
                 analysis = self._build_analysis(light=True)
             out["disk"] = self._mirror_apply(analysis)
             if out["disk"]:
-                self._build_analysis(light=True)
+                analysis = self._build_analysis(light=True) or analysis
+        # tus otros programas de DJ: cada playlist en la carpeta de su grupo (sin grupo: «Organizar»)
+        trails = self._dj_trails()
+        for k in destinos.enabled_keys(self._cfg):
+            if k == "rekordbox" or not trails:
+                continue
+            m = destinos.DESTINATIONS[k]
+            try:
+                if m.running():
+                    out.setdefault("dj_waiting", []).append(m.LABEL)
+                    continue
+                st = m.sync([p for p in analysis or [] if p.get("origin") != k and not p.get("pending")],
+                            {**self._cfg, "_trails": trails}, self._progress)
+                out.setdefault("dj", {})[m.LABEL] = (st or {}).get("playlists_updated", 0)
+            except Exception as e:
+                config.log(f"grupos como carpetas en {k}: {e!r}")
+                out.setdefault("dj_errors", []).append(f"{m.LABEL}: {e}")
         return out
 
     def groups_status(self):
@@ -5207,7 +5262,7 @@ class Api:
                 # grupos como carpetas: lo que moviste de subcarpeta en Rekordbox cambia el grupo aquí
                 present = estructura.present(state, rb_cambios.load_baseline(), refs)
                 g, pend, ch = grupos.follow_rekordbox(self._cfg.get("pl_groups") or {}, tree, present,
-                                                      self._cfg.get("grp_moves") or {})
+                                                      self._cfg.get("grp_moves") or {}, self._groups_default())
                 if g != (self._cfg.get("pl_groups") or {}) or pend != (self._cfg.get("grp_moves") or {}):
                     self._cfg["pl_groups"], self._cfg["grp_moves"] = g, pend
                     config.save(self._cfg)
@@ -5222,7 +5277,7 @@ class Api:
 
     def _mirror_folders(self, loaded):
         """Carpeta hogar de cada playlist: la ruta de subcarpetas que tiene en Rekordbox."""
-        tree = self._tree()
+        tree = self._tree([p["id"] for p in loaded] + (self._group_pids() if self._groups_on() else []))
         if not tree:
             return loaded
         dest = Path(self._cfg["dest_root"])
@@ -5313,12 +5368,16 @@ class Api:
                 rel = os.path.relpath(str(Path(f).parent), m["from"]) if m.get("entry") else "."
                 ops.append((f, str(Path(m["to"]) / rel) if rel != "." else m["to"]))
         self._dj_precheck()
+        ops, dup_ch, dup_of = self._dups_out(ops)  # mismo nombre en el destino = repetida -> _duplicados
         res = organizador.relocate(ops, self._cfg, self._progress)  # Rekordbox abierto -> error, no se mueve nada
         changes = res.get("changes") or {}
         op_id = None
         if changes:
             self._dj_fix(changes)
-            op_id = historial.record("relocate", "Carpetas como en Rekordbox", list(changes.items()))
+        changes = {**changes, **dup_ch}
+        if changes:
+            op_id = historial.record("relocate", "Carpetas como en Rekordbox", list(changes.items()),
+                                     {"dup_of": {dup_ch[a]: k for a, k in dup_of.items() if a in dup_ch}} if dup_ch else None)
             pinned = set(self._cfg.get("pinned_paths") or [])
             if pinned & set(changes):
                 self._cfg["pinned_paths"] = sorted((pinned - set(changes)) | {changes[p] for p in pinned & set(changes)})
@@ -5362,9 +5421,56 @@ class Api:
         config.save(self._cfg)
         self._an = None  # las rutas cambiaron: el análisis se rehace
         out = {"playlists": len(moves), "moved": res.get("moved", 0), "skipped": res.get("skipped") or [],
-               "op_id": op_id, "names": [m["name"] for m in moves][:10]}
+               "dups": len(dup_ch), "op_id": op_id, "names": [m["name"] for m in moves][:10]}
         config.log(f"Carpetas como en Rekordbox: {out['moved']} archivo(s) de {out['playlists']} playlist(s)")
         return out
+
+    def _dups_out(self, ops):
+        """Pedido de Frank: si en la carpeta destino ya hay un archivo con ese nombre, es la misma canción (no
+        quiere copias «(2)»): la que llega va a _duplicados/<carpeta> y en Rekordbox y tus programas se une a la
+        que se queda (sus cues pasan si la otra no tiene). Antes quedaba «saltada» para siempre y «Acomodar ya»
+        no se iba. -> (ops que siguen, {origen: ruta en _duplicados}, {origen: la que se queda})"""
+        keep, dup_ch, dup_of, planned = [], {}, {}, set()
+        dupdir = Path(self._cfg["dest_root"]) / "_duplicados"
+        for op in ops:
+            src, dest = op[0], op[1]
+            target = Path(dest) / Path(src).name
+            if not os.path.isfile(src) or not target.exists() or plataforma.same_file(src, target):
+                keep.append(op)
+                continue
+            dup_of[src] = str(target)
+        if not dup_of:
+            return ops, {}, {}
+        rb_dup = {}
+        if destinos.DESTINATIONS["rekordbox"].available(self._cfg):
+            rb = unificar.rb_paths(self._progress) or set()
+            rb_dup = {a: k for a, k in dup_of.items() if a in rb}
+            if rb_dup and rekordbox_sync.rekordbox_running():
+                # no se puede unir en Rekordbox ahora: esas se quedan donde están (otra vez la próxima)
+                keep += [op for op in ops if op[0] in rb_dup]
+                dup_of = {a: k for a, k in dup_of.items() if a not in rb_dup}
+                rb_dup = {}
+        if rb_dup:
+            self._progress(f"Uniendo {len(rb_dup)} repetida(s) en Rekordbox…")
+            rekordbox_sync.backup()
+            unificar._rb_apply({}, rb_dup, None, self._progress)
+        if dup_of:
+            self._dj_fix({}, dup_of)
+        for src, kept in dup_of.items():
+            to = Path(dupdir) / Path(kept).parent.name
+            to.mkdir(parents=True, exist_ok=True)
+            dst = plataforma.free_name(to / Path(src).name)
+            while str(dst) in planned:
+                dst = plataforma.free_name(Path(str(dst)).with_name("_" + Path(str(dst)).name))
+            planned.add(str(dst))
+            try:
+                plataforma.safe_move(src, str(dst))
+                dup_ch[src] = str(dst)
+            except OSError as e:
+                config.log(f"repetida a _duplicados {src}: {e!r}")
+        if dup_ch:
+            config.log(f"Repetidas por nombre a _duplicados: {len(dup_ch)}")
+        return keep, dup_ch, dup_of
 
     def rb_mirror_run(self):
         """Botón «Ordenar mis carpetas como Rekordbox» (Rekordbox cerrado)."""

@@ -157,17 +157,38 @@ class Collection:
         sub.set("COUNT", str(len(sub.findall("NODE"))))
         return n
 
-    def set_playlist(self, folder, name, keys):
-        """Deja la playlist <folder>/<name> con exactamente estas pistas, en este orden. -> cambió?"""
-        fnode = self._child(self._root_subnodes(), "FOLDER", folder)
-        fsub = fnode.find("SUBNODES")
-        if fsub is None:
-            fsub = ET.SubElement(fnode, "SUBNODES", COUNT="0")
+    @staticmethod
+    def _subnodes(node):
+        sub = node.find("SUBNODES")
+        if sub is None:
+            sub = ET.SubElement(node, "SUBNODES", COUNT="0")
+        return sub
+
+    def folder_sub(self, path):
+        """SUBNODES de la carpeta path (["BrainOrder", "Techno"]); se crea si falta."""
+        sub = self._root_subnodes()
+        for name in path:
+            sub = self._subnodes(self._child(sub, "FOLDER", name))
+        return sub
+
+    def set_playlist(self, folder, name, keys, trail=None):
+        """Deja la playlist <folder>/<trail…>/<name> con exactamente estas pistas, en este orden. Con trail
+        (grupos como carpetas) la que se llame igual en otra subcarpeta de <folder> se quita. -> cambió?"""
+        fsub = self.folder_sub([folder] + list(trail or []))
+        moved = False
         pnode = self._child(fsub, "PLAYLIST", name)
+        if trail is not None:
+            root = self.folder_sub([folder])
+            for parent, n in list(_lists(root)):
+                if n.get("NAME") == name and n is not pnode:
+                    parent.remove(n)
+                    parent.set("COUNT", str(len(parent.findall("NODE"))))
+                    moved = True
+            _prune(root)
         pl = pnode.find("PLAYLIST")
         current = [pk.get("KEY") for pk in pl.iter("PRIMARYKEY")] if pl is not None else None
         if current == keys:
-            return False
+            return moved
         if pl is not None:
             pnode.remove(pl)
         pl = ET.SubElement(pnode, "PLAYLIST", ENTRIES=str(len(keys)), TYPE="LIST", UUID=uuid.uuid4().hex)
@@ -212,6 +233,28 @@ class Collection:
         os.replace(tmp, self.path)
 
 
+def _lists(sub):
+    """(SUBNODES padre, NODE) de cada playlist dentro de sub, a cualquier profundidad."""
+    for n in list(sub.findall("NODE")):
+        if n.get("TYPE") == "PLAYLIST":
+            yield sub, n
+        elif n.get("TYPE") == "FOLDER" and n.find("SUBNODES") is not None:
+            yield from _lists(n.find("SUBNODES"))
+
+
+def _prune(sub):
+    """Quita las subcarpetas que quedaron vacías (no sub mismo)."""
+    for n in list(sub.findall("NODE")):
+        if n.get("TYPE") != "FOLDER":
+            continue
+        inner = n.find("SUBNODES")
+        if inner is not None:
+            _prune(inner)
+        if inner is None or not inner.findall("NODE"):
+            sub.remove(n)
+    sub.set("COUNT", str(len(sub.findall("NODE"))))
+
+
 def backup(path):
     p = Path(path)
     dst = p.with_name(f"collection.brainorder-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
@@ -251,7 +294,8 @@ def sync(analysis, cfg, progress=None):
                 k, new = col.ensure_entry(r["source"], r["name"], ", ".join(r.get("artists") or []))
                 stats["tracks_added"] += new
                 keys.append(k)
-        if col.set_playlist(folder, pl["name"], keys):
+        trails = cfg.get("_trails")
+        if col.set_playlist(folder, pl["name"], keys, trails.get(pl["id"], []) if trails else None):
             stats["playlists_updated"] += 1
     col.save()
     log(f"Traktor: {stats}")
@@ -289,7 +333,10 @@ def edit(cfg, renames=None, deletes=None):
     fsub = fnode.find("SUBNODES") if fnode is not None else None
     if fsub is None:
         return {"renamed": 0, "deleted": 0}
-    lists = {n.get("NAME"): n for n in fsub.findall("NODE") if n.get("TYPE") == "PLAYLIST"}
+    lists, parents = {}, {}
+    for par, n in _lists(fsub):  # también las de subcarpetas (grupos como carpetas)
+        lists.setdefault(n.get("NAME"), n)
+        parents.setdefault(n.get("NAME"), par)
     if not any(o in lists for o in renames) and not any(n in lists for n in deletes):
         return {"renamed": 0, "deleted": 0}
     _open(cfg)
@@ -300,17 +347,19 @@ def edit(cfg, renames=None, deletes=None):
         if n is None:
             continue
         if new in lists:
-            fsub.remove(n)
+            parents[old].remove(n)
             out["deleted"] += 1
         else:
             n.set("NAME", new)
-            lists[new] = lists.pop(old)
+            lists[new], parents[new] = lists.pop(old), parents.pop(old)
             out["renamed"] += 1
     for name in deletes:
         n = lists.pop(name, None)
         if n is not None:
-            fsub.remove(n)
+            parents[name].remove(n)
             out["deleted"] += 1
+    for par in {id(x): x for x in parents.values()}.values():
+        par.set("COUNT", str(len(par.findall("NODE"))))
     fsub.set("COUNT", str(len(fsub.findall("NODE"))))
     col.save()
     return out

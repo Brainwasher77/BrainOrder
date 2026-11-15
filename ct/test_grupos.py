@@ -173,6 +173,7 @@ print("Organizar en la carpeta del grupo ok")
 A = [v for v in vars(app).values() if isinstance(v, type) and hasattr(v, "set_pl_group")][0]
 o = A.__new__(A)
 o._cfg = {"pl_groups": {"p1": "Techno"}, "rb_tree": {"p9": ["Brainwasher"]}}
+o._analysis = lambda: [{"id": x} for x in ("p1", "p2", "p3", "p4")]
 assert o.set_pl_group(["p2"], "techno")["moved"] == 0 and "grp_moves" not in o._cfg  # solo visual: nada pendiente
 o._cfg["groups_folders"] = True
 r = o.set_pl_group(["p3"], "House / Deep")
@@ -180,13 +181,19 @@ assert r["folders"] and r["moved"] == 1 and o._cfg["grp_moves"] == {"p3": ["Hous
 r = o.rename_pl_group("Techno", "Hard Techno")
 assert r["moved"] == 2 and o._cfg["grp_moves"]["p1"] == ["Hard Techno"] and o._cfg["grp_moves"]["p2"] == ["Hard Techno"]
 o.set_pl_group(["p3"], "")
-assert o._cfg["grp_moves"]["p3"] == []
+assert o._cfg["grp_moves"]["p3"] == ["Organizar"]  # sin grupo = carpeta «Organizar» (2.51.0)
 tr = o._tree()
-assert tr == {"p9": ["Brainwasher"], "p1": ["Hard Techno"], "p2": ["Hard Techno"]}, tr
+assert tr == {"p9": ["Brainwasher"], "p1": ["Hard Techno"], "p2": ["Hard Techno"], "p3": ["Organizar"],
+              "p4": ["Organizar"]}, tr
+# renombrar «Organizar» cambia la carpeta de las sin grupo (y no se puede deshacer)
+assert not o.rename_pl_group("Organizar", "")["ok"]
 # lo que Organizar debe ubicar: las pendientes y las que aún no están en Rekordbox
 rb_cambios.save_baseline({"7": {"pid": "p1", "name": "x", "paths": []}})
 pm = o._rb_place_map()
-assert pm == {"p1": ["Hard Techno"], "p2": ["Hard Techno"], "p3": []}, pm
+assert pm == {"p1": ["Hard Techno"], "p2": ["Hard Techno"], "p3": ["Organizar"], "p4": ["Organizar"]}, pm
+r = o.rename_pl_group("organizar", "Por organizar")
+assert r["ok"] and o._cfg["groups_default"] == "Por organizar" and o._cfg["grp_moves"]["p4"] == ["Por organizar"], r
+o._cfg["groups_default"] = "Organizar"
 print("pendientes ok")
 
 # ------------------------------------------------ disco: la playlist se muda a <carpeta>/<grupo>/<playlist>
@@ -195,6 +202,7 @@ music = TMP / "Music" / "Spotify playlists"
 (music / "Acid" / "uno.mp3").write_bytes(b"x")
 o2 = A.__new__(A)
 o2._cfg = {"dest_root": str(music), "groups_folders": True, "pl_groups": {"spA": "Techno"}, "rb_mirror": True}
+o2._analysis = lambda: []
 analysis = [{"id": "spA", "name": "Acid", "folder": str(music / "Acid"), "tracks": [
     {"source": str(music / "Acid" / "uno.mp3"), "dest_dir": str(music / "Techno" / "Acid"), "status": "elsewhere"}]}]
 loaded = o2._mirror_folders([{"id": "spA", "name": "Acid"}])
