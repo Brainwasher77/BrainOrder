@@ -203,6 +203,7 @@ music = TMP / "Music" / "Spotify playlists"
 o2 = A.__new__(A)
 o2._cfg = {"dest_root": str(music), "groups_folders": True, "pl_groups": {"spA": "Techno"}, "rb_mirror": True}
 o2._analysis = lambda: []
+o2._cfg.setdefault("folder_playlists", [])
 analysis = [{"id": "spA", "name": "Acid", "folder": str(music / "Acid"), "tracks": [
     {"source": str(music / "Acid" / "uno.mp3"), "dest_dir": str(music / "Techno" / "Acid"), "status": "elsewhere"}]}]
 loaded = o2._mirror_folders([{"id": "spA", "name": "Acid"}])
@@ -219,7 +220,10 @@ os.replace(music / "Acid" / "uno.mp3", music / "Techno" / "Acid" / "uno.mp3")
 o2._analysis = lambda: [{"id": "spA", "name": "Acid", "folder": str(music / "Techno" / "Acid"), "tracks": [
     {"source": str(music / "Techno" / "Acid" / "uno.mp3"), "dest_dir": str(music / "Techno" / "Acid"), "status": "ok"}]}]
 st = o2.groups_status()
-assert not st["needed"] and st["disk"] == 0, st
+assert st["needed"] and st["disk"] == 0 and st["empty"] == 1, st  # quedó la carpeta vieja «Acid» vacía
+assert o2._clean_empty_dirs() == 1 and not (music / "Acid").exists()
+st = o2.groups_status()
+assert not st["needed"] and st["disk"] == 0 and st["empty"] == 0, st
 o2._cfg["grp_moves"] = {"spA": ["Techno"]}
 assert o2.groups_status()["needed"]  # falta moverla en Rekordbox
 o2._cfg["grp_moves"] = {}
