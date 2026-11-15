@@ -1,5 +1,5 @@
 {
-  "version": "2.50.2",
-  "build": 118,
-  "notes": "Mover miles de canciones ya no se queda horas en «Corrigiendo rutas en Rekordbox»: la colección se lee una vez y se muestra el avance."
+  "version": "2.50.3",
+  "build": 119,
+  "notes": "Los botones de acomodar aparecen solo cuando falta algo: «Acomodar ya» en Grupos, «Mover a BrainOrder las que ya agregué» y «Juntar toda tu música»."
 }

@@ -1872,6 +1872,22 @@ class Api:
                 self._build_analysis(light=True)
         return out
 
+    def groups_status(self):
+        """¿Falta acomodar algo de los grupos? (para mostrar «Acomodar ya» solo cuando hace falta)"""
+        try:
+            if not self._groups_on():
+                return {"ok": True, "on": False}
+            analysis = self._analysis() or []
+            moves, _ = self._mirror_plan(analysis) if analysis else ([], {})
+            stale = self._mirror_stale(analysis) if analysis else False
+            rb = len(self._cfg.get("grp_moves") or {})
+            return {"ok": True, "on": True, "rb": rb, "disk": len(moves), "files": sum(len(m["files"]) for m in moves),
+                    "stale": bool(stale), "needed": bool(rb or moves or stale),
+                    "names": [m["name"] for m in moves[:5]], "rekordbox_running": rekordbox_sync.rekordbox_running()}
+        except Exception as e:
+            config.log(f"estado de grupos: {e!r}")
+            return {"ok": False, "error": str(e)}
+
     def groups_apply(self):
         """Botón / después de cambiar grupos: muda las playlists a la carpeta de su grupo en Rekordbox y en tu
         carpeta de música. Con Rekordbox abierto queda pendiente y se hace solo al cerrarlo."""
@@ -2357,7 +2373,13 @@ class Api:
                               "name": v["name"], "folder": v.get("folder") or "", "count": len(v["paths"]),
                               "state": state, "new": state == "new", **extra})
             self._progress("Listo.", 1)
-            return {"items": items, "total": n}
+            try:
+                adopt_old = len(self._rb_adopt_candidates())
+            except Exception as e:
+                config.log(f"playlists agregadas fuera de la carpeta: {e!r}")
+                adopt_old = 0
+            return {"items": items, "total": n, "adopt_old": adopt_old,
+                    "adopt_pending": len(self._cfg.get("rb_adopt") or [])}
         return self._task(run, "rb_outside", "Playlists de Rekordbox")
 
     def dj_undismiss(self, program, ref):
@@ -2437,30 +2459,7 @@ class Api:
         """Las playlists de Rekordbox que agregaste ANTES de esta opción (siguen fuera de la carpeta): se
         mueven a la carpeta de BrainOrder."""
         def run():
-            import dj_playlists as DJ
-            lists = DJ.read(self._cfg, "rekordbox") or {}
-            outside = {ref: v for ref, v in lists.items()}
-            jobs, seen = [], set()
-            from fuentes import carpetas as FC
-            for e in self._cfg.get("folder_playlists") or []:
-                if e.get("program") == "rekordbox" and str(e.get("ref")) in outside:
-                    jobs.append({"ref": str(e["ref"]), "pid": FC.entry_pid(e), "name": e.get("name") or outside[str(e["ref"])]["name"], "mode": "move"})
-                    seen.add(str(e["ref"]))
-            origin = self._cfg.get("playlist_origin") or {}
-            by_name = {}
-            for ref, v in outside.items():
-                by_name.setdefault(biblioteca.folder_key(v["name"]), []).append(ref)
-            for p in self._analysis() or []:
-                if (p.get("origin") or origin.get(p["id"])) != "rekordbox":
-                    continue
-                refs = [r for r in by_name.get(biblioteca.folder_key(p["name"]), []) if r not in seen]
-                if len(refs) == 1:  # solo si no hay duda de cuál es
-                    jobs.append({"ref": refs[0], "pid": p["id"], "name": p["name"], "mode": "move"})
-                    seen.add(refs[0])
-            if not jobs:
-                return {"queued": 0, "result": None}
-            # solo las que de verdad están fuera de la carpeta
-            jobs = [j for j in jobs if not self._rb_inside_folder(j["ref"])]
+            jobs = self._rb_adopt_candidates()
             if not jobs:
                 return {"queued": 0, "result": None}
             self._rb_adopt_add(jobs)
@@ -2468,6 +2467,33 @@ class Api:
             return {"queued": len(jobs), "result": r, "pending": r is None,
                     "analysis": self._analysis() if r else None}
         return self._task(run, "rb_adopt", "Mover playlists a la carpeta de BrainOrder")
+
+    def _rb_adopt_candidates(self, lists=None):
+        """Las que agregaste de Rekordbox y siguen fuera de la carpeta de BrainOrder (sin moverlas)."""
+        import dj_playlists as DJ
+        if lists is None:
+            lists = DJ.read(self._cfg, "rekordbox") or {}
+        outside = {ref: v for ref, v in lists.items()}
+        jobs, seen = [], set()
+        from fuentes import carpetas as FC
+        for e in self._cfg.get("folder_playlists") or []:
+            if e.get("program") == "rekordbox" and str(e.get("ref")) in outside:
+                jobs.append({"ref": str(e["ref"]), "pid": FC.entry_pid(e), "name": e.get("name") or outside[str(e["ref"])]["name"], "mode": "move"})
+                seen.add(str(e["ref"]))
+        origin = self._cfg.get("playlist_origin") or {}
+        by_name = {}
+        for ref, v in outside.items():
+            by_name.setdefault(biblioteca.folder_key(v["name"]), []).append(ref)
+        for p in self._analysis() or []:
+            if (p.get("origin") or origin.get(p["id"])) != "rekordbox":
+                continue
+            refs = [r for r in by_name.get(biblioteca.folder_key(p["name"]), []) if r not in seen]
+            if len(refs) == 1:  # solo si no hay duda de cuál es
+                jobs.append({"ref": refs[0], "pid": p["id"], "name": p["name"], "mode": "move"})
+                seen.add(refs[0])
+        pend = {str(j["ref"]) for j in self._cfg.get("rb_adopt") or []}
+        # solo las que de verdad están fuera de la carpeta (y no están ya en cola)
+        return [j for j in jobs if j["ref"] not in pend and not self._rb_inside_folder(j["ref"])]
 
     def rb_adopt_run(self):
         def run():

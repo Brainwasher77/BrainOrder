@@ -201,7 +201,22 @@ loaded = o2._mirror_folders([{"id": "spA", "name": "Acid"}])
 assert loaded[0]["folder"] == str(music / "Techno" / "Acid"), loaded
 moves, _ = o2._mirror_plan([{**analysis[0], "folder": str(music / "Techno" / "Acid")}])
 assert len(moves) == 1 and moves[0]["to"] == str(music / "Techno" / "Acid") and moves[0]["files"] == [str(music / "Acid" / "uno.mp3")], moves
+# «Acomodar ya» solo si falta algo
+o2._analysis = lambda: [{**analysis[0], "folder": str(music / "Techno" / "Acid")}]
+app.rekordbox_sync.rekordbox_running = lambda: False
+st = o2.groups_status()
+assert st["needed"] and st["disk"] == 1 and st["files"] == 1 and st["rb"] == 0, st
+(music / "Techno" / "Acid").mkdir(parents=True)
+os.replace(music / "Acid" / "uno.mp3", music / "Techno" / "Acid" / "uno.mp3")
+o2._analysis = lambda: [{"id": "spA", "name": "Acid", "folder": str(music / "Techno" / "Acid"), "tracks": [
+    {"source": str(music / "Techno" / "Acid" / "uno.mp3"), "dest_dir": str(music / "Techno" / "Acid"), "status": "ok"}]}]
+st = o2.groups_status()
+assert not st["needed"] and st["disk"] == 0, st
+o2._cfg["grp_moves"] = {"spA": ["Techno"]}
+assert o2.groups_status()["needed"]  # falta moverla en Rekordbox
+o2._cfg["grp_moves"] = {}
 o2._cfg["groups_folders"] = False
+assert o2.groups_status() == {"ok": True, "on": False}
 o2._cfg["rb_mirror"] = False
 assert o2._mirror_folders([{"id": "spA", "name": "Acid"}]) == [{"id": "spA", "name": "Acid"}]  # solo visual: no se muda
 print("disco ok")

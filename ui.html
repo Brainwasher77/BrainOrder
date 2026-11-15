@@ -760,7 +760,7 @@ async function rbAdoptOld(){
   if(r.analysis) setAnalysis(r.analysis);
   if(!r.queued){ toast(`No hay playlists que ya hayas agregado fuera de la carpeta «${fold}». 👍`); return; }
   toast(r.pending ? `🎛️ ${r.queued} playlist(s) pasan a la carpeta «${fold}» cuando cierres Rekordbox.` : `🎛️ ${esc((r.result.messages||[]).join('. '))}.`);
-  render();
+  render(); rbOutLoad(true);
 }
 async function rbOutNo(i){ const f = FD.rb.items[i]; await api().dj_dismiss(f.program, f.ref, true); f.state = 'dismissed'; fdLoad(); render(); }
 async function rbOutUndismiss(i){ const f = FD.rb.items[i]; await api().dj_undismiss(f.program, f.ref); f.state = 'old'; render(); }
@@ -769,7 +769,8 @@ function rbOutBox(){
   if(!on) return '';
   const head = `<div class="vhead" style="margin-top:26px"><h2 style="font-size:17px">🎛️ Tus playlists de Rekordbox</h2>
     <span class="sub">Todas las playlists de Rekordbox que están <b>fuera</b> de la carpeta «${esc(S.settings.rekordbox_folder||'BrainOrder')}» y todavía no están en BrainOrder (también las que ya tenías antes de usar BrainOrder). En cada una eliges si la agregas y dónde: como playlist nueva (con el nombre que quieras), sumada a una que ya tienes, y en qué grupo.</span>
-    <div class="sp"><button class="ghost" ${running('rb_adopt')?'disabled':''} onclick="rbAdoptOld()" title="Las que agregaste antes de esta opción y siguen fuera de la carpeta en Rekordbox">📥 Mover a «${esc(S.settings.rekordbox_folder||'BrainOrder')}» las que ya agregué</button>
+    <div class="sp">${FD.rb && FD.rb.adopt_old ? `<button class="ghost" ${running('rb_adopt')?'disabled':''} onclick="rbAdoptOld()" title="Las que agregaste antes de esta opción y siguen fuera de la carpeta en Rekordbox">📥 Mover a «${esc(S.settings.rekordbox_folder||'BrainOrder')}» las ${FD.rb.adopt_old} que ya agregué</button>` : ''}
+      ${FD.rb && FD.rb.adopt_pending ? `<span class="art">⏳ ${FD.rb.adopt_pending} pasan a «${esc(S.settings.rekordbox_folder||'BrainOrder')}» cuando cierres Rekordbox</span>` : ''}
       <button onclick="rbOutLoad()" ${FD.rbLoading?'disabled':''}>${FD.rbLoading?'Leyendo…':FD.rb?'⟳ Revisar':'Ver todas'}</button></div></div>`;
   if(!FD.rb) return head;
   const its = FD.rb.items, news = its.filter(f => f.state!=='dismissed' && f.new_count), none = its.filter(f => f.state!=='dismissed' && !f.new_count), dis = its.filter(f => f.state==='dismissed');
@@ -1819,9 +1820,27 @@ async function groupsApply(){
   if(x.waiting || r.pending) msg.push('⏳ Rekordbox está abierto: lo que falta se hace solo cuando lo cierres');
   if(x.error) msg.push(`<span style="color:var(--org)">${esc(x.error)}</span>`);
   toast(msg.length ? msg.join('<br>') + (d.op_id ? undoLink(d) : '') : '📂 Todo ya estaba en la carpeta de su grupo.');
-  loadHist(); if(S.view==='plgroups') renderMain();
+  loadHist(); GST = null; if(S.view==='plgroups') renderMain(); grpStatusLoad();
 }
-window.onGroups = g => { S.plGroups = g || {}; paintPlNav(); if(S.view==='plgroups') renderMain(); };
+// «Acomodar ya» solo cuando de verdad falta algo (2.50.3)
+let GST = null;
+async function grpStatusLoad(){
+  if(S.groupsFolders!==true){ GST = null; return; }
+  try{ const r = await api().groups_status(); GST = r.ok ? r : null; }catch(e){ GST = null; }
+  if(S.view==='plgroups') renderMain();
+}
+function grpStatusBox(){
+  if(running('groups_apply')) return `<div style="margin-top:8px"><button disabled>Acomodando…</button></div>`;
+  const g = GST; if(!g) return `<div class="art" style="margin-top:8px">Revisando si falta acomodar algo…</div>`;
+  if(!g.needed) return `<div class="art" style="margin-top:8px;color:var(--ok)">✅ Todo está acomodado: tus playlists están en la carpeta de su grupo en Rekordbox y en tu disco.</div>`;
+  const parts = [];
+  if(g.rb) parts.push(`${g.rb} playlist(s) por mover en Rekordbox${g.rekordbox_running?' (se hace sola cuando lo cierres)':''}`);
+  if(g.disk) parts.push(`${g.disk} playlist(s) por mudar en tu disco (${g.files} archivo(s))${(g.names||[]).length?`: ${g.names.map(esc).join(', ')}${g.disk>g.names.length?'…':''}`:''}`);
+  if(!parts.length && g.stale) parts.push('falta reacomodar el análisis');
+  return `<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">Falta acomodar: ${parts.join('; ')}.</span>
+    <button onclick="groupsApply()">📂 Acomodar ya</button></div>`;
+}
+window.onGroups = g => { S.plGroups = g || {}; paintPlNav(); if(S.view==='plgroups'){ renderMain(); grpStatusLoad(); } };
 async function groupsAsk(){
   if($('mbg').classList.contains('show')){ setTimeout(groupsAsk, 4000); return; }  // otro diálogo abierto: después
   let pv = {}; try{ pv = await api().groups_folders_preview() || {}; }catch(e){}
@@ -1845,7 +1864,7 @@ async function groupsPick(on){
   const cf = (document.querySelector('input[name=grpCf]:checked')||{}).value || 'rekordbox';
   closeModal();
   const r = await api().groups_folders_set(on, cf); if(!r.ok){ toast(esc(r.error||'No se pudo'), true); return; }
-  S.groupsFolders = r.groups_folders; if(r.pl_groups){ S.plGroups = r.pl_groups; paintPlNav(); }
+  S.groupsFolders = r.groups_folders; GST = null; if(r.pl_groups){ S.plGroups = r.pl_groups; paintPlNav(); }
   if(S.view==='plgroups') renderMain();
   if(!on){ toast('🏷 Listo: los grupos solo ordenan tus playlists aquí en BrainOrder.'); return; }
   toast(`📂 Listo: tus grupos son carpetas.${r.from_rb?` ${r.from_rb} playlist(s) tomaron como grupo su subcarpeta de Rekordbox.`:''} Ahora acomodo Rekordbox y tu carpeta de música…`);
@@ -1909,7 +1928,7 @@ function plGroupsView(){
     <div class="box" style="margin:0 0 12px;border-color:${S.groupsFolders===true?'var(--ok)':'var(--line)'}">
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" ${S.groupsFolders===true?'checked':''} onchange="this.checked ? groupsAsk() : groupsPick(false)" style="margin-top:3px">
       <span><b>📂 Mis grupos son carpetas (en Rekordbox y en mi disco)</b><br><span class="art">${grpModeTxt()}</span></span></label>
-      ${S.groupsFolders===true ? `<div style="margin-top:8px"><button ${running('groups_apply')?'disabled':''} onclick="groupsApply()">${running('groups_apply')?'Acomodando…':'📂 Acomodar ya'}</button></div>` : ''}</div>
+      ${S.groupsFolders===true ? grpStatusBox() : ''}</div>
     <div class="chips">
       <button class="ghost chip ${GRP.pf==='*'?'on':''}" onclick="pgFilter('*')">Todas <span class="art">${S.analysis.length}</span></button>
       ${gl.map(g=>`<button class="ghost chip ${GRP.pf===g?'on':''}" data-g="${esc(g)}" onclick="pgFilter(this.dataset.g)" title="Clic derecho o ✏️ para renombrarlo">${esc(g)} <span class="art">${plGroupCount(g)}</span></button>`).join('')}
@@ -2584,7 +2603,7 @@ async function rgApply(){
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
-function show(v){ if(v==='gather' && S.view!=='gather') gatherLoad(); if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
+function show(v){ if(v==='plgroups' && S.view!=='plgroups'){ GST = null; grpStatusLoad(); } if(v==='gather' && S.view!=='gather') gatherLoad(); if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 
 // ---------- juntar toda tu música en tu carpeta de playlists (2.50.0) ----------
 let GA = {data:null, sel:new Set(), loading:false};
@@ -2610,6 +2629,8 @@ function gatherView(){
         ${x.links||x.broken ? ` ${x.links} acceso(s) directo(s)${x.broken?`, ${x.broken} roto(s)`:''} a la Papelera.` : ''}
         ${(x.kept_playlists||[]).length ? `<br>Se quedan: ${x.kept_playlists.map(esc).join(', ')} (playlists que importaste desde ahí).` : ''}
         ${(x.examples||[]).length ? `<br>Ej.: ${x.examples.map(esc).join(' · ')}` : ''}</span></span></label>`).join('');
+  if(!d.items.some(x => x.total || x.links || x.broken))
+    return head + `<div class="empty"><h3>✅ Toda tu música ya está en «${dest}»</h3><p class="art">Tus otras carpetas no tienen música ni accesos directos por juntar.</p></div>`;
   const tot = d.items.filter(x=>GA.sel.has(x.path)).reduce((a,x)=>a+(x.total||0),0), busy = running('gather');
   return head + (d.analyzed ? '' : `<div class="box" style="border-color:var(--org);margin-bottom:12px">Todavía no hay análisis: dale <b>Analizar</b> primero para saber a qué playlist va cada canción (si no, todo iría a ${esc(d.nopl)}).</div>`)
     + rows + `<div class="actions" style="justify-content:flex-start"><button onclick="gatherLoad()">↻ Volver a revisar</button>
