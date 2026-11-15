@@ -1909,6 +1909,13 @@ class Api:
             out["disk"] = self._mirror_apply(analysis)
             if out["disk"]:
                 analysis = self._build_analysis(light=True) or analysis
+            else:
+                try:
+                    c = self._clean_empty_dirs()
+                    if c:
+                        out["disk"] = {"moved": 0, "cleaned": c}
+                except Exception as e:
+                    config.log(f"carpetas vacías: {e!r}")
         # tus otros programas de DJ: cada playlist en la carpeta de su grupo (sin grupo: «Organizar»)
         trails = self._dj_trails()
         for k in destinos.enabled_keys(self._cfg):
@@ -1936,8 +1943,9 @@ class Api:
             moves, _ = self._mirror_plan(analysis) if analysis else ([], {})
             stale = self._mirror_stale(analysis) if analysis else False
             rb = len(self._cfg.get("grp_moves") or {})
+            empty = self._clean_empty_dirs(dry=True)
             return {"ok": True, "on": True, "rb": rb, "disk": len(moves), "files": sum(len(m["files"]) for m in moves),
-                    "stale": bool(stale), "needed": bool(rb or moves or stale),
+                    "stale": bool(stale), "empty": empty, "needed": bool(rb or moves or stale or empty),
                     "names": [m["name"] for m in moves[:5]], "rekordbox_running": rekordbox_sync.rekordbox_running()}
         except Exception as e:
             config.log(f"estado de grupos: {e!r}")
@@ -5420,10 +5428,68 @@ class Api:
         self._cfg["pl_dirs"] = dirs
         config.save(self._cfg)
         self._an = None  # las rutas cambiaron: el análisis se rehace
+        try:
+            cleaned = self._clean_empty_dirs()
+        except Exception as e:
+            config.log(f"carpetas vacías: {e!r}")
+            cleaned = 0
         out = {"playlists": len(moves), "moved": res.get("moved", 0), "skipped": res.get("skipped") or [],
-               "dups": len(dup_ch), "op_id": op_id, "names": [m["name"] for m in moves][:10]}
+               "dups": len(dup_ch), "cleaned": cleaned, "op_id": op_id, "names": [m["name"] for m in moves][:10]}
         config.log(f"Carpetas como en Rekordbox: {out['moved']} archivo(s) de {out['playlists']} playlist(s)")
         return out
+
+    def _clean_empty_dirs(self, dry=False):
+        """Tu carpeta de playlists sin carpetas sueltas: se borran las que quedaron vacías (o solo con basura del
+        sistema o accesos directos ROTOS) después de mudar playlists a la carpeta de su grupo. Nunca las carpetas
+        «_…» (_duplicados, _Sin Playlist, _Informes…), ni las de playlists de carpeta, ni la principal.
+        -> cuántas se borraron"""
+        from fuentes import carpetas as FC
+        root = Path(self._cfg.get("dest_root") or "")
+        if not root.is_dir():
+            return 0
+        keep = {estructura._norm(e["path"]) for e in FC.entries(self._cfg) if e.get("path")}
+        junk = {".DS_Store", "Thumbs.db", "desktop.ini", ".localized", "Icon\r", reportes.TXT_NAME}
+        n, empty = 0, set()
+        for d, ds, fs in os.walk(root, topdown=False):
+            p = Path(d)
+            if p == root:
+                continue
+            rel = p.relative_to(root).parts
+            if rel[0].startswith("_") or estructura._norm(p) in keep:
+                continue
+            try:
+                names = os.listdir(p)
+            except OSError:
+                continue
+            gone = []
+            ok = True
+            for nm in names:
+                q = p / nm
+                if str(q) in empty:
+                    continue  # subcarpeta que también se va (en la simulación)
+                if os.path.islink(q) and not os.path.exists(q):
+                    gone.append(q)  # acceso directo roto
+                elif nm in junk or nm.startswith("._") or (q.is_file() and orden.is_list_file(nm) and orden.is_ours(q)):
+                    gone.append(q)
+                else:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            if dry:
+                empty.add(str(p))
+                n += 1
+                continue
+            try:
+                for q in gone:
+                    q.unlink()
+                p.rmdir()
+                n += 1
+            except OSError as e:
+                config.log(f"no pude quitar la carpeta vacía {p}: {e!r}")
+        if n and not dry:
+            config.log(f"Carpetas vacías quitadas de tu carpeta de playlists: {n}")
+        return n
 
     def _dups_out(self, ops):
         """Pedido de Frank: si en la carpeta destino ya hay un archivo con ese nombre, es la misma canción (no

@@ -123,3 +123,24 @@ assert ch[ops[0][0]] == str(BL / "_duplicados" / "Acid" / "uno.mp3") and Path(ch
 assert (BL / "Techno" / "Acid" / "uno.mp3").read_bytes() == b"queda" and FIX == [({}, dup_of)]
 print("repetidas ok")
 print("OK")
+
+# ------------------------------------------------ carpetas vacías de la estructura vieja
+R = TMP / "BL2"
+(R / "Vieja" / "Sub").mkdir(parents=True)
+(R / "Vieja" / ".DS_Store").write_bytes(b"")
+os.symlink(str(R / "no existe.mp3"), str(R / "Vieja" / "Sub" / "roto.mp3"))
+(R / "Con musica").mkdir()
+(R / "Con musica" / "a.mp3").write_bytes(b"a")
+(R / "Con acceso").mkdir()
+(R / "Con musica" / "b.mp3").write_bytes(b"b")
+os.symlink(str(R / "Con musica" / "b.mp3"), str(R / "Con acceso" / "b.mp3"))  # acceso directo que sí sirve
+(R / "_duplicados" / "x").mkdir(parents=True)
+(R / "Carpeta mia").mkdir()  # playlist de carpeta (vacía): se queda
+o3 = A.__new__(A)
+o3._cfg = {"dest_root": str(R), "folder_playlists": [{"name": "Carpeta mia", "path": str(R / "Carpeta mia")}]}
+assert o3._clean_empty_dirs(dry=True) == 2 and (R / "Vieja").exists()
+assert o3._clean_empty_dirs() == 2
+assert not (R / "Vieja").exists() and (R / "Con musica").exists() and (R / "Con acceso").exists()
+assert (R / "_duplicados" / "x").exists() and (R / "Carpeta mia").exists()
+print("carpetas vacías ok")
+print("OK")

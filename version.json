@@ -1,5 +1,5 @@
 {
-  "version": "2.51.0",
-  "build": 121,
-  "notes": "Grupos como carpetas: las playlists sin grupo quedan en la carpeta «Organizar», y los grupos ahora también son carpetas en Traktor, Serato, Engine DJ y M3U. Lo que llega a una carpeta donde ya hay una canción con ese nombre va a _duplicados (en Rekordbox se une a la que se queda)."
+  "version": "2.51.1",
+  "build": 122,
+  "notes": "Al acomodar se quitan las carpetas que quedaron vacías (o solo con accesos directos rotos) en tu carpeta de playlists: cada grupo en su carpeta y nada suelto."
 }

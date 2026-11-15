@@ -1820,6 +1820,7 @@ async function groupsApply(){
   const x = r.result || {}, rb = x.rekordbox || {}, d = x.disk || {}, msg = [];
   if(rb.moved) msg.push(`🏷 ${rb.moved} playlist(s) en la carpeta de su grupo en Rekordbox${rb.folders_removed?` (${rb.folders_removed} carpeta(s) vacía(s) quitada(s))`:''}`);
   if(d.moved) msg.push(`📂 ${d.moved} archivo(s) mudado(s) a la carpeta de su grupo`);
+  if(d.cleaned) msg.push(`🧹 ${d.cleaned} carpeta(s) vacía(s) quitada(s) de tu carpeta de playlists`);
   if(d.dups) msg.push(`🗂 ${d.dups} repetida(s) por nombre a _duplicados (en Rekordbox se unieron a la que se queda)`);
   if(x.dj && Object.keys(x.dj).length) msg.push(`🎛️ También en ${Object.keys(x.dj).map(esc).join(', ')}`);
   if((x.dj_waiting||[]).length) msg.push(`⏳ ${x.dj_waiting.map(esc).join(', ')} está abierto: se acomoda al Organizar con el programa cerrado`);
@@ -1843,6 +1844,7 @@ function grpStatusBox(){
   const parts = [];
   if(g.rb) parts.push(`${g.rb} playlist(s) por mover en Rekordbox${g.rekordbox_running?' (se hace sola cuando lo cierres)':''}`);
   if(g.disk) parts.push(`${g.disk} playlist(s) por mudar en tu disco (${g.files} archivo(s))${(g.names||[]).length?`: ${g.names.map(esc).join(', ')}${g.disk>g.names.length?'…':''}`:''}`);
+  if(g.empty) parts.push(`${g.empty} carpeta(s) vacía(s) por quitar`);
   if(!parts.length && g.stale) parts.push('falta reacomodar el análisis');
   return `<div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">Falta acomodar: ${parts.join('; ')}.</span>
     <button onclick="groupsApply()">📂 Acomodar ya</button></div>`;
