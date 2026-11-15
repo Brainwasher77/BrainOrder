@@ -1916,6 +1916,7 @@ class Api:
                         out["disk"] = {"moved": 0, "cleaned": c}
                 except Exception as e:
                     config.log(f"carpetas vacías: {e!r}")
+                self._color_groups()
         # tus otros programas de DJ: cada playlist en la carpeta de su grupo (sin grupo: «Organizar»)
         trails = self._dj_trails()
         for k in destinos.enabled_keys(self._cfg):
@@ -5433,10 +5434,22 @@ class Api:
         except Exception as e:
             config.log(f"carpetas vacías: {e!r}")
             cleaned = 0
+        self._color_groups()
         out = {"playlists": len(moves), "moved": res.get("moved", 0), "skipped": res.get("skipped") or [],
                "dups": len(dup_ch), "cleaned": cleaned, "op_id": op_id, "names": [m["name"] for m in moves][:10]}
         config.log(f"Carpetas como en Rekordbox: {out['moved']} archivo(s) de {out['playlists']} playlist(s)")
         return out
+
+    def _color_groups(self):
+        """Mac: carpetas de grupo en verde y «Organizar» en morado (etiquetas de Finder)."""
+        if not self._groups_on():
+            return 0
+        try:
+            import colores
+            return colores.color_groups(self._cfg["dest_root"], self._tree(), self._groups_default())
+        except Exception as e:
+            config.log(f"colores de carpetas: {e!r}")
+            return 0
 
     def _clean_empty_dirs(self, dry=False):
         """Tu carpeta de playlists sin carpetas sueltas: se borran las que quedaron vacías (o solo con basura del

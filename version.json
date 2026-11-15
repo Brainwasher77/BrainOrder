@@ -1,5 +1,5 @@
 {
-  "version": "2.51.1",
-  "build": 122,
-  "notes": "Al acomodar se quitan las carpetas que quedaron vacías (o solo con accesos directos rotos) en tu carpeta de playlists: cada grupo en su carpeta y nada suelto."
+  "version": "2.51.2",
+  "build": 123,
+  "notes": "En Mac, las carpetas de grupo quedan con etiqueta verde en Finder y «Organizar» en morado, para distinguirlas de un vistazo."
 }
