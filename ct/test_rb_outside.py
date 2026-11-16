@@ -47,7 +47,14 @@ assert next(x for x in r["items"] if x["ref"] == "11")["folder"] == "Eventos"
 
 calls = []
 o._dj_add_to_existing = lambda nov, opts: (calls.append(("add", nov["existing"]["id"], opts)), {"result": {}, "pid": nov["existing"]["id"]})[1]
-o._import_playlist = lambda name, files, opts, entry, pid, src_folder=None: (calls.append(("new", name, entry)), {"result": {}, "pid": pid})[1]
+def _imp(name, files, opts, entry, pid, src_folder=None):  # como la de verdad: queda vinculada (folder_playlists)
+    calls.append(("new", name, entry))
+    o._cfg["folder_playlists"].append(entry)
+    return {"result": {}, "pid": pid}
+
+
+o._import_playlist = _imp
+o._imported_dj_keys = lambda: {f"rekordbox:{e['ref']}" for e in o._cfg["folder_playlists"] if e.get("program") == "rekordbox"}
 # sumarla a la que elegiste (aunque se llame distinto) y ponerla en un grupo
 o.dj_import("rekordbox", "11", {"into": "sp1", "group": "Eventos"})
 assert calls[-1][:2] == ("add", "sp1"), calls

@@ -740,6 +740,29 @@ window.onSpotifyQueue = async (x) => {
   if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
 };
 // FD.rb: {items:[{program, ref, name, folder, count, state:'new'|'old'|'dismissed', new_count, have_count, existing}], total}
+// agregar TODAS las de Rekordbox de una vez (2.53.0)
+function rbAddAllAsk(){
+  const its = (FD.rb && FD.rb.items || []).filter(f => f.state!=='dismissed'), fold = esc(S.settings.rekordbox_folder||'BrainOrder');
+  const withF = its.filter(f => f.folder).length;
+  modal(`<h3>➕ Agregar ${its.length} playlist(s) de Rekordbox a BrainOrder</h3>
+    <p class="art">Cada una queda como playlist de BrainOrder. Lo que ya tienes se usa desde tu archivo de siempre y solo la música nueva pasa a tu carpeta de playlists. La original pasa a la carpeta «${fold}» en Rekordbox (sin tenerla dos veces). Rekordbox tiene que estar cerrado; si está abierto, eso se hace solo al cerrarlo.</p>
+    <label style="display:block;margin:8px 0;cursor:pointer"><input type="checkbox" id="raKeep" checked> 📂 Su carpeta en Rekordbox pasa a ser su <b>grupo</b> (${withF} de ellas están en una carpeta, como <i>${esc((its.find(f=>f.folder)||{}).folder||'Crossover / MGNO')}</i>). Las que no tienen carpeta van ${S.groupsFolders===true?`a «${esc(S.groupsDefault||'Organizar')}»`:'sin grupo'}.</label>
+    <label style="display:block;margin:8px 0;cursor:pointer"><input type="checkbox" id="raSp"> 🟢 Crearlas también en Spotify <span class="art">(gasta la cuota diaria: con muchas, se van pasando en varios días)</span></label>
+    <div class="art" style="max-height:140px;overflow:auto;margin:8px 0">${its.slice(0,60).map(f=>`${esc(f.name)}${f.folder?` <span style="opacity:.6">· ${esc(f.folder)}</span>`:''}`).join('<br>')}${its.length>60?'<br>…':''}</div>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="rbAddAllGo()">Agregar las ${its.length}</button></div>`);
+}
+async function rbAddAllGo(){
+  const its = (FD.rb && FD.rb.items || []).filter(f => f.state!=='dismissed');
+  const opts = {keep_folder: $('raKeep').checked, spotify: $('raSp').checked};
+  closeModal(); setTimeout(()=>{ if(S.view==='folders') render(); }, 150);
+  const r = await api().dj_import_all('rekordbox', its.map(f=>f.ref), opts); if(!r.ok){ taskErr(r); render(); return; }
+  if(r.analysis) setAnalysis(r.analysis); if(r.pl_groups){ S.plGroups = r.pl_groups; paintPlNav(); }
+  const x = r.result || {};
+  toast(`➕ ${x.done.length} de ${x.total} playlist(s) de Rekordbox agregadas a BrainOrder.`
+    + (x.pending ? `<br>⏳ Las originales pasan a su carpeta en Rekordbox cuando lo cierres.` : '')
+    + ((x.errors||[]).length ? `<br><span style="color:var(--org)">${x.errors.length} con error: ${x.errors.slice(0,3).map(e=>`«${esc(e.name)}» (${esc(e.error)})`).join(', ')}${x.errors.length>3?'…':''}</span>` : ''));
+  loadHist(); rbOutLoad(true); if(S.groupsFolders===true){ GST = null; grpStatusLoad(); }
+}
 async function rbOutLoad(quiet){
   if(FD.rbLoading) return; FD.rbLoading = true; if(!quiet && S.view==='folders') render();
   try{ const r = await api().rb_outside(); if(r.ok) FD.rb = r; else if(!quiet) taskErr(r); }catch(e){}
@@ -777,7 +800,11 @@ function rbOutBox(){
   if(!FD.rb) return head;
   const its = FD.rb.items, news = its.filter(f => f.state!=='dismissed' && f.new_count), none = its.filter(f => f.state!=='dismissed' && !f.new_count), dis = its.filter(f => f.state==='dismissed');
   if(!its.length) return head + `<div class="empty"><h3>Todas tus playlists de Rekordbox ya están en BrainOrder 🎉</h3></div>`;
-  return head + (news.length ? `<div class="art" style="margin:4px 0 6px"><b>Con música nueva (${news.length})</b></div><table>${rbOutRows(news)}</table>` : '')
+  const all = news.length + none.length;
+  return head + (all ? `<div class="box" style="margin:0 0 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="flex:1"><b>${all}</b> playlist(s) de Rekordbox todavía no están en BrainOrder.</span>
+      <button class="primary" ${running('djimportall:rekordbox')?'disabled':''} onclick="rbAddAllAsk()">${running('djimportall:rekordbox')?'Agregando…':`➕ Agregar las ${all} a BrainOrder…`}</button></div>` : '')
+    + (news.length ? `<div class="art" style="margin:4px 0 6px"><b>Con música nueva (${news.length})</b></div><table>${rbOutRows(news)}</table>` : '')
     + (none.length ? `<details style="margin-top:12px"${news.length?'':' open'}><summary class="art" style="cursor:pointer"><b>Sin nada nuevo (${none.length})</b>: todas sus canciones ya están en tus playlists. Puedes agregarlas igual (no se copia ningún archivo).</summary><table style="margin-top:6px">${rbOutRows(none)}</table></details>` : '')
     + (dis.length ? `<details style="margin-top:12px"><summary class="art" style="cursor:pointer"><b>No agregadas (${dis.length})</b></summary><table style="margin-top:6px">${rbOutRows(dis, 'dismissed')}</table></details>` : '');
 }
@@ -1739,8 +1766,9 @@ let GRP = {q:'', pick:[], pq:'', pf:'*', sel:new Set()};
 const fold = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 // con grupos como carpetas, la que no tiene grupo está en «Organizar» (2.51.0)
 const plGroup = pl => (pl && (S.plGroups||{})[pl.id]) || (pl && !pl.ignored && S.groupsFolders===true && S.groupsDefault) || '';
-function plGroupList(){ const live = new Set((S.analysis||[]).map(p=>p.id));
-  return [...new Set(Object.entries(S.plGroups||{}).filter(([id])=>live.has(id)).map(([,g])=>g))].sort((a,b)=>a.localeCompare(b,'es')); }
+// los grupos que de verdad tienen playlists (con grupos como carpetas, «Organizar» también: 2.53.0)
+function plGroupList(){
+  return [...new Set((S.analysis||[]).map(plGroup).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es')); }
 function plGroupCount(g){ return (S.analysis||[]).filter(p => plGroup(p)===g).length; }
 // cada palabra que escribes tiene que estar en el nombre o en el grupo (sin importar tildes ni mayúsculas)
 function plMatch(pl, q){ const w = fold(q).split(/\s+/).filter(Boolean); if(!w.length) return true;

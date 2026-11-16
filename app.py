@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -2347,54 +2348,109 @@ class Api:
 
     def dj_import(self, program, ref, opts=None):
         """Convierte una playlist que creaste en un programa de DJ en playlist de BrainOrder."""
-        opts = opts or {}
+        return self._task(lambda: self._dj_import_one(program, ref, opts or {}), f"djimport:{program}:{ref}",
+                          "Importar playlist")
+
+    def dj_import_all(self, program, refs, opts=None):
+        """Agrega de una vez varias playlists del programa (pedido de Frank: que estén TODAS las de Rekordbox).
+        opts.keep_folder: su carpeta en Rekordbox pasa a ser su grupo («Crossover / MGNO»); sin carpeta, sin grupo
+        («Organizar»). Spotify solo si lo pides (gasta la cuota)."""
+        opts = dict(opts or {})
 
         def run():
-            import carpetas_nuevas as CN
             import dj_playlists as DJ
-            from fuentes import carpetas as FC
+            lists = DJ.read(self._cfg, program) or {}
+            refs_ = [str(r) for r in refs or [] if str(r) in lists]
+            res = {"done": [], "errors": [], "total": len(refs_)}
+            for i, ref in enumerate(refs_, 1):
+                v = lists[ref]
+                self._progress(f"Agregando «{v['name']}» ({i}/{len(refs_)})…", (i - 1) / max(1, len(refs_)))
+                o = {k: x for k, x in opts.items() if k != "keep_folder"}
+                o["adopt_later"] = True
+                if opts.get("keep_folder") and v.get("folder"):
+                    o["group"] = grupos.norm(v["folder"])
+                try:
+                    out = self._dj_import_one(program, ref, o, lists)
+                    res["done"].append({"name": v["name"], "group": o.get("group", ""),
+                                        "new": (out.get("result") or {}).get("files", 0)})
+                except Exception as e:
+                    config.log(f"agregar «{v['name']}» de {program}: {e!r}")
+                    res["errors"].append({"name": v["name"], "error": str(e)})
+            if program == "rekordbox" and res["done"] and not rekordbox_sync.rekordbox_running():
+                # las originales a la carpeta de BrainOrder y, con grupos como carpetas, a la de su grupo
+                self._progress("Moviendo las originales a la carpeta de BrainOrder en Rekordbox…", 0.95)
+                try:
+                    res["adopt"] = bool(self._rb_adopt_run())
+                    self._grp_rb_run()
+                except Exception as e:
+                    config.log(f"mover las originales: {e!r}")
+                    res["adopt_error"] = str(e)
+            res["pending"] = len(self._cfg.get("rb_adopt") or []) + len(self._cfg.get("grp_moves") or {})
+            with self._state:
+                analysis = self._build_analysis(light=True) if self._analysis() else self._analysis()
+            config.log(f"Agregar todas de {program}: {len(res['done'])} agregadas, {len(res['errors'])} con error")
+            return {"result": res, "analysis": analysis, "pl_groups": dict(self._cfg.get("pl_groups") or {})}
+        return self._task(run, f"djimportall:{program}", "Agregar playlists de Rekordbox", files=True)
+
+    def _dj_import_one(self, program, ref, opts, lists=None):
+        """Lo de dj_import (sin tarea propia, para poder agregar varias seguidas)."""
+        import carpetas_nuevas as CN
+        import dj_playlists as DJ
+        from fuentes import carpetas as FC
+        if lists is None:
             lists = DJ.read(self._cfg, program)
-            pl = (lists or {}).get(str(ref))
-            if not pl:
-                raise unificar.UnifyError(f"No encontré esa playlist en {DJ.LABELS.get(program, program)}.")
-            # dónde dejarla: con otro nombre (opts.name) o sumada a una playlist que ya tienes (opts.into)
-            name = " ".join(str(opts.get("name") or "").split()) or pl["name"]
-            pl = {**pl, "name": name}
-            nov = self._dj_novelty(name, pl["paths"])
-            into = opts.get("into")
-            if into:
-                ex = next((p for p in self._analysis() or [] if p["id"] == into), None)
-                if ex is None:
-                    raise unificar.UnifyError("No encontré la playlist a la que la querías sumar.")
-                nov["existing"] = {"id": ex["id"], "name": ex["name"], "source": ex.get("source") or fuentes.source_of(ex["id"])}
-            summary = self._nov_summary(nov)
-            if nov["existing"]:
-                # ya hay una playlist de BrainOrder con ese nombre (o la elegiste): no se crea otra, se le suma lo nuevo
-                out = self._dj_add_to_existing(nov, opts)
-                out["result"].update(summary)
-                CN.dj_mark(program, ref, done=True)
-                self._dj_group(out.get("pid"), opts)
-                out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
-                if out["result"]["adopt"] and out["result"]["adopt"].get("state") == "done":
-                    out["analysis"] = self._analysis()
-                return out
-            # la playlist queda completa, pero lo que ya tenías se usa desde tu archivo de siempre:
-            # solo la música nueva se pasa a tu carpeta de playlists (nada se copia dos veces)
-            files = self._nov_files(nov)
-            if not files:
-                CN.dj_mark(program, ref, done=True)
-                return {"analysis": self._analysis() or [], "pid": None, "index": None,
-                        "result": {"name": pl["name"], "files": 0, "nothing_new": True, **summary}}
-            entry = {"name": pl["name"], "program": program, "ref": str(ref)}
-            out = self._import_playlist(pl["name"], files, {**opts, "origin": program}, entry, FC.dj_pid(program, ref))
+        pl = (lists or {}).get(str(ref))
+        if not pl:
+            raise unificar.UnifyError(f"No encontré esa playlist en {DJ.LABELS.get(program, program)}.")
+        # dónde dejarla: con otro nombre (opts.name) o sumada a una playlist que ya tienes (opts.into)
+        name = " ".join(str(opts.get("name") or "").split()) or pl["name"]
+        pl = {**pl, "name": name}
+        nov = self._dj_novelty(name, pl["paths"])
+        into = opts.get("into")
+        if into:
+            ex = next((p for p in self._analysis() or [] if p["id"] == into), None)
+            if ex is None:
+                raise unificar.UnifyError("No encontré la playlist a la que la querías sumar.")
+            nov["existing"] = {"id": ex["id"], "name": ex["name"], "source": ex.get("source") or fuentes.source_of(ex["id"])}
+        summary = self._nov_summary(nov)
+        if nov["existing"]:
+            # ya hay una playlist de BrainOrder con ese nombre (o la elegiste): no se crea otra, se le suma lo nuevo
+            out = self._dj_add_to_existing(nov, opts)
             out["result"].update(summary)
             CN.dj_mark(program, ref, done=True)
+            mk = CN.dj_key(program, ref)  # sumada a otra: no vuelve a salir como «perdida» (ver rb_outside)
+            if mk not in (self._cfg.get("dj_merged") or []):
+                self._cfg["dj_merged"] = (self._cfg.get("dj_merged") or []) + [mk]
+                config.save(self._cfg)
             self._dj_group(out.get("pid"), opts)
             out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
             if out["result"]["adopt"] and out["result"]["adopt"].get("state") == "done":
                 out["analysis"] = self._analysis()
             return out
-        return self._task(run, f"djimport:{program}:{ref}", "Importar playlist")
+        # la playlist queda completa, pero lo que ya tenías se usa desde tu archivo de siempre:
+        # solo la música nueva se pasa a tu carpeta de playlists (nada se copia dos veces)
+        files = self._nov_files(nov)
+        entry = {"name": pl["name"], "program": program, "ref": str(ref)}
+        if not files:
+            # 2.53.0: antes se marcaba «ya agregada» SIN crearla y desaparecía de todas partes. Ahora queda como
+            # playlist de BrainOrder (sus canciones se leen de Rekordbox; no se copia ni se mueve ningún archivo)
+            o2 = {**opts, "move": False, "csv": False, "origin": program}
+            out = self._import_playlist(pl["name"], list(pl["paths"]) if opts.get("spotify") else [], o2, entry,
+                                        FC.dj_pid(program, ref))
+            out["result"].update(summary)
+            out["result"]["nothing_new"] = True
+            CN.dj_mark(program, ref, done=True)
+            self._dj_group(out.get("pid"), opts)
+            out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
+            return out
+        out = self._import_playlist(pl["name"], files, {**opts, "origin": program}, entry, FC.dj_pid(program, ref))
+        out["result"].update(summary)
+        CN.dj_mark(program, ref, done=True)
+        self._dj_group(out.get("pid"), opts)
+        out["result"]["adopt"] = self._rb_adopt_after_import(program, ref, out, opts)
+        if out["result"]["adopt"] and out["result"]["adopt"].get("state") == "done":
+            out["analysis"] = self._analysis()
+        return out
 
     def _dj_group(self, pid, opts):
         """Si al importarla elegiste un grupo, la playlist queda en ese grupo."""
@@ -2420,19 +2476,26 @@ class Api:
             st = CN.load()
             linked = self._imported_dj_keys()
             lib = novedades.Biblioteca(self._analysis() or [])
+            bo_names = {self._norm_name(p.get("name")) for p in self._analysis() or []}
+            merged = set(self._cfg.get("dj_merged") or [])
             items, n = [], len(lists)
             for i, (ref, v) in enumerate(sorted(lists.items(), key=lambda kv: (kv[1].get("folder", ""), kv[1]["name"].lower()))):
                 if i % 10 == 0:
                     self._progress(f"Revisando «{v['name']}» ({i + 1}/{n})…", 0.1 + 0.85 * i / max(1, n))
                 k = CN.dj_key("rekordbox", ref)
-                if k in linked or k in st["dj_done"]:
-                    continue  # ya es una playlist de BrainOrder (o ya la sumaste a una)
+                if k in linked:
+                    continue  # ya es una playlist de BrainOrder
+                lost = False
+                if k in st["dj_done"]:
+                    if k in merged or self._norm_name(v["name"]) in bo_names:
+                        continue  # la sumaste a una (o ya hay una con ese nombre)
+                    lost = True  # antes de 2.53 se marcaba «agregada» sin crearla: vuelve a salir
                 try:
                     extra = self._nov_summary(self._dj_novelty(v["name"], v["paths"], lib))
                 except Exception as e:
                     config.log(f"novedades de «{v['name']}»: {e!r}")
                     extra = {}
-                state = "dismissed" if k in st["dj_dismissed"] else ("old" if k in st["dj_known"] else "new")
+                state = "dismissed" if k in st["dj_dismissed"] else ("new" if lost else ("old" if k in st["dj_known"] else "new"))
                 items.append({"kind": "dj", "program": "rekordbox", "label": DJ.LABELS["rekordbox"], "ref": ref,
                               "name": v["name"], "folder": v.get("folder") or "", "count": len(v["paths"]),
                               "state": state, "new": state == "new", **extra})
@@ -2445,6 +2508,10 @@ class Api:
             return {"items": items, "total": n, "adopt_old": adopt_old,
                     "adopt_pending": len(self._cfg.get("rb_adopt") or [])}
         return self._task(run, "rb_outside", "Playlists de Rekordbox")
+
+    @staticmethod
+    def _norm_name(name):
+        return " ".join(unicodedata.normalize("NFC", str(name or "")).casefold().split())
 
     def dj_undismiss(self, program, ref):
         import carpetas_nuevas as CN
@@ -2500,7 +2567,7 @@ class Api:
             return None
         res = out.get("result") or {}
         pid = out.get("pid")
-        if not pid or res.get("nothing_new") and not res.get("merged_into"):
+        if not pid:
             return None
         if res.get("merged_into"):
             sp = res.get("spotify") or {}
@@ -2512,6 +2579,8 @@ class Api:
         else:
             job = {"ref": str(ref), "pid": pid, "name": res.get("name"), "mode": "move"}
         self._rb_adopt_add([job])
+        if opts.get("adopt_later"):
+            return {"state": "pending", "mode": job["mode"]}  # varias seguidas: se mueven todas juntas al final
         try:
             r = self._rb_adopt_run()
         except Exception as e:

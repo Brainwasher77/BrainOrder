@@ -1,5 +1,5 @@
 {
-  "version": "2.51.2",
-  "build": 123,
-  "notes": "En Mac, las carpetas de grupo quedan con etiqueta verde en Finder y «Organizar» en morado, para distinguirlas de un vistazo."
+  "version": "2.53.0",
+  "build": 125,
+  "notes": "«Agregar todas» las playlists de Rekordbox de una vez (su carpeta de Rekordbox pasa a ser su grupo). Las que no traían música nueva ya no desaparecen: quedan en BrainOrder. Los grupos se cuentan bien («Organizar» incluido)."
 }
