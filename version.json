@@ -1,5 +1,5 @@
 {
-  "version": "2.57.4",
-  "build": 134,
-  "notes": "Actualizaciones: una versión recién publicada se detecta al instante (sin esperar la caché de 5 minutos de GitHub)."
+  "version": "2.57.5",
+  "build": 135,
+  "notes": "Lista de canciones: los títulos de las columnas ya no tapan los filtros (Todas, Aquí, Repetidas…) y vuelven a quedarse fijos arriba al bajar."
 }

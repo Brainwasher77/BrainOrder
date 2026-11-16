@@ -200,7 +200,7 @@ details.rgg summary::-webkit-details-marker{display:none}
 details.rgg summary .rg{margin-left:auto}
 details.rgg table{margin:0 0 6px}
 th.sortable{cursor:pointer;user-select:none}
-table.trk th{position:relative}
+table.trk th{position:sticky;top:-20px;z-index:3}  /* sticky también sirve de base para .colrs; «relative» con top:-20px lo subía encima de los filtros */
 table.trk.fixed{table-layout:fixed}
 table.trk.fixed td{overflow:hidden;text-overflow:ellipsis}
 .colrs{position:absolute;top:0;right:-4px;width:9px;height:100%;cursor:col-resize;z-index:2}
