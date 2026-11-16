@@ -1115,7 +1115,7 @@ function cmpPick(i, keep){
   if(!opts.length){ toast('No hay otra playlist para comparar.', true); return; }
   modal(`<h3>⚖️ Comparar «${esc(pl.name)}» con…</h3>
     <div style="display:flex;gap:8px;align-items:center;margin:6px 0"><span class="art">Ordenar por</span>${cmpSortSel(`cmpPickSort(${i}, this.value)`)}</div>
-    ${plPicker('cmpWith', opts.map(([p,x]) => [p, p.id, String(x||'').replace(/^\s*[·—-]\s*/,'')]), keep, () => cmpOpen(pl.id, $('cmpWith').value))}
+    ${plPicker('cmpWith', opts.map(([p,x]) => [p, p.id, String(x||'').replace(/^\s*[·—-]\s*/,'')]), keep, () => cmpOpen(pl.id, $('cmpWith').value), null, null, (PREF.cmp_sort||'list') !== 'list')}
     <div class="art">Te muestro cuántas canciones tienen en común, cuáles están solo en una y cuál se parece más. No cambia nada.</div>
     <div class="actions"><button onclick="closeModal()">Cancelar</button><button class="primary" onclick="cmpOpen(${jsq(pl.id)}, $('cmpWith').value)">Comparar</button></div>`);
   pkOpen('cmpWith');
@@ -1273,7 +1273,7 @@ function plMerge(i, mode, sel, keepPicks){
   modal(`<h3>🔀 Fusionar «${esc(pl.name)}» con…</h3>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px">${seg('all','🔀 Todo','Sus canciones pasan a la otra y «'+esc(pl.name)+'» se elimina')}${seg('common','🔁 Solo las que tienen en común','Las comunes se quedan en las que marques y salen de «'+esc(pl.name)+'»; lo demás no se toca')}</div>
     <div class="art">${common ? `Marca una o varias (con varias, las canciones salen de «${esc(pl.name)}» y se quedan en las marcadas). ` : ''}Ordenadas por cuántas canciones tienen en común con «${esc(pl.name)}» (${pl.tracks.length}).</div>
-    ${plPicker('plInto', opts.map(o => [o[0], o[1], extra(o)]), MG.sel || null, () => common ? plCommonGo() : plMergeGo(i), v => { MG.sel = v; if(common) mgInfoPaint(); }, common ? MG.picks : null)}
+    ${plPicker('plInto', opts.map(o => [o[0], o[1], extra(o)]), MG.sel || null, () => common ? plCommonGo() : plMergeGo(i), v => { MG.sel = v; if(common) mgInfoPaint(); }, common ? MG.picks : null, true)}
     <div id="mgInfo">${common ? '' : `<div class="box" style="line-height:1.6">
       • Las canciones de <b>«${esc(pl.name)}»</b> se agregan al final de la que elijas (solo las que no tenga), también en Spotify.<br>
       • Sus archivos pasan a la carpeta de esa playlist; si ya tenía la canción, la copia repetida va a <code>_duplicados</code>.<br>
@@ -1913,8 +1913,9 @@ function grpMenu(g){ return [['#', g], ['✏️ Renombrar grupo…', () => grpRe
 // elegir una playlist escribiendo su nombre: filtra por nombre o grupo, la lista va por grupos; ↑ ↓ para moverte y Enter para aceptar
 let PK = {};
 // multi: un Set con los valores marcados -> cada fila lleva casilla y el clic la marca o desmarca
-function plPicker(id, opts, sel, go, change, multi){ // opts: [[playlist, valor, texto extra]]; change(valor) al cambiar la elegida
-  PK[id] = {opts: opts.map(([p,v,x]) => [p, String(v), x||'']), go, change, multi};
+function plPicker(id, opts, sel, go, change, multi, flat){ // opts: [[playlist, valor, texto extra]]; change(valor) al cambiar la elegida
+  // flat: una sola lista en el orden dado (sin separar por grupo; el grupo sale al lado del nombre)
+  PK[id] = {opts: opts.map(([p,v,x]) => [p, String(v), x||'']), go, change, multi, flat};
   const first = PK[id].opts[0];
   return `<input type="hidden" id="${id}" value="${esc(sel!=null && sel!=='' ? String(sel) : (first ? first[1] : ''))}">
     <input class="inp" id="${id}Q" placeholder="🔎 Escribe el nombre o el grupo…" autocomplete="off" oninput="pkPaint('${id}')" onkeydown="pkKey(event,'${id}')" style="margin-top:6px">
@@ -1923,12 +1924,12 @@ function plPicker(id, opts, sel, go, change, multi){ // opts: [[playlist, valor,
 function pkPaint(id){
   const P = PK[id], L = $(id+'L'); if(!P || !L) return;
   const q = $(id+'Q').value, vis = P.opts.filter(([p]) => plMatch(p, q));
-  const bk = plGroupList().length ? plBuckets(vis) : [[null, vis]], shown = bk.flatMap(([,its]) => its);
+  const bk = plGroupList().length && !P.flat ? plBuckets(vis) : [[null, vis]], shown = bk.flatMap(([,its]) => its);
   let cur = $(id).value;
   if(shown.length && !shown.some(o => o[1]===cur)){ cur = shown[0][1]; $(id).value = cur; if(P.change && !P.multi) P.change(cur); }  // queda marcada la primera que se ve
   const M = P.multi;
   const row = ([p,v,x]) => `<div class="pkr ${v===cur?'on':''}" data-v="${esc(v)}" ${M ? `onclick="pkToggle('${id}', this.dataset.v)"` : `onclick="pkSet('${id}', this.dataset.v)" ondblclick="pkSet('${id}', this.dataset.v); pkGo('${id}')"`}>
-      <span>${M ? `<input type="checkbox" tabindex="-1" ${M.has(v)?'checked':''} style="pointer-events:none;margin:0 8px 0 0;vertical-align:-2px">` : ''}${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' <span class="art">(sin analizar)</span>':''}</span><span class="art mono" style="white-space:nowrap">${esc(x)}</span></div>`;
+      <span>${M ? `<input type="checkbox" tabindex="-1" ${M.has(v)?'checked':''} style="pointer-events:none;margin:0 8px 0 0;vertical-align:-2px">` : ''}${p.liked?'♥ ':''}${esc(p.name)}${p.pending?' <span class="art">(sin analizar)</span>':''}${P.flat && plGroupList().length ? ` <span class="art">· ${esc(plGroup(p)||'Sin grupo')}</span>` : ''}</span><span class="art mono" style="white-space:nowrap">${esc(x)}</span></div>`;
   L.innerHTML = vis.length ? bk.map(([g, its]) => (g===null ? '' : `<div class="pg">${g?esc(g):'Sin grupo'} · ${its.length}</div>`) + its.map(row).join('')).join('')
     : `<div class="art" style="padding:10px">Ninguna playlist con «${esc(q)}».</div>`;
   const on = L.querySelector('.pkr.on'); if(on) on.scrollIntoView({block:'nearest'});
