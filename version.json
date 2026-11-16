@@ -1,5 +1,5 @@
 {
-  "version": "2.57.2",
-  "build": 132,
-  "notes": "deemix: BrainOrder copia el link y trae deemix al frente para pegarlo (ya no sale el aviso de «iniciar sesión»)."
+  "version": "2.57.3",
+  "build": 133,
+  "notes": "Quitar una canción repetida en una playlist: ya no sale el aviso de «sigue porque su archivo no se pudo sacar», y en Rekordbox también se quita una sola copia."
 }

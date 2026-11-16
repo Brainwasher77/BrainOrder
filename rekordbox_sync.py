@@ -860,8 +860,9 @@ def edit_by_ref(cfg, ops, progress=None):
     ops: [{"ref": id de la playlist en Rekordbox, "add": [{"source", "name", "artists"}], "remove": [rutas],
            "rename": nombre nuevo, "delete": True}]
     Agregar: al final y sin repetir (si ya la tiene, no se agrega otra vez). Quitar: todas las veces que esté ese
-    archivo. -> {"added", "removed", "renamed", "deleted", "missing", "backup", "paths": {ref: [rutas]}}"""
-    ops = [o for o in ops or [] if o.get("ref") and (o.get("add") or o.get("remove") or o.get("rename") or o.get("delete"))]
+    archivo. «remove_one»: [rutas] repetidas en la playlist → se quita una sola copia (la última). -> {"added", "removed", "renamed", "deleted", "missing", "backup", "paths": {ref: [rutas]}}"""
+    ops = [o for o in ops or [] if o.get("ref") and (o.get("add") or o.get("remove") or o.get("remove_one")
+                                                     or o.get("rename") or o.get("delete"))]
     if not ops:
         return None
     try:
@@ -904,6 +905,13 @@ def edit_by_ref(cfg, ops, progress=None):
                     if s.Content is not None and _k(s.Content.FolderPath) in gone:
                         db.remove_from_playlist(pl, s)
                         out["removed"] += 1
+            # «remove_one»: la canción estaba repetida; se quita la última copia y solo si hay más de una
+            for k in {_k(p) for p in o.get("remove_one") or [] if p} - gone:
+                same = sorted((s for s in pl.Songs if s.Content is not None and _k(s.Content.FolderPath) == k),
+                              key=lambda s: s.TrackNo or 0)
+                if len(same) > 1:
+                    db.remove_from_playlist(pl, same[-1])
+                    out["removed"] += 1
             have = {_k(s.Content.FolderPath) for s in pl.Songs if s.Content is not None and s.Content.FolderPath}
             for r in o.get("add") or []:
                 if not r.get("source") or _k(r["source"]) in have:

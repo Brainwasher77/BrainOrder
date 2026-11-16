@@ -4277,7 +4277,10 @@ class Api:
                                                 for r in todo if r.get("source")]})
             if ra:
                 out_paths = [r["source"] for r in rows_all if r.get("source") and nk(r["source"]) not in stay]
-                ops.append({"ref": ra, "remove": out_paths + [now(x) for x in out_paths]})
+                # repetida en la playlist: allá también se quita UNA de las copias, no todas
+                one = [r["source"] for r in rows_all if r.get("source") and nk(r["source"]) in stay]
+                ops.append({"ref": ra, "remove": out_paths + [now(x) for x in out_paths],
+                            "remove_one": one + [now(x) for x in one]})
             if ops:
                 res["rekordbox"] = self._rb_write(ops)
             # las de carpeta (y las que se leen de Rekordbox) se releen con lo que llegó o salió
@@ -4290,7 +4293,9 @@ class Api:
                 tracks = FC.tracks(self._cfg, meta)
                 if pid == src_pid:
                     left = {r["id"] for r in tracks}
-                    res["still"] = sum(1 for r in rows if r.get("id") in left)  # su archivo no se pudo sacar
+                    # su archivo no se pudo sacar (no cuentan las repetidas: la otra copia sigue a propósito)
+                    res["still"] = sum(1 for r in rows if r.get("id") in left
+                                       and not (r.get("source") and nk(r["source"]) in stay))
 
                 def put(data, pid=pid, meta=meta, tracks=tracks):
                     cur = next((x for x in data["playlists"] if x["id"] == pid), None)
