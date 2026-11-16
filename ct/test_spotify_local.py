@@ -38,38 +38,39 @@ class Fake(Spotify):
         return {"snapshot_id": f"s{self.snap}"}
 
 
-# 1) Spotify acepta posiciones en /items: sale solo esa
-sp = Fake([T("a"), L1, T("b"), L2], {"items:positions"})
+# 1) (2.57.9) la que no tiene que quedar sale por uri, la única forma que Spotify tiene desde feb 2026
+spotify_api._POS_DEAD["v"] = False
+sp = Fake([T("a"), L1, T("b"), L2], {"items:uri"})
 r = sp.remove_local("p", [{"uri": L1, "nth": 0}])
 assert r["removed"] == 1 and not r["left"] and sp.uris == [T("a"), T("b"), L2], (r, sp.uris)
-print("posiciones:", sp.calls)
+assert sp.calls == ["items:uri"], sp.calls
 
-# 2) el local está DOS veces y quitas la segunda: sale solo esa (nth=1), la primera se queda
+# 2) repetida (debe quedar una): por posición, si Spotify lo acepta
 sp = Fake([L1, T("a"), L1, T("b")], {"items:positions"})
 r = sp.remove_local("p", [{"uri": L1, "nth": 1}])
 assert sp.uris == [L1, T("a"), T("b")] and r["removed"] == 1, sp.uris
+assert "items:uri" not in sp.calls  # por uri se irían las dos
 
-# 3) solo acepta la forma vieja (/tracks con uri + posiciones): se prueba hasta dar con ella
-sp = Fake([T("a"), L1, L2], {"tracks:uri+pos"})
-r = sp.remove_local("p", [{"uri": L1, "nth": 0}, {"uri": L2, "nth": 0}])
-assert sp.uris == [T("a")] and r["removed"] == 2, (sp.calls, sp.uris)
-print("forma vieja:", sp.calls)
-
-# 4) solo por uri: sirve si no tiene que quedar ninguna aparición...
-sp = Fake([T("a"), L1], {"items:uri"})
-r = sp.remove_local("p", [{"uri": L1, "nth": 0}])
-assert sp.uris == [T("a")] and r["removed"] == 1
-# ...pero si está dos veces y quitas una, por uri se irían las dos: no se usa y queda a mano
-sp = Fake([L1, L1], {"items:uri"})
-r = sp.remove_local("p", [{"uri": L1, "nth": 0}])
-assert sp.uris == [L1, L1] and r["removed"] == 0 and r["left"] == [{"uri": L1, "nth": 0}]
-assert "items:uri" not in sp.calls
+# 3) el caso de Frank (Industrial Techno): 9 locales que salen del todo + «Alter Ego» dos veces, y Spotify
+#    ya no acepta posiciones -> salen las 9, Alter Ego queda para quitarla a mano (una sola, no las 10)
+AE = "spotify:local:X:Y:Alter+Ego:300"
+nine = [f"spotify:local:A:B:T{i}:200" for i in range(9)]
+sp = Fake(nine + [T("a"), AE, AE], {"items:uri"})
+r = sp.remove_local("p", [{"uri": u, "nth": 0} for u in nine] + [{"uri": AE, "nth": 1}])
+assert sp.uris == [T("a"), AE, AE] and r["removed"] == 9 and r["left"] == [{"uri": AE, "nth": 1}], (sp.uris, r)
+assert spotify_api._POS_DEAD["v"]
+calls = len(sp.calls)
+# 4) ya se sabe que no acepta posiciones: no se vuelve a gastar en probarlas
+sp = Fake([AE, AE], {"items:uri"})
+r = sp.remove_local("p", [{"uri": AE, "nth": 1}])
+assert sp.calls == [] and r["left"], sp.calls
+spotify_api._POS_DEAD["v"] = False
 
 # 5) Spotify no acepta nada: queda a mano, nada se toca
 sp = Fake([L1, T("a")], set())
 r = sp.remove_local("p", [{"uri": L1, "nth": 0}])
 assert r["removed"] == 0 and len(r["left"]) == 1 and sp.uris == [L1, T("a")]
-print("nada:", sp.calls)
+print("locales:", sp.calls)
 
 # 6) en BrainOrder: quitar una fila local arma el trabajo «remove» con local y el aviso trae el nombre
 import app, config
@@ -82,6 +83,7 @@ rows = [{"pos": 0, "id": "a" * 22, "name": "Uno", "source": None},
 PL = {"pa": {"id": "pa", "name": "Industrial", "tracks": rows}}
 cache = {"playlists": [{"id": "pa", "tracks": [{"id": r["id"]} for r in rows]}], "foreign_ok": []}
 for accept, done, manual in (({"items:positions"}, 1, 0), (set(), 0, 1)):
+    spotify_api._POS_DEAD["v"] = False
     o = A.__new__(A); o._cfg = {"dest_root": "/tmp/nada"}
     o._analysis = lambda: list(PL.values())
     o._pl_ctx = lambda pid, an=None: (PL[pid], 'spotify', None, None)
@@ -106,9 +108,3 @@ for accept, done, manual in (({"items:positions"}, 1, 0), (set(), 0, 1)):
     print("app:", {k: r.get(k) for k in ("local_done", "no_uri", "manual")})
 print("OK")
 
-# 7) la forma que funcionó se prueba primero la próxima vez (menos consultas a Spotify)
-spotify_api._LOCAL_FORM = None
-sp = Fake([L1, T("a")], {"tracks:uri+pos"}); sp.remove_local("p", [{"uri": L1, "nth": 0}])
-sp = Fake([L1, T("a")], {"tracks:uri+pos"}); sp.remove_local("p", [{"uri": L1, "nth": 0}])
-assert sp.calls == ["tracks:uri+pos"] and sp.uris == [T("a")], sp.calls
-print("OK memoria")

@@ -206,7 +206,6 @@ def _forbidden(detail):
 
 
 _POS_DEAD = {"v": False}  # Spotify no aceptó quitar por posición canciones normales (no se vuelve a probar)
-_LOCAL_FORM = None  # cuál forma de quitar archivos locales aceptó Spotify (se prueba primero la próxima vez)
 
 
 class Spotify:
@@ -610,10 +609,11 @@ class Spotify:
         return {"left": left, "restore": []}
 
     def remove_local(self, pid, items, any_uri=False):
-        """Archivos locales de Spotify (spotify:local:…): Spotify no los quita por uri como a las demás; hay que
-        darle la POSICIÓN y el snapshot de la playlist. items: [{"uri", "nth"}] (nth = cuál de las apariciones
-        de esa uri, contando desde 0, por si está repetida). Se prueban las formas que Spotify acepta y se
-        comprueba releyendo la playlist: nunca se da por quitada una que sigue ahí.
+        """Quita apariciones concretas (sobre todo archivos locales, spotify:local:…). items: [{"uri", "nth"}]
+        (nth = cuál de las apariciones de esa uri, desde 0). Desde febrero de 2026 Spotify solo quita por uri
+        (DELETE /playlists/{id}/items {items:[{uri}]}), que se lleva TODAS las apariciones: así salen las que no
+        tienen que quedar. Las repetidas de las que debe quedar una se intentan por posición (una vez por sesión;
+        Spotify ya no lo acepta) y, si no, quedan para quitarlas a mano. Siempre se comprueba releyendo.
         -> {"removed": n, "left": [items que siguen], "snapshot"}"""
         from collections import Counter
         want = [dict(x) for x in items or [] if any_uri or str(x.get("uri") or "").startswith("spotify:local:")]
@@ -624,9 +624,24 @@ class Spotify:
         need = Counter(x["uri"] for x in want)
         goal = {u: max(0, before[u] - n) for u, n in need.items()}  # cuántas deben quedar de cada una
 
+        # 1) las que no tienen que quedar: por uri
+        zero = [u for u in need if goal[u] == 0 and before[u] > 0]
+        for i in range(0, len(zero), 100):
+            try:
+                self.send("DELETE", f"/playlists/{pid}/items", {"items": [{"uri": u} for u in zero[i:i + 100]]})
+            except SpotifyPaused:
+                raise
+            except SpotifyError as e:  # se relee igual: puede que sí se haya hecho
+                log(f"Spotify no quitó por uri {len(zero[i:i + 100])} canción(es) de {pid}: {e}")
+        if zero:
+            snap, cur = self._uris_now(pid)
+
+        # 2) repetidas de las que debe quedar alguna: por posición (si Spotify todavía lo acepta)
+        rest = [u for u in need if goal[u] > 0 and Counter(cur)[u] > goal[u]]
+
         def positions(cur):
             have, out = Counter(cur), []
-            for u in need:
+            for u in rest:
                 k = have[u] - goal[u]
                 if k <= 0:
                     continue
@@ -636,41 +651,32 @@ class Spotify:
                 out += pick if len(pick) == k else idx[-k:]  # cambió la playlist: las últimas apariciones
             return sorted(out)
 
-        tries = [
-            lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {"positions": pos, "snapshot_id": snap}),
-            lambda pos: self.send("DELETE", f"/playlists/{pid}/tracks", {"positions": pos, "snapshot_id": snap}),
-            lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {
-                "items": [{"uri": cur[i], "positions": [i]} for i in pos], "snapshot_id": snap}),
-            lambda pos: self.send("DELETE", f"/playlists/{pid}/tracks", {
-                "tracks": [{"uri": cur[i], "positions": [i]} for i in pos], "snapshot_id": snap}),
-        ]
-        # por uri quita TODAS sus apariciones: solo sirve si no tiene que quedar ninguna
-        if all(g == 0 for g in goal.values()):
-            tries.append(lambda pos: self.send("DELETE", f"/playlists/{pid}/items",
-                                               {"items": [{"uri": u} for u in need]}))
-        global _LOCAL_FORM
-        if _LOCAL_FORM is not None and _LOCAL_FORM < len(tries):  # la forma que funcionó la última vez, primero
-            tries.insert(0, tries.pop(_LOCAL_FORM))
-        order = list(range(len(tries)))
-        if _LOCAL_FORM is not None and _LOCAL_FORM < len(order):
-            order.insert(0, order.pop(_LOCAL_FORM))
-        for n, t in zip(order, tries):
-            pos = positions(cur)
-            if not pos:
-                break
-            prev = sum(cur.count(u) for u in need)
-            try:
-                t(pos)
-            except SpotifyPaused:
-                raise
-            except SpotifyError:  # esta forma no la acepta (o se cortó): se relee por si igual se hizo
-                pass
-            snap, cur = self._uris_now(pid)
-            have = Counter(cur)
-            if sum(have[u] for u in need) < prev:
-                _LOCAL_FORM = n
-            if any(have[u] < goal[u] for u in need):  # se fue de más (no debería): no se sigue probando
-                break
+        if rest and not _POS_DEAD["v"]:
+            tries = [
+                lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {"positions": pos, "snapshot_id": snap}),
+                lambda pos: self.send("DELETE", f"/playlists/{pid}/items", {
+                    "items": [{"uri": cur[i], "positions": [i]} for i in pos], "snapshot_id": snap}),
+            ]
+            done = False
+            for t in tries:
+                pos = positions(cur)
+                if not pos:
+                    break
+                prev = sum(cur.count(u) for u in rest)
+                try:
+                    t(pos)
+                except SpotifyPaused:
+                    raise
+                except SpotifyError:
+                    pass
+                snap, cur = self._uris_now(pid)
+                have = Counter(cur)
+                if sum(have[u] for u in rest) < prev:
+                    done = True
+                if any(have[u] < goal[u] for u in rest):  # se fue de más (no debería): no se sigue probando
+                    break
+            if not done:
+                _POS_DEAD["v"] = True  # Spotify ya no quita por posición: no se vuelve a gastar en probarlo
         have = Counter(cur)
         left = []
         for u in need:

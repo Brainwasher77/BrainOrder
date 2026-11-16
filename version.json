@@ -1,5 +1,5 @@
 {
-  "version": "2.57.8",
-  "build": 138,
-  "notes": "Quitar las de más en playlists de carpeta: la repetida con el mismo archivo se quita aunque la playlist no tuviera ese archivo en su memoria."
+  "version": "2.57.9",
+  "build": 139,
+  "notes": "Quitar archivos locales de Spotify: los que salen del todo se quitan con la forma que Spotify usa hoy; solo una copia de un local repetido queda para quitarla a mano."
 }
