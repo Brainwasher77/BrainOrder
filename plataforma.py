@@ -107,9 +107,6 @@ def open_url(url: str):
 
 
 # ---------------- deemix ----------------
-DEEMIX_PORT = 6595  # deemix-gui sirve su interfaz en este puerto mientras está abierto
-
-
 def deemix_ok(url: str) -> bool:
     """Links que deemix entiende: canción, álbum, playlist o artista de Deezer (o de Spotify)."""
     import re
@@ -117,30 +114,6 @@ def deemix_ok(url: str) -> bool:
     return bool(re.match(r"https://(www\.)?(deezer\.com/([a-z]{2}/)?(track|album|playlist|artist)/\d+"
                          r"|deezer\.page\.link/|link\.deezer\.com/"
                          r"|open\.spotify\.com/(intl-[a-z]+/)?(track|album|playlist)/)", u))
-
-
-def _deemix_queue(url: str):
-    """Si deemix-gui está abierto, le manda el link directo a su cola.
-    Devuelve True (en cola), "login" (deemix abierto pero sin sesión de Deezer) o False (no responde)."""
-    import json, urllib.request, urllib.error
-    req = urllib.request.Request(f"http://127.0.0.1:{DEEMIX_PORT}/api/addToQueue",
-                                 data=json.dumps({"url": url}).encode("utf-8"),
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost sin proxy
-    try:
-        with opener.open(req, timeout=2) as r:
-            body = r.read().decode("utf-8", "replace").strip()
-    except urllib.error.HTTPError as e:
-        body = (e.read() or b"").decode("utf-8", "replace").strip()
-    except Exception:
-        return False
-    if "notloggedin" in body.lower().replace("_", "").replace(" ", ""):
-        return "login"
-    try:
-        data = json.loads(body)
-    except ValueError:
-        return False
-    return bool(data.get("result")) if isinstance(data, dict) else bool(data)
 
 
 def _deemix_apps_win():
@@ -173,25 +146,13 @@ def _deemix_launch() -> bool:
 
 
 def open_deemix(url: str) -> dict:
-    """Manda el link a deemix: a su cola si está abierto; si no, lo abre con el link copiado para pegar."""
+    """Copia el link y abre deemix (o lo trae al frente) para pegarlo en su buscador.
+    No se usa la API de deemix: allá la sesión de Deezer es por ventana y un envío
+    desde otra app llega «sin sesión» aunque tengas la sesión iniciada."""
     if not deemix_ok(url):
         return {"ok": False, "error": "Ese link no lo entiende deemix (necesita una canción, álbum o playlist)."}
-    q = _deemix_queue(url)
-    if q == "login":
-        copy_text(url)
-        return {"ok": False, "how": "login", "copied": True}
-    if q:
-        return {"ok": True, "how": "queue"}
     copied = copy_text(url)
     if _deemix_launch():
-        import time
-        for _ in range(8):          # recién abierto: darle unos segundos y probar la cola otra vez
-            time.sleep(1)
-            q = _deemix_queue(url)
-            if q == "login":
-                return {"ok": False, "how": "login", "copied": copied}
-            if q:
-                return {"ok": True, "how": "queue"}
         return {"ok": True, "how": "app", "copied": copied}
     return {"ok": False, "how": "missing", "copied": copied,
             "error": "No encontré deemix en este computador."}

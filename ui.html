@@ -4510,11 +4510,8 @@ function dmxPick(how){
   if(how === 'deemix') toDeemix(u); else api().open_url(u);
 }
 async function toDeemix(u){
-  toast('Mandando a deemix…');
   const r = await api().open_deemix(u);
-  if(r.how === 'queue') toast('⬇️ Agregada a la cola de deemix.');
-  else if(r.how === 'login') toast('deemix está abierto pero <b>sin sesión de Deezer</b>: inicia sesión en sus Ajustes y vuelve a tocar el link' + (r.copied ? ' (ya te copié el link).' : '.'), true);
-  else if(r.how === 'app') toast(`Abrí deemix${r.copied ? ' y copié el link: pégalo en su buscador (Cmd/Ctrl+V)' : ''}.`);
+  if(r.ok) toast(r.copied ? '⬇️ Link copiado y deemix al frente: pégalo en su buscador (Cmd/Ctrl+V) y Enter.' : 'Abrí deemix, pero no pude copiar el link.');
   else toast(esc(r.error || 'No pude abrir deemix.') + (r.copied ? ' Copié el link para que lo pegues donde quieras.' : '') +
     ` <a class="lnk" onclick="api().open_url(${jsq(u)})">Abrir en el navegador</a>`, true);
 }

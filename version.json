@@ -1,5 +1,5 @@
 {
-  "version": "2.57.1",
-  "build": 131,
-  "notes": "deemix: si está abierto sin sesión de Deezer, BrainOrder te avisa en vez de decir que lo abrió."
+  "version": "2.57.2",
+  "build": 132,
+  "notes": "deemix: BrainOrder copia el link y trae deemix al frente para pegarlo (ya no sale el aviso de «iniciar sesión»)."
 }
