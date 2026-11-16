@@ -21,7 +21,9 @@ _repo = [None]  # el que respondió
 
 
 def _version_url(repo):
-    return f"https://raw.githubusercontent.com/{repo}/{BRANCH}/version.json"
+    # el ?t= evita la caché de 5 min de GitHub: así una versión recién publicada se ve al instante
+    import time
+    return f"https://raw.githubusercontent.com/{repo}/{BRANCH}/version.json?t={int(time.time())}"
 
 
 def _zip_url(repo):

@@ -1,5 +1,5 @@
 {
-  "version": "2.57.3",
-  "build": 133,
-  "notes": "Quitar una canción repetida en una playlist: ya no sale el aviso de «sigue porque su archivo no se pudo sacar», y en Rekordbox también se quita una sola copia."
+  "version": "2.57.4",
+  "build": 134,
+  "notes": "Actualizaciones: una versión recién publicada se detecta al instante (sin esperar la caché de 5 minutos de GitHub)."
 }
