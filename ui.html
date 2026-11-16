@@ -1719,7 +1719,7 @@ async function ctxPin(src, on){
 }
 
 // ---------- preferencias de la ventana (se guardan en los ajustes) ----------
-let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[], track_cols:['key','energy','bpm','status','file'], col_w:{}};
+let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[], track_cols:['key','energy','bpm','status','file'], col_w:{}, deemix:'ask'};
 async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
 // ---------- orden de la lista de playlists ----------
 const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
@@ -4488,7 +4488,35 @@ async function exportMissing(){
   else if(!r.cancelled) toast(esc(r.error), true);
 }
 function reveal(p){ api().reveal(p); }
-function openUrl(u){ api().open_url(u); }
+// Links de Deezer/Spotify: preguntar si van a deemix (o lo que elegiste recordar en Ajustes)
+const DMX_RE = /^https:\/\/(www\.)?(deezer\.com\/([a-z]{2}\/)?(track|album|playlist|artist)\/\d+|deezer\.page\.link\/|link\.deezer\.com\/|open\.spotify\.com\/(intl-[a-z]+\/)?(track|album|playlist)\/)/i;
+function openUrl(u){
+  if(!DMX_RE.test(u||'')){ api().open_url(u); return; }
+  const how = PREF.deemix || 'ask';
+  if(how === 'deemix'){ toDeemix(u); return; }
+  if(how === 'browser'){ api().open_url(u); return; }
+  window._dmxUrl = u;
+  modal(`<h3>¿Abrir en deemix?</h3>
+    <div class="art" style="word-break:break-all;margin-bottom:10px">${esc(hostLabel(u))} · <code>${esc(u)}</code></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="dmxRem"> Recordar mi elección (se cambia en Ajustes)</label>
+    <div class="actions"><button onclick="closeModal()">Cancelar</button>
+      <button onclick="dmxPick('browser')">🌐 Abrir en el navegador</button>
+      <button class="primary" onclick="dmxPick('deemix')">⬇️ Abrir en deemix</button></div>`);
+}
+function dmxPick(how){
+  const u = window._dmxUrl, rem = $('dmxRem') && $('dmxRem').checked;
+  closeModal();
+  if(rem) savePref('deemix', how);
+  if(how === 'deemix') toDeemix(u); else api().open_url(u);
+}
+async function toDeemix(u){
+  toast('Mandando a deemix…');
+  const r = await api().open_deemix(u);
+  if(r.how === 'queue') toast('⬇️ Agregada a la cola de deemix.');
+  else if(r.how === 'app') toast(`Abrí deemix${r.copied ? ' y copié el link: pégalo en su buscador (Cmd/Ctrl+V)' : ''}.`);
+  else toast(esc(r.error || 'No pude abrir deemix.') + (r.copied ? ' Copié el link para que lo pegues donde quieras.' : '') +
+    ` <a class="lnk" onclick="api().open_url(${jsq(u)})">Abrir en el navegador</a>`, true);
+}
 
 function openSettings(){
   const s = S.settings;
@@ -4508,6 +4536,10 @@ function openSettings(){
     <div class="box" style="margin-top:8px;display:flex;gap:10px;align-items:center">
       <span style="flex:1">🎛️ <b>Programas de DJ</b>: ${(()=>{ const on = Object.values(S.dests||{}).filter(x=>x.enabled).map(x=>esc(x.label)); return on.length ? 'activos ' + on.join(', ') : 'ninguno activo'; })()}. Rekordbox, Traktor, Serato, Engine DJ y M3U se activan en Conexiones.</span>
       <button onclick="closeModal(); show('conn')">Abrir Conexiones</button></div>
+    <label class="f">Links de Deezer y Spotify (canción, álbum, playlist)</label>
+    <select class="t" id="sDmx" style="width:auto">
+      ${[['ask','Preguntarme si abrir en deemix'],['deemix','Abrir siempre en deemix'],['browser','Abrir siempre en el navegador']]
+        .map(([v,l])=>`<option value="${v}" ${(PREF.deemix||'ask')===v?'selected':''}>${l}</option>`).join('')}</select>
     <label class="f">Canciones que te gustan</label>
     <div style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="sLiked" ${s.include_liked?'checked':''}>
       <span>Incluir como playlist llamada</span><input class="t" id="sLikedName" value="${esc(s.liked_name)}" style="width:180px"></div>
@@ -4538,6 +4570,7 @@ async function saveSettings(){
     library_roots:draftRoots, rekordbox_folder:$('sRb').value, include_liked:$('sLiked').checked, liked_name:$('sLikedName').value};
   const r = await api().save_settings(s);
   if(r && r.ok===false){ toast(esc(r.error), true); return; }
+  if($('sDmx') && $('sDmx').value !== (PREF.deemix||'ask')) await savePref('deemix', $('sDmx').value);
   const st = await api().get_state(S.rev ?? null); S.settings = st.settings; S.inboxCount = st.inbox_count || 0; S.mikHidden = new Set(st.mik_hidden||[]); S.mikHiddenV = (S.mikHiddenV||0) + 1;
   if(st.analysis && (S.rev===undefined || st.rev >= S.rev)) setAnalysis(st.analysis, st.rev);
   closeModal(); render();

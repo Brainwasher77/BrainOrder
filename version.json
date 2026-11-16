@@ -1,5 +1,5 @@
 {
-  "version": "2.56.0",
-  "build": 129,
-  "notes": "Ancho de las columnas de la lista de canciones ajustable arrastrando el borde del título (se recuerda). Comparar y Fusionar ordenados por canciones en común en una sola lista."
+  "version": "2.57.0",
+  "build": 130,
+  "notes": "Los links de Deezer y Spotify te preguntan si abrirlos en deemix (a su cola si está abierto) o en el navegador; se puede recordar la elección en Ajustes."
 }

@@ -106,6 +106,87 @@ def open_url(url: str):
         webbrowser.open(url)
 
 
+# ---------------- deemix ----------------
+DEEMIX_PORT = 6595  # deemix-gui sirve su interfaz en este puerto mientras está abierto
+
+
+def deemix_ok(url: str) -> bool:
+    """Links que deemix entiende: canción, álbum, playlist o artista de Deezer (o de Spotify)."""
+    import re
+    u = (url or "").lower()
+    return bool(re.match(r"https://(www\.)?(deezer\.com/([a-z]{2}/)?(track|album|playlist|artist)/\d+"
+                         r"|deezer\.page\.link/|link\.deezer\.com/"
+                         r"|open\.spotify\.com/(intl-[a-z]+/)?(track|album|playlist)/)", u))
+
+
+def _deemix_queue(url: str) -> bool:
+    """Si deemix-gui está abierto, le manda el link directo a su cola."""
+    import json, urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{DEEMIX_PORT}/api/addToQueue",
+                                     data=json.dumps({"url": url}).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost sin proxy
+        with opener.open(req, timeout=2) as r:
+            if r.status != 200:
+                return False
+            body = r.read().decode("utf-8", "replace").strip()
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return False
+        return bool(data.get("result")) if isinstance(data, dict) else bool(data)
+    except Exception:
+        return False
+
+
+def _deemix_apps_win():
+    base = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("PROGRAMFILES", ""),
+            os.environ.get("PROGRAMFILES(X86)", "")]
+    for b in filter(None, base):
+        for sub in ("Programs/deemix-gui/deemix-gui.exe", "Programs/deemix/deemix.exe",
+                    "deemix-gui/deemix-gui.exe", "deemix/deemix.exe"):
+            p = Path(b) / sub
+            if p.exists():
+                yield p
+
+
+def _deemix_launch() -> bool:
+    try:
+        if IS_MAC:
+            for name in ("deemix-gui", "deemix"):
+                if subprocess.run(["open", "-a", name], capture_output=True).returncode == 0:
+                    return True
+            return False
+        if IS_WIN:
+            for p in _deemix_apps_win():
+                subprocess.Popen([str(p)], close_fds=True)
+                return True
+            return False
+        return subprocess.run(["sh", "-c", "command -v deemix-gui && (deemix-gui >/dev/null 2>&1 &)"],
+                              capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
+def open_deemix(url: str) -> dict:
+    """Manda el link a deemix: a su cola si está abierto; si no, lo abre con el link copiado para pegar."""
+    if not deemix_ok(url):
+        return {"ok": False, "error": "Ese link no lo entiende deemix (necesita una canción, álbum o playlist)."}
+    if _deemix_queue(url):
+        return {"ok": True, "how": "queue"}
+    copied = copy_text(url)
+    if _deemix_launch():
+        import time
+        for _ in range(8):          # recién abierto: darle unos segundos y probar la cola otra vez
+            time.sleep(1)
+            if _deemix_queue(url):
+                return {"ok": True, "how": "queue"}
+        return {"ok": True, "how": "app", "copied": copied}
+    return {"ok": False, "how": "missing", "copied": copied,
+            "error": "No encontré deemix en este computador."}
+
+
 # ---------------- portapapeles ----------------
 def copy_text(text: str) -> bool:
     try:
