@@ -35,8 +35,9 @@ r = o.playlist_tracks_move('dir:x', [1], None)
 assert mem["dir:x"] == [str(keep)], mem          # el recuerdo de la Radio Version se olvidó
 assert keep.exists() and old.exists()             # ningún archivo se tocó
 assert r["result"].get("shared") == 1
-# quitar la otra (la del archivo de la carpeta) NO olvida el recuerdo de la que se queda
+# 2.57.7: quitar la otra (la del archivo de la carpeta) también olvida el recuerdo: el archivo sigue en la carpeta
+# y la playlist lo vuelve a leer igual, así que si se olvidaba el archivo las dos volvían a salir
 mem["dir:x"] = [str(keep), str(fold / old.name)]
 o.playlist_tracks_move('dir:x', [0], None)
-assert str(fold / old.name) in mem["dir:x"], mem
+assert mem["dir:x"] == [str(keep)], mem
 print("OK")

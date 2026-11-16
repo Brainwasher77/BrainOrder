@@ -2762,7 +2762,7 @@ class Api:
         return new_files, info
 
     # ---------- cola de Spotify (lo que quedó pendiente por la pausa) ----------
-    _Q_ORDER = {"rename": 0, "delete": 1, "remove": 2, "replace": 2, "merge_add": 2, "add": 3, "import": 4, "reorder": 5}
+    _Q_ORDER = {"rename": 0, "delete": 1, "remove": 2, "remove_nth": 2, "replace": 2, "merge_add": 2, "add": 3, "import": 4, "reorder": 5}
 
     def _queue_blocked(self):
         """¿Por qué no se pueden hacer los pendientes ahora mismo? -> texto o None."""
@@ -2844,7 +2844,7 @@ class Api:
                         self._update_sp(put)
                         done.append({"name": job["name"], "kind": "import", "found": len(uris),
                                      "unresolved": unresolved, "reused": reused})
-                    elif job["kind"] in ("rename", "delete", "merge_add", "remove", "reorder", "replace"):
+                    elif job["kind"] in ("rename", "delete", "merge_add", "remove", "reorder", "replace", "remove_nth"):
                         out = self._spotify_exec(job, sp) or {}
                         done.append({"name": job["name"], "kind": job["kind"], "found": out.get("added", out.get("removed", out.get("replaced", 0))),
                                      "unresolved": out.get("unresolved", 0), "reused": True})
@@ -3227,6 +3227,15 @@ class Api:
             if job.get("id"):
                 cola_spotify.remove(job["id"])
             return {"added": len(add), "unresolved": unresolved}
+        if k == "remove_nth":  # una aparición concreta de una canción repetida (la otra se queda)
+            import cola_spotify
+            r = sp.remove_nth(job["pid"], job.get("items") or [])
+            if r.get("restore"):  # se cortó al volver a ponerla: que no se pierda, se agrega al final
+                self._spotify_do({"kind": "merge_add", "pid": job["pid"], "name": job.get("name"),
+                                  "uris": r["restore"], "paths": [], "queries": []})
+            if job.get("id"):
+                cola_spotify.remove(job["id"])
+            return {"removed": r["removed"], "left": r["left"]}
         if k == "replace":  # dejar la playlist exactamente con estas canciones (PUT: repetirlo no duplica)
             import cola_spotify
             uris = list(job.get("uris") or [])
@@ -3352,6 +3361,26 @@ class Api:
             return []
         keep_src = {nk(r["source"]) for r in kept if r.get("source")} | set(stay or ())
         return [m for m in FC.members(pid) if nk(m) not in keep_src and FC.track_id(m) in out_ids]
+
+    @staticmethod
+    def _fc_shared_memories(pid, rows, all_rows, stay=()):
+        """Playlist de carpeta con la misma canción dos veces y el MISMO archivo: una fila es el archivo de verdad
+        y la otra un recuerdo (un nombre viejo que se resuelve a ese archivo). Al quitar «una» de las dos, sea cual
+        sea la que marcaste, se olvida el recuerdo y se queda el archivo: si no, las dos volvían a salir.
+        -> rutas recordadas a olvidar."""
+        import unicodedata
+        from fuentes import carpetas as FC
+        nk = (lambda x: os.path.normcase(os.path.normpath(unicodedata.normalize("NFC", str(x)))))
+        mem = FC.members(pid)
+        have = {nk(m) for m in mem}
+        out = []
+        for r in rows:
+            s = nk(r["source"]) if r.get("source") else None
+            if not s or s not in stay or s not in have:
+                continue
+            ids = {x.get("id") for x in all_rows or [] if x.get("source") and nk(x["source"]) == s}
+            out += [m for m in mem if nk(m) != s and FC.track_id(m) in ids]
+        return out
 
     @staticmethod
     def _local_name(uri):
@@ -4108,6 +4137,7 @@ class Api:
             if sa == "spotify" or sb == "spotify":
                 sp = self._spotify_ready()
             twin = []  # filas que salen pero su MISMA canción de Spotify (mismo id) se queda en otra posición
+            twin_nth = False
             if sa == "spotify" and src_pid != "liked":
                 kept_ids = {r.get("id") for r in A.get("tracks") or [] if r.get("pos") not in want}
                 twin = [r for r in rows if r.get("id") in kept_ids and self._SP_ID.fullmatch(r.get("id") or "")]
@@ -4119,10 +4149,10 @@ class Api:
                                             "Inténtalo cuando vuelva.")
                     cur = next((x for x in self._load_sp()["playlists"] if x["id"] == src_pid), None)
                     ctr = (cur or {}).get("tracks") or []
-                    if any(not self._SP_ID.fullmatch(str(t.get("id") or "")) for t in ctr):
-                        raise unificar.UnifyError(f"«{A['name']}» tiene archivos locales de Spotify o canciones que "
-                                                  f"esperan para entrar: quita la repetida a mano en Spotify.")
-                    if any(r["pos"] >= len(ctr) or ctr[r["pos"]].get("id") != r["id"] for r in twin):
+                    # con archivos locales de Spotify o canciones que esperan para entrar no se puede reescribir la
+                    # lista entera (esas no se pueden volver a poner): la repetida se quita por su posición
+                    twin_nth = any(not self._SP_ID.fullmatch(str(t.get("id") or "")) for t in ctr)
+                    if not twin_nth and any(r["pos"] >= len(ctr) or ctr[r["pos"]].get("id") != r["id"] for r in twin):
                         raise unificar.UnifyError(f"«{A['name']}» cambió en Spotify: vuelve a analizarla.")
             ra, rbb = self._rb_ref(src_pid, A, ea), (self._rb_ref(dst_pid, B, eb) if B else None)
             self._rb_ready(ra, rbb)
@@ -4250,7 +4280,38 @@ class Api:
                     self._sp_drop(src_pid, uris)
                 res["spotify_src"] = {"state": "ok"}
             elif sa == "spotify":
-                if twin:  # Spotify quita TODAS las apariciones de una canción: se reescribe la lista sin esas posiciones
+                if twin and twin_nth:  # la repetida sale por su posición (cuál aparición de esa canción es)
+                    seen, nth = {}, {}
+                    for t in sorted(A.get("tracks") or [], key=lambda t: t.get("pos", 0)):
+                        nth[t.get("pos")] = seen.get(t.get("id"), 0)
+                        seen[t.get("id")] = nth[t.get("pos")] + 1
+                    items = [{"uri": "spotify:track:" + r["id"], "nth": nth.get(r["pos"], 0)} for r in twin]
+                    res["spotify_twin"] = self._spotify_do({"kind": "remove_nth", "pid": src_pid, "name": A["name"],
+                                                            "items": items})
+                    tw = {r["pos"] for r in twin}
+
+                    def put(data, tw=tw):  # en BrainOrder ya no está (si quedó pendiente, se hace después)
+                        x = next((y for y in data["playlists"] if y["id"] == src_pid), None)
+                        if x is None or x.get("tracks") is None:
+                            return
+                        drop = {}
+                        for r in twin:
+                            drop[r["id"]] = drop.get(r["id"], 0) + 1
+                        keep = []
+                        for t in reversed(x["tracks"]):  # salen las últimas apariciones de cada una
+                            if drop.get(t.get("id")):
+                                drop[t["id"]] -= 1
+                                continue
+                            keep.append(t)
+                        x["tracks"] = keep[::-1]
+                        x["total"] = len(x["tracks"])
+                    self._update_sp(put)
+                    res["spotify_src"] = res["spotify_twin"]
+                    by_uri = {"spotify:track:" + r["id"]: r for r in twin}
+                    res["twin_left"] = [", ".join(by_uri[x["uri"]].get("artists") or []) + " - " + (by_uri[x["uri"]].get("name") or "")
+                                        for x in res["spotify_twin"].get("left") or [] if x.get("uri") in by_uri]
+                    rows = [r for r in rows if r["pos"] not in tw]
+                elif twin:  # Spotify quita TODAS las apariciones de una canción: se reescribe la lista sin esas posiciones
                     # salen TODAS las filas elegidas (no solo las repetidas): si esto queda pendiente, al hacerse
                     # después no puede volver a poner las que el «remove» de abajo ya quitó
                     drop = {r["pos"] for r in rows}
@@ -4276,7 +4337,10 @@ class Api:
                     job = {"kind": "remove", "pid": src_pid, "name": A["name"], "uris": uris}
                     if local:
                         job["local"] = local
+                    tw_st = res.get("spotify_twin")
                     res["spotify_src"] = self._spotify_do(job)
+                    if tw_st and tw_st.get("state") == "queued":  # que el aviso diga que algo quedó pendiente
+                        res["spotify_src"] = {**res["spotify_src"], "state": "queued", "why": tw_st.get("why")}
                     res["no_uri"] += res["spotify_src"].get("local_left", 0)
                     res["manual"] = res["spotify_src"].get("local_left_names") or []
                     res["local_done"] = res["spotify_src"].get("local_removed", 0)
@@ -4298,7 +4362,8 @@ class Api:
             else:
                 gone = ({nk(r["source"]) for r in rows if r.get("source")} - stay) | {nk(v) for v in ch.values()}
                 FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone]
-                          + self._fc_gone_members(src_pid, rows, A.get("tracks"), stay))
+                          + self._fc_gone_members(src_pid, rows, A.get("tracks"), stay)
+                          + self._fc_shared_memories(src_pid, rows, A.get("tracks"), stay))
             # Rekordbox: la playlist original de las que nacieron allá cambia igual
             ops = []
             if rbb:

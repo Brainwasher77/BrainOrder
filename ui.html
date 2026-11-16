@@ -1678,6 +1678,7 @@ async function tmDone(res, dj){
   if(x.no_file) msg += `<br><span style="color:var(--org)">No entró a «${esc(x.into)}»: es de carpeta y no tienes el archivo.</span>`;
   if(x.not_found) msg += `<br><span style="color:var(--org)">No la encontré en Spotify para ponerla en Me gusta.</span>`;
   if(x.local_done) msg += `<br>🟢 ${x.local_done>1 ? `${x.local_done} archivos locales de Spotify también se quitaron` : 'El archivo local de Spotify también se quitó'} allá.`;
+  if(x.twin_left && x.twin_left.length) msg += `<br><span style="color:var(--org)">Spotify no dejó quitar solo una copia de ${x.twin_left.slice(0,3).map(n=>'«'+esc(n)+'»').join(', ')}${x.twin_left.length>3?` y ${x.twin_left.length-3} más`:''}: quítala a mano en Spotify (la otra copia se queda).</span>`;
   if(x.no_uri > 0){ const mn = (x.manual||[]).slice(0,3).map(n=>'«'+esc(n)+'»').join(', ');
     msg += `<br><span style="color:var(--org)">Spotify no dejó quitar ${x.no_uri>1?`${x.no_uri} archivos locales`:'el archivo local'}${mn?` ${mn}`:''}: quítal${x.no_uri>1?'os':'o'} a mano en Spotify.</span>`; }
   if(x.still) msg += `<br><span style="color:var(--org)">Sigue en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;

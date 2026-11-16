@@ -1,5 +1,5 @@
 {
-  "version": "2.57.6",
-  "build": 136,
-  "notes": "Cuando Spotify falla por su lado (error 500/502/503/504), BrainOrder reintenta solo y, si sigue fallando, deja el cambio pendiente y lo hace en unos minutos, en vez de mostrarte el error crudo."
+  "version": "2.57.7",
+  "build": 137,
+  "notes": "Quitar las de más: en playlists de Spotify con archivos locales ya no da error (la copia sale por su posición) y en playlists de carpeta la repetida ya no vuelve a salir."
 }

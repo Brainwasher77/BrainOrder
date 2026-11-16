@@ -205,6 +205,7 @@ def _forbidden(detail):
     return None
 
 
+_POS_DEAD = {"v": False}  # Spotify no aceptó quitar por posición canciones normales (no se vuelve a probar)
 _LOCAL_FORM = None  # cuál forma de quitar archivos locales aceptó Spotify (se prueba primero la próxima vez)
 
 
@@ -542,14 +543,80 @@ class Spotify:
                 return snap, uris
         return again, uris
 
-    def remove_local(self, pid, items):
+    def remove_nth(self, pid, items):
+        """Quita UNA aparición concreta de canciones que están repetidas (la otra copia se queda), también en
+        playlists con archivos locales. items: [{"uri", "nth"}] (nth = cuál de las apariciones, desde 0).
+        Primero por posición (como los archivos locales); si Spotify no lo acepta, se quita la canción y se vuelve
+        a poner en su sitio las veces que debe quedar. Siempre se comprueba releyendo.
+        -> {"removed", "left": [items que siguen], "restore": [uris que no se alcanzaron a volver a poner]}"""
+        want = [dict(x) for x in items or [] if str(x.get("uri") or "").startswith(("spotify:track:", "spotify:local:"))]
+        if not want:
+            return {"removed": 0, "left": [], "restore": []}
+        left = want
+        if not _POS_DEAD["v"]:
+            r = self.remove_local(pid, want, any_uri=True)
+            left = r["left"]
+            if len(left) == len(want):  # ninguna forma por posición funcionó: no se vuelve a gastar en probarlas
+                _POS_DEAD["v"] = True
+        restore = []
+        tl = [x for x in left if x["uri"].startswith("spotify:track:")]
+        if tl:
+            r2 = self._remove_reinsert(pid, tl)
+            left = [x for x in left if not x["uri"].startswith("spotify:track:")] + r2["left"]
+            restore = r2["restore"]
+        return {"removed": len(want) - len(left), "left": left, "restore": restore}
+
+    def _remove_reinsert(self, pid, items):
+        """Quita por uri (todas las apariciones) y vuelve a poner cada canción en las posiciones donde debe
+        quedar. Si se corta a mitad, devuelve en «restore» las que faltó volver a poner (no se pierden)."""
+        from collections import Counter
+        snap, cur = self._uris_now(pid)
+        need = Counter(x["uri"] for x in items)
+        drop = set()
+        for u, n in need.items():
+            idx = [i for i, v in enumerate(cur) if v == u]
+            k = min(n, len(idx) - 1)  # siempre queda al menos una
+            if k <= 0:
+                continue
+            pick = sorted({idx[int(x.get("nth") or 0)] for x in items
+                           if x["uri"] == u and int(x.get("nth") or 0) < len(idx)})[:k]
+            drop |= set(pick if len(pick) == k else idx[-k:])
+        if not drop:
+            return {"left": [], "restore": []}
+        target = [v for i, v in enumerate(cur) if i not in drop]
+        aff = {cur[i] for i in drop}
+        self.remove_items(pid, sorted(aff))
+        ins = [(i, v) for i, v in enumerate(target) if v in aff]
+        runs = []
+        for i, v in ins:
+            if runs and runs[-1][0] + len(runs[-1][1]) == i:
+                runs[-1][1].append(v)
+            else:
+                runs.append((i, [v]))
+        done = 0
+        try:
+            for p, uris in runs:
+                self.add_items(pid, uris, position=p)
+                done += len(uris)
+        except SpotifyError as e:
+            log(f"Spotify: se cortó al volver a poner {len(ins) - done} canción(es) en {pid}: {e}")
+            return {"left": [], "restore": [v for _, v in ins[done:]]}
+        _, now = self._uris_now(pid)
+        have, goal = Counter(now), Counter(target)
+        left = []
+        for u in need:
+            extra = have[u] - goal[u]
+            left += [x for x in items if x["uri"] == u][:max(0, extra)]
+        return {"left": left, "restore": []}
+
+    def remove_local(self, pid, items, any_uri=False):
         """Archivos locales de Spotify (spotify:local:…): Spotify no los quita por uri como a las demás; hay que
         darle la POSICIÓN y el snapshot de la playlist. items: [{"uri", "nth"}] (nth = cuál de las apariciones
         de esa uri, contando desde 0, por si está repetida). Se prueban las formas que Spotify acepta y se
         comprueba releyendo la playlist: nunca se da por quitada una que sigue ahí.
         -> {"removed": n, "left": [items que siguen], "snapshot"}"""
         from collections import Counter
-        want = [dict(x) for x in items or [] if str(x.get("uri") or "").startswith("spotify:local:")]
+        want = [dict(x) for x in items or [] if any_uri or str(x.get("uri") or "").startswith("spotify:local:")]
         if not want:
             return {"removed": 0, "left": [], "snapshot": None}
         snap, cur = self._uris_now(pid)
