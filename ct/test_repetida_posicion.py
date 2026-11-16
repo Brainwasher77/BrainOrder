@@ -109,3 +109,11 @@ for leave in (0, 1):  # sea cual sea la que marcaste
     got = A._fc_shared_memories("p", rows, rows_all, stay)
     assert got == [old], (leave, got)
 print("carpeta con recuerdo: ok")
+
+# 7) el archivo de verdad vive en la carpeta pero no está en la memoria: igual se olvida el recuerdo
+FC.members = lambda pid: [old]
+rows = [rows_all[0]]
+stay = {nk(rows_all[1]["source"])}
+assert A._fc_shared_memories("p", rows, rows_all, stay, str(root)) == [old]
+assert A._fc_shared_memories("p", rows, rows_all, stay) == []  # sin saber la carpeta no se arriesga
+print("carpeta sin memoria del archivo: ok")

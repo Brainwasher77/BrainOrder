@@ -3363,7 +3363,7 @@ class Api:
         return [m for m in FC.members(pid) if nk(m) not in keep_src and FC.track_id(m) in out_ids]
 
     @staticmethod
-    def _fc_shared_memories(pid, rows, all_rows, stay=()):
+    def _fc_shared_memories(pid, rows, all_rows, stay=(), folder=None):
         """Playlist de carpeta con la misma canción dos veces y el MISMO archivo: una fila es el archivo de verdad
         y la otra un recuerdo (un nombre viejo que se resuelve a ese archivo). Al quitar «una» de las dos, sea cual
         sea la que marcaste, se olvida el recuerdo y se queda el archivo: si no, las dos volvían a salir.
@@ -3373,13 +3373,20 @@ class Api:
         nk = (lambda x: os.path.normcase(os.path.normpath(unicodedata.normalize("NFC", str(x)))))
         mem = FC.members(pid)
         have = {nk(m) for m in mem}
+        inside = (nk(folder).rstrip(os.sep) + os.sep) if folder else None
         out = []
         for r in rows:
             s = nk(r["source"]) if r.get("source") else None
-            if not s or s not in stay or s not in have:
+            if not s or s not in stay:
+                continue
+            # el archivo de verdad sigue en la playlist (está recordado o vive en su carpeta, que se relee siempre)
+            if s not in have and not (inside and s.startswith(inside) and os.path.isfile(r["source"])):
                 continue
             ids = {x.get("id") for x in all_rows or [] if x.get("source") and nk(x["source"]) == s}
-            out += [m for m in mem if nk(m) != s and FC.track_id(m) in ids]
+            drop = [m for m in mem if nk(m) != s and FC.track_id(m) in ids]
+            config.log(f"repetida en carpeta {pid}: {os.path.basename(r['source'])} · filas {len(ids)} · "
+                       f"recuerdos olvidados {[os.path.basename(m) for m in drop]}")
+            out += drop
         return out
 
     @staticmethod
@@ -4363,7 +4370,8 @@ class Api:
                 gone = ({nk(r["source"]) for r in rows if r.get("source")} - stay) | {nk(v) for v in ch.values()}
                 FC.forget(src_pid, [m for m in FC.members(src_pid) if nk(m) in gone]
                           + self._fc_gone_members(src_pid, rows, A.get("tracks"), stay)
-                          + self._fc_shared_memories(src_pid, rows, A.get("tracks"), stay))
+                          + self._fc_shared_memories(src_pid, rows, A.get("tracks"), stay,
+                                                     (ea or {}).get("path") or A.get("folder")))
             # Rekordbox: la playlist original de las que nacieron allá cambia igual
             ops = []
             if rbb:
