@@ -19,6 +19,7 @@ sys.path.insert(0, str(HERE))
 import config  # noqa: E402
 import biblioteca  # noqa: E402
 import reglas  # noqa: E402
+import detalles  # noqa: E402
 import historial  # noqa: E402
 import estructura  # noqa: E402
 import grupos  # noqa: E402
@@ -64,7 +65,8 @@ def _write_json(p, data):
 UI_DEFAULTS = {"pl_sort": "spotify",       # orden de la lista de playlists
                "rg_remember": False,       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
                "cmp_sort": "list",         # Comparar: orden de las playlists para elegir
-               "grp_closed": []}           # grupos de playlists cerrados en la lista de la izquierda
+               "grp_closed": [],           # grupos de playlists cerrados en la lista de la izquierda
+               "track_cols": ["key", "energy", "bpm", "status", "file"]}  # columnas de la lista de canciones
 UI_CHOICES = {"pl_sort": {"spotify", "missing_desc", "missing_asc", "complete", "incomplete", "organize",
                           "name", "size", "created_desc", "created_asc", "updated_desc"},
               "cmp_sort": {"list", "name", "name_desc", "created_desc", "created_asc", "updated_desc",
@@ -146,6 +148,7 @@ class Api:
         armonia.load(config.SUPPORT_DIR / "armonia.json")
         import etiquetas
         etiquetas.load(config.SUPPORT_DIR / "etiquetas.json")
+        detalles.load(config.SUPPORT_DIR / "detalles.json")
         import buscar_datos
         buscar_datos.load(config.SUPPORT_DIR / "busqueda_datos.json")
         # Multitarea segura:
@@ -1633,6 +1636,13 @@ class Api:
                 res.pop("changes", None)
                 return {"result": res, "analysis": analysis, "pinned": self._cfg["pinned_paths"]}
         return self._task(run, f"relocate:{pid}", "Reorganizar", files=True)
+
+    def track_details(self, paths):
+        """Datos de los archivos para las columnas de la lista de canciones (género, año, bitrate, tamaño…).
+        -> {ok, d: {ruta: {...}}}. Con caché: solo se lee lo que no se había leído."""
+        def run():
+            return {"d": detalles.many(list(paths or [])[:20000], self._progress)}
+        return self._task(run, "track_details", "Leer datos de las canciones")
 
     def save_ui(self, prefs):
         """Preferencias de la ventana (orden de las playlists, recordar en Reorganizar…)."""

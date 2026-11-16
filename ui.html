@@ -1714,7 +1714,7 @@ async function ctxPin(src, on){
 }
 
 // ---------- preferencias de la ventana (se guardan en los ajustes) ----------
-let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[]};
+let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[], track_cols:['key','energy','bpm','status','file']};
 async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
 // ---------- orden de la lista de playlists ----------
 const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
@@ -2181,32 +2181,39 @@ function renderTable(){
     let rows = pl.tracks.filter(match).filter(r => SO.filter==='all' || (SO.filter==='nomik' ? (r.source && !r.mik) : SO.filter==='rep' ? RPI.nth.has(r.pos) : ds(r)===SO.filter));
     if(SO.filter==='rep') rows.sort((a,b) => RPI.first.get(a.pos).pos - RPI.first.get(b.pos).pos || a.pos - b.pos);
     const rank = {missing:0, inbox:1, elsewhere:2, here:3};
-    const key = {
+    const vis = trackCols(), need = vis.some(c => TC[c] && TC[c].det) || (TC[SO.col] && TC[SO.col].det);
+    if(need) tdNeed(pl);
+    const base = {
       pos: r => r.pos,
       name: r => (r.name||'').toLowerCase(),
       artist: r => (r.artists[0]||'\uffff').toLowerCase() + '\u0000' + (r.name||'').toLowerCase(),
       status: r => rank[ds(r)]*1e5 + r.pos,
       file: r => (r.source ? short(r.source) : '\uffff').toLowerCase(),
-      key: r => camRank(r.key)*1e5 + r.pos,
-      energy: r => (r.energy ? 11-r.energy : 99)*1e5 + r.pos,
-      bpm: r => (r.bpm || 999)*1e5 + r.pos,
-    }[SO.col] || (r=>r.pos);
-    if(SO.filter!=='rep') rows = rows.slice().sort((a,b)=>{ const x=key(a), y=key(b); return (x<y?-1:x>y?1:0) * SO.dir; });
+    };
+    const key = base[SO.col] || (TC[SO.col] && TC[SO.col].sort) || (r=>r.pos);
+    const nil = v => v === null || v === undefined || v === '' || v === '\uffff';
+    if(SO.filter!=='rep') rows = rows.slice().sort((a,b)=>{ const x=key(a, ds), y=key(b, ds);
+      if(nil(x) !== nil(y)) return nil(x) ? 1 : -1;  // lo vacío siempre al final
+      return ((x<y?-1:x>y?1:0) || a.pos-b.pos) * SO.dir; });
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
     const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
     const rpTag = r => { const k = RPI.nth.get(r.pos); if(k===undefined) return '';
       const f = RPI.first.get(r.pos); return ` <span class="gtag" style="color:var(--org);border-color:var(--org);cursor:pointer" title="${k ? `Repetida: la misma canción que la #${f.pos+1}` : 'Esta canción está más de una vez en la playlist'}" onclick="event.stopPropagation();SO.filter='rep';renderTable()">⧉ ${k ? (k+1)+'ª vez' : 'repetida'}</span>`; };
-    html = rpBanner(pl, +S.view.split(':')[1]) + `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}${cnt.rep?chip('rep','⧉ Repetidas'):''}</div>
-      <table><tr>${th('pos','#')}<th class="sortable ${SO.col==='name'||SO.col==='artist'?'on':''}"><span onclick="sortBy('name')" title="Ordenar por nombre de la canción">Canción${SO.col==='name'?(SO.dir>0?' ▲':' ▼'):''}</span> <span class="art">·</span> <span onclick="sortBy('artist')" title="Ordenar por artista (A–Z)">Artista${SO.col==='artist'?(SO.dir>0?' ▲':' ▼'):''}</span></th>${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
+    const cellOf = (c, r) => c==='status' ? `<td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>`
+      : c==='file' ? `<td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td>`
+      : TC[c] ? `<td ${TC[c].td||''}>${TC[c].cell(r)}</td>` : '<td></td>';
+    const ncol = 2 + vis.length;
+    html = rpBanner(pl, +S.view.split(':')[1]) + `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}${cnt.rep?chip('rep','⧉ Repetidas'):''}
+        <span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="art">Ordenar por</span>
+        <select onchange="tcSort(this.value)" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font:inherit;font-size:12px">${TC_SORTS.map(([v,t])=>`<option value="${v}" ${v===SO.col?'selected':''}>${t}</option>`).join('')}</select>
+        <button class="ghost" style="font-size:12px;padding:3px 8px" onclick="tcPick()" title="Elegir qué columnas ver (como en Apple Music: Opciones de visualización)">☰ Columnas</button></span></div>
+      ${need && TD.loading ? '<div class="art" style="margin:4px 0">Leyendo datos de tus archivos (género, año, bitrate…). La primera vez tarda un poco; después es al instante.</div>' : ''}
+      <table><tr>${th('pos','#')}<th class="sortable ${SO.col==='name'||SO.col==='artist'?'on':''}"><span onclick="sortBy('name')" title="Ordenar por nombre de la canción">Canción${SO.col==='name'?(SO.dir>0?' ▲':' ▼'):''}</span> <span class="art">·</span> <span onclick="sortBy('artist')" title="Ordenar por artista (A–Z)">Artista${SO.col==='artist'?(SO.dir>0?' ▲':' ▼'):''}</span></th>${vis.map(c => th(c, c==='status'?'Estado':c==='file'?'Archivo':TC[c].t)).join('')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}${rpTag(r)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
-      <td>${keyChip(r)}</td>
-      <td style="white-space:nowrap">${energyBar(r.energy)}</td>
-      <td class="mono" style="color:var(--mute)">${r.bpm?Math.round(r.bpm):''}</td>
-      <td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>
-      <td>${r.source?`<div class="path" onclick="reveal(${jsq(r.source)})">${esc(short(r.source))}</div>`:links(r)}</td></tr>`).join('') + moreRows(rows.length, 7)
-      : `<tr><td colspan="7" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`
-      + `<div class="art" style="margin-top:8px">Clic derecho en una canción: moverla a otra carpeta, fijarla, mostrarla en ${S.win?'el Explorador':'Finder'}…</div>`
+      ${vis.map(c => cellOf(c, r)).join('')}</tr>`).join('') + moreRows(rows.length, ncol)
+      : `<tr><td colspan="${ncol}" class="art" style="padding:24px;text-align:center">Ninguna canción con ese filtro.</td></tr>`) + `</table>`
+      + `<div class="art" style="margin-top:8px">Clic derecho en una canción: moverla a otra carpeta, fijarla, mostrarla en ${S.win?'el Explorador':'Finder'}… · Clic en el título de una columna para ordenar por ella.</div>`
       + `<div class="art" style="margin-top:8px">Key y energía salen de las etiquetas que deja Mixed In Key (Camelot). <sup>*</sup> = key de otro programa. Escribe <b>8A</b> en el buscador para ver solo esa key.</div>`;
   }
   t.innerHTML = html;
@@ -2639,6 +2646,56 @@ async function rgApply(){
 }
 // orden y filtro de la tabla de una playlist (se recuerda mientras la app está abierta)
 let SO = {col:'pos', dir:1, filter:'all'};
+// ---------- columnas de la lista de canciones (como Opciones de visualización de Apple Music) ----------
+let TD = {d:{}, asked:new Set(), loading:false};   // datos leídos de los archivos (detalles.py), por ruta
+const tdOf = r => (r.source && TD.d[r.source]) || {};
+const fmtDur = s => s ? `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}` : '';
+const fmtSize = b => !b ? '' : b >= 1e9 ? (b/1e9).toFixed(2)+' GB' : (b/1e6).toFixed(1)+' MB';
+const fmtDate = v => { if(!v) return ''; const d = typeof v === 'number' ? new Date(v*1000) : new Date(v); return isNaN(d) ? '' : d.toLocaleDateString('es', {year:'numeric', month:'short', day:'numeric'}); };
+const secsOf = r => (r.duration_ms ? r.duration_ms/1000 : 0) || tdOf(r).secs || 0;
+const MONO = 'class="mono" style="color:var(--mute);white-space:nowrap"';
+const TC = {
+  key:     {t:'Key', sort: r => camRank(r.key)*1e5 + r.pos, cell: r => keyChip(r)},
+  energy:  {t:'Energía', sort: r => r.energy ? 11-r.energy : null, cell: r => energyBar(r.energy), td:'style="white-space:nowrap"'},
+  bpm:     {t:'BPM', sort: r => r.bpm || null, cell: r => r.bpm ? Math.round(r.bpm) : '', td:MONO},
+  time:    {t:'Duración', sort: r => secsOf(r) || null, cell: r => fmtDur(secsOf(r)), td:MONO},
+  album:   {t:'Álbum', sort: r => (r.album || tdOf(r).album || '').toLowerCase(), cell: r => `<span class="art">${esc(r.album || tdOf(r).album || '')}</span>`},
+  year:    {t:'Año', det:true, sort: r => r.year || tdOf(r).year || null, cell: r => r.year || tdOf(r).year || '', td:MONO},
+  genre:   {t:'Género', det:true, sort: r => (tdOf(r).genre||'').toLowerCase(), cell: r => esc(tdOf(r).genre||'')},
+  added:   {t:'Agregada a la playlist', sort: r => r.added_at || '', cell: r => fmtDate(r.added_at), td:MONO},
+  dl:      {t:'Llegó al computador', det:true, sort: r => tdOf(r).added || null, cell: r => fmtDate(tdOf(r).added), td:MONO},
+  bitrate: {t:'Bitrate', det:true, sort: r => tdOf(r).bitrate || null, cell: r => tdOf(r).bitrate ? tdOf(r).bitrate+' kbps' : '', td:MONO},
+  sr:      {t:'Frecuencia', det:true, sort: r => tdOf(r).sr || null, cell: r => tdOf(r).sr ? (tdOf(r).sr/1000).toFixed(1)+' kHz' : '', td:MONO},
+  ext:     {t:'Formato', sort: r => r.source ? (r.source.split('.').pop()||'').toLowerCase() : '', cell: r => r.source ? (r.source.split('.').pop()||'').toUpperCase() : '', td:MONO},
+  size:    {t:'Tamaño', det:true, sort: r => tdOf(r).size || null, cell: r => fmtSize(tdOf(r).size), td:MONO},
+  composer:{t:'Compositor', det:true, sort: r => (tdOf(r).composer||'').toLowerCase(), cell: r => `<span class="art">${esc(tdOf(r).composer||'')}</span>`},
+  comment: {t:'Comentarios', det:true, sort: r => (tdOf(r).comment||'').toLowerCase(), cell: r => `<span class="art">${esc(tdOf(r).comment||'')}</span>`},
+  status:  {t:'Estado'},
+  file:    {t:'Archivo'},
+};
+const TC_ORDER = ['time','album','year','genre','key','energy','bpm','added','dl','bitrate','sr','ext','size','composer','comment','status','file'];
+const TC_SORTS = [['pos','Orden de la playlist'],['name','Canción'],['artist','Artista'],['time','Duración'],['album','Álbum'],['year','Año'],
+  ['genre','Género'],['key','Key'],['energy','Energía'],['bpm','BPM'],['added','Agregada a la playlist'],['dl','Llegó al computador'],
+  ['bitrate','Bitrate'],['sr','Frecuencia'],['ext','Formato'],['size','Tamaño'],['composer','Compositor'],['comment','Comentarios'],['status','Estado'],['file','Archivo']];
+function trackCols(){ const c = (PREF.track_cols && PREF.track_cols.length) ? PREF.track_cols : ['key','energy','bpm','status','file'];
+  return TC_ORDER.filter(k => c.includes(k)); }
+function tcSort(c){ SO.col = c; SO.dir = ['added','dl','year','bitrate','size','sr'].includes(c) ? -1 : 1; renderTable(); }
+async function tdNeed(pl){
+  const want = pl.tracks.map(r => r.source).filter(p => p && !TD.d[p] && !TD.asked.has(p));
+  if(!want.length || TD.loading) return;
+  want.forEach(p => TD.asked.add(p)); TD.loading = true;
+  try{ const r = await api().track_details(want); if(r && r.ok) Object.assign(TD.d, r.d || {}); else if(r && r.dup) want.forEach(p => TD.asked.delete(p)); }catch(e){}
+  TD.loading = false; renderTable();
+}
+function tcPick(){
+  const cur = new Set(trackCols());
+  modal(`<h3>☰ Columnas de la lista</h3><p class="art">Elige qué ver además de # y Canción · Artista. Clic en el título de una columna para ordenar por ella (otro clic invierte).</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin:10px 0">${TC_ORDER.map(k => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" class="tcx" value="${k}" ${cur.has(k)?'checked':''}> ${esc(TC[k].t)}${TC[k].det?' <span class="art">·</span>':''}</label>`).join('')}</div>
+    <p class="art">· se lee de tus archivos (etiquetas): la primera vez tarda un poco en playlists grandes.</p>
+    <div class="actions"><button class="ghost" style="margin-right:auto" onclick="document.querySelectorAll('.tcx').forEach(c=>c.checked=['key','energy','bpm','status','file'].includes(c.value))">Como venía</button>
+      <button onclick="closeModal()">Cancelar</button><button class="primary" onclick="tcSave()">Listo</button></div>`);
+}
+async function tcSave(){ const v = [...document.querySelectorAll('.tcx')].filter(c=>c.checked).map(c=>c.value); closeModal(); await savePref('track_cols', v); renderTable(); }
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
 function show(v){ if(v==='plgroups' && S.view!=='plgroups'){ GST = null; grpStatusLoad(); } if(v==='gather' && S.view!=='gather') gatherLoad(); if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }
 

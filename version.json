@@ -1,5 +1,5 @@
 {
-  "version": "2.54.0",
-  "build": 126,
-  "notes": "Corregir rutas en Rekordbox mucho más rápido; ordenar por artista; géneros sugeridos mientras escribes en Datos incompletos; «Usar esta versión» ubica el archivo y dice el motivo real si no puede."
+  "version": "2.55.0",
+  "build": 127,
+  "notes": "Columnas a elegir en la lista de canciones (duración, año, género, álbum, fechas, bitrate, tamaño, formato…) y ordenar por cualquiera, como en Apple Music. Además: corregir rutas en Rekordbox mucho más rápido, géneros sugeridos al escribir y «Usar esta versión» con el motivo real."
 }

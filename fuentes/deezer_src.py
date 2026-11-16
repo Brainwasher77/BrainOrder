@@ -144,7 +144,9 @@ def _track(t):
     artists = [(t.get("artist") or {}).get("name", "")]
     return {"id": PREFIX + str(t.get("id")), "name": t.get("title") or "", "artists": [a for a in artists if a],
             "album": (t.get("album") or {}).get("title", ""), "duration_ms": int(t.get("duration") or 0) * 1000,
-            "url": t.get("link") or "", "isrc": t.get("isrc") or ""}
+            "url": t.get("link") or "", "isrc": t.get("isrc") or "",
+            **({"added_at": __import__("datetime").datetime.utcfromtimestamp(int(t["time_add"])).strftime("%Y-%m-%dT%H:%M:%SZ")}
+               if str(t.get("time_add") or "").isdigit() else {})}
 
 
 def tracks(cfg, meta, progress=None):

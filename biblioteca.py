@@ -648,6 +648,8 @@ def analyze(playlists, cfg, progress=None, alt=None):
                 "home_name": home_name[hk(t)],
                 "inbox_dups": [d.path for d in dups],
                 **({"via_deezer": via} if via else {}),
+                **({"added_at": t["added_at"]} if t.get("added_at") else {}),
+                **({"year": t["year"]} if t.get("year") else {}),
                 **_harm(src),
             })
         out.append({"id": pl["id"], "name": pl["name"], "folder": folder_s, "tracks": rows,

@@ -608,6 +608,7 @@ class Spotify:
             "duration_ms": raw.get("duration_ms", 0),
             "url": (raw.get("external_urls") or {}).get("spotify", ""),
             "isrc": ((raw.get("external_ids") or {}).get("isrc") or ""),
+            **({"year": int(y)} if (y := str((raw.get("album") or {}).get("release_date") or "")[:4]).isdigit() else {}),
         }
 
     def list_mine(self):
