@@ -321,8 +321,9 @@ def parse_file(p: Path):
     return "", stem
 
 
-def walk_audio(root, excluder=None):
-    """Rutas de audio bajo root, respetando las exclusiones del usuario."""
+def walk_audio(root, excluder=None, keep=None):
+    """Rutas de audio bajo root, respetando las exclusiones del usuario.
+    keep(ruta) -> True: el archivo cuenta aunque lo deje fuera la duración mínima (versiones que aceptaste)."""
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")
                        and not (excluder and excluder.dir_excluded(os.path.join(dirpath, d)))]
@@ -333,7 +334,8 @@ def walk_audio(root, excluder=None):
             if not os.path.isfile(p):
                 continue  # acceso directo roto: el archivo ya no existe
             if excluder and excluder.file_excluded(p, duration):
-                continue
+                if not (keep and not excluder.file_excluded(p) and keep(p)):
+                    continue
             yield p
 
 
@@ -346,7 +348,7 @@ def _inside_any(path, roots):
     return False
 
 
-def scan(roots, progress=None, excluder=None):
+def scan(roots, progress=None, excluder=None, keep=None):
     files = []
     seen = set()
     roots = list(roots)
@@ -358,7 +360,7 @@ def scan(roots, progress=None, excluder=None):
             progress(f"Revisando tus carpetas: {root.name}…", 0.35 * ri / max(1, len(roots)))
         if excluder and excluder.dir_excluded(str(root)):
             continue
-        for key in walk_audio(root, excluder):
+        for key in walk_audio(root, excluder, keep):
             if key in seen:
                 continue
             seen.add(key)
@@ -515,8 +517,19 @@ def analyze(playlists, cfg, progress=None, alt=None):
     roots = [dest_root, inbox] + [Path(r) for r in cfg.get("library_roots", [])]
     skip = {str(inbox / cfg.get("inbox_done", "_organizadas")), str(inbox / "_duplicados"),
             str(dest_root / "_duplicados"), str(dest_root / "_Informes")}
-    files = [f for f in scan(roots, progress, reglas.Excluder(rules))
+    manual = cfg.get("version_links") or {}
+    mkeys = {k for v in manual.values() for k in v}
+    keep = (lambda p: norm(Path(p).stem) in mkeys) if mkeys else None
+    files = [f for f in scan(roots, progress, reglas.Excluder(rules), keep)
              if not any(f.path.startswith(s + os.sep) for s in skip)]
+    # archivos que aceptaste a mano y siguen en su sitio: cuentan aunque estén fuera de tus carpetas
+    have = {f.path for f in files}
+    for pths in (cfg.get("version_files") or {}).values():
+        for p in pths:
+            if p not in have and os.path.isfile(p) and not any(p.startswith(s + os.sep) for s in skip):
+                a, t = parse_file(Path(p))
+                files.append(LocalFile(Path(p), a, t))
+                have.add(p)
     if progress:
         progress(f"{len(files)} archivos locales. Cruzando con Spotify…", 0.35)
     total_tracks = sum(len(p["tracks"]) for p in playlists) or 1
@@ -525,7 +538,6 @@ def analyze(playlists, cfg, progress=None, alt=None):
     _LAST_IDX[0] = idx
     alt = alt or {}
     # versiones que aceptaste a mano («usar esta versión»): {id de la canción: [nombre de archivo normalizado]}
-    manual = cfg.get("version_links") or {}
     by_stem = {}
     if manual:
         for f in files:

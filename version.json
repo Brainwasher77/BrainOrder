@@ -1,5 +1,5 @@
 {
-  "version": "2.53.0",
-  "build": 125,
-  "notes": "«Agregar todas» las playlists de Rekordbox de una vez (su carpeta de Rekordbox pasa a ser su grupo). Las que no traían música nueva ya no desaparecen: quedan en BrainOrder. Los grupos se cuentan bien («Organizar» incluido)."
+  "version": "2.54.0",
+  "build": 126,
+  "notes": "Corregir rutas en Rekordbox mucho más rápido; ordenar por artista; géneros sugeridos mientras escribes en Datos incompletos; «Usar esta versión» ubica el archivo y dice el motivo real si no puede."
 }

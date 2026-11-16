@@ -2184,7 +2184,7 @@ function renderTable(){
     const key = {
       pos: r => r.pos,
       name: r => (r.name||'').toLowerCase(),
-      artist: r => (r.artists[0]||'').toLowerCase(),
+      artist: r => (r.artists[0]||'\uffff').toLowerCase() + '\u0000' + (r.name||'').toLowerCase(),
       status: r => rank[ds(r)]*1e5 + r.pos,
       file: r => (r.source ? short(r.source) : '\uffff').toLowerCase(),
       key: r => camRank(r.key)*1e5 + r.pos,
@@ -2197,7 +2197,7 @@ function renderTable(){
     const rpTag = r => { const k = RPI.nth.get(r.pos); if(k===undefined) return '';
       const f = RPI.first.get(r.pos); return ` <span class="gtag" style="color:var(--org);border-color:var(--org);cursor:pointer" title="${k ? `Repetida: la misma canción que la #${f.pos+1}` : 'Esta canción está más de una vez en la playlist'}" onclick="event.stopPropagation();SO.filter='rep';renderTable()">⧉ ${k ? (k+1)+'ª vez' : 'repetida'}</span>`; };
     html = rpBanner(pl, +S.view.split(':')[1]) + `<div class="chips">${chip('all','Todas')}${chip('missing','Falta')}${chip('inbox','En descargas')}${chip('elsewhere','En otra carpeta')}${chip('here','Aquí')}${cnt.nomik?`<span style="width:1px;background:var(--line);margin:0 4px"></span>${chip('nomik','Sin Mixed In Key')}`:''}${cnt.rep?chip('rep','⧉ Repetidas'):''}</div>
-      <table><tr>${th('pos','#')}${th('name','Canción')}${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
+      <table><tr>${th('pos','#')}<th class="sortable ${SO.col==='name'||SO.col==='artist'?'on':''}"><span onclick="sortBy('name')" title="Ordenar por nombre de la canción">Canción${SO.col==='name'?(SO.dir>0?' ▲':' ▼'):''}</span> <span class="art">·</span> <span onclick="sortBy('artist')" title="Ordenar por artista (A–Z)">Artista${SO.col==='artist'?(SO.dir>0?' ▲':' ▼'):''}</span></th>${th('key','Key')}${th('energy','Energía')}${th('bpm','BPM')}${th('status','Estado')}${th('file','Archivo')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}${rpTag(r)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
       <td>${keyChip(r)}</td>
@@ -3697,11 +3697,18 @@ async function sgEditReset(){
 }
 
 // ---------- datos incompletos: artista desconocido, sin título, nombre sin «Artista - Título», sin género ----------
-let MD = {data:null, loading:false, sel:new Set(), ed:{}, f:'', q:'', web:{}};
+let MD = {data:null, loading:false, sel:new Set(), ed:{}, f:'', q:'', web:{}, sort:'', genres:[]};
+const MD_SORTS = [['','Como vienen'],['artist','Artista (A–Z)'],['title','Título (A–Z)'],['genre','Género'],['file','Nombre de archivo']];
+function mdSortKey(x){
+  const e = MD.ed[x.path] || {}, lc = v => (v||'').trim().toLowerCase() || '\uffff';
+  return MD.sort==='artist' ? lc(e.artist||x.cur.artist) + '\u0000' + lc(e.title||x.cur.title)
+    : MD.sort==='title' ? lc(e.title||x.cur.title) : MD.sort==='genre' ? lc(e.genre) + '\u0000' + lc(e.artist)
+    : MD.sort==='file' ? x.name.toLowerCase() : '';
+}
 const MD_P = {'artista':'Artista desconocido','título':'Sin título','nombre':'Nombre sin «Artista - Título»','género':'Sin género'};
 async function mdLoad(){
   if(MD.loading) return; MD.loading = true; if(S.view==='meta') renderMain();
-  try{ const r = await api().meta_scan(); if(r.ok){ MD.data = r; MD.sel = new Set(); MD.ed = {}; MD.web = {};
+  try{ const r = await api().meta_scan(); if(r.ok){ MD.data = r; MD.sel = new Set(); MD.ed = {}; MD.web = {}; MD.genres = r.genres || [];
       const bad = /^(desconocido|unknown( artist)?|artista desconocido|<unknown>)$/i;
       r.rows.forEach(x => { const ca = bad.test((x.cur.artist||'').trim()) ? '' : (x.cur.artist||'');
         MD.ed[x.path] = {artist:(x.prop||{}).artist ?? ca, title:(x.prop||{}).title ?? (x.cur.title||''), genre:x.cur.genre||'', rename:!!x.newname}; }); }
@@ -3710,10 +3717,40 @@ async function mdLoad(){
 }
 function mdVisible(){
   const q = (MD.q||'').toLowerCase();
-  return (MD.data?MD.data.rows:[]).filter(x => (!MD.f || x.problems.includes(MD.f)) && (!q || (x.name+' '+(x.cur.artist||'')+' '+(x.cur.title||'')).toLowerCase().includes(q)));
+  const out = (MD.data?MD.data.rows:[]).filter(x => (!MD.f || x.problems.includes(MD.f)) && (!q || (x.name+' '+(x.cur.artist||'')+' '+(x.cur.title||'')+' '+((MD.ed[x.path]||{}).artist||'')).toLowerCase().includes(q)));
+  if(MD.sort){ const k = new Map(out.map(x => [x.path, mdSortKey(x)])); out.sort((a,b) => k.get(a.path) < k.get(b.path) ? -1 : k.get(a.path) > k.get(b.path) ? 1 : 0); }
+  return out;
 }
 function mdNewName(x){ const e = MD.ed[x.path]; if(!e) return ''; const ext = (x.name.match(/\.[^.]+$/)||[''])[0];
   const n = ((e.artist?e.artist+' - ':'') + e.title).replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,' ').trim(); return n ? n + ext : ''; }
+// géneros para sugerir mientras escribes (como en Apple Music): los que ya usas en tu música y los que pusiste aquí
+function mdGenreList(){
+  const seen = new Map();
+  (MD.genres||[]).concat(Object.values(MD.ed).map(e => (e.genre||'').trim())).forEach(g => { if(g && !seen.has(g.toLowerCase())) seen.set(g.toLowerCase(), g); });
+  return [...seen.values()];
+}
+// completa en el mismo campo lo que falta del género (queda seleccionado: sigue escribiendo o Tab / Enter / → para aceptar)
+function gAuto(el, ev){
+  if(!ev || ev.inputType === undefined) return;  // evento propio (al aceptar): no volver a completar
+  const t = ev.inputType || '';
+  if(t.startsWith('delete') || t === 'insertFromPaste' || t === 'insertReplacementText') return;
+  const v = el.value; if(!v.trim() || el.selectionStart !== v.length) return;
+  const lv = v.toLowerCase(), hit = mdGenreList().find(g => g.toLowerCase().startsWith(lv) && g.length > v.length);
+  if(!hit) return;
+  el.value = v + hit.slice(v.length);
+  el.setSelectionRange(v.length, el.value.length);
+}
+function gKey(el, ev){
+  const sel = el.selectionStart !== el.selectionEnd && el.selectionEnd === el.value.length;
+  if(sel && (ev.key === 'Tab' || ev.key === 'Enter' || ev.key === 'ArrowRight')){
+    // aceptar la sugerencia con las mayúsculas del género que ya usas
+    const hit = mdGenreList().find(g => g.toLowerCase() === el.value.toLowerCase());
+    if(hit) el.value = hit;
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.dispatchEvent(new Event('input'));
+    if(ev.key !== 'Tab') ev.preventDefault();
+  } else if(ev.key === 'Enter' && el.id === 'mdG'){ ev.preventDefault(); mdGenre(); }
+}
 function mdView(){
   const busy = MD.loading || running('meta_scan');
   const head = `<div class="vhead"><h2>Datos incompletos</h2><span class="sub">Canciones con artista desconocido, sin título, sin género o con un nombre de archivo que no es «Artista - Título» (así BrainOrder no las reconoce bien). Revisa la propuesta, corrígela si hace falta y dale <b>Arreglar</b>: los datos se escriben en el archivo y, si marcas «renombrar», el archivo pasa a llamarse «Artista - Título». Se corrigen tus programas de DJ y se puede deshacer en Historial.</span>
@@ -3729,17 +3766,19 @@ function mdView(){
       <td><input value="${esc(e.artist)}" placeholder="Artista" oninput="MD.ed[${jsq(x.path)}].artist=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px">
         <input value="${esc(e.title)}" placeholder="Título" oninput="MD.ed[${jsq(x.path)}].title=this.value;MD.sel.add(${jsq(x.path)});mdNn(${k},${jsq(x.path)})" style="${IN_ST};width:100%;min-width:130px;margin-top:4px">
         ${mdWebBadge(x)}</td>
-      <td><input value="${esc(e.genre)}" placeholder="Género" oninput="MD.ed[${jsq(x.path)}].genre=this.value;MD.sel.add(${jsq(x.path)})" style="${IN_ST};width:120px"></td>
+      <td><input value="${esc(e.genre)}" placeholder="Género" list="mdGenres" autocomplete="off" oninput="gAuto(this,event);MD.ed[${jsq(x.path)}].genre=this.value;MD.sel.add(${jsq(x.path)})" onkeydown="gKey(this,event)" style="${IN_ST};width:130px"></td>
       <td><label class="art" style="display:flex;gap:6px;align-items:flex-start"><input type="checkbox" ${e.rename?'checked':''} onchange="MD.ed[${jsq(x.path)}].rename=this.checked"><span id="mdNn${k}" style="overflow-wrap:anywhere">Renombrar a «${esc(nn)}»</span></label></td>
       <td><button class="ghost" title="Buscar en Spotify cómo se llama" onclick="mdSearch(${jsq(x.path)})">🔎</button></td></tr>`; }).join('');
   const chips = [['', `Todas (${d.rows.length})`]].concat(Object.entries(d.counts).filter(([k,n])=>n).map(([k,n])=>[k, `${MD_P[k]} (${n})`]))
     .map(([k,l]) => `<button class="${MD.f===k?'primary':'ghost'}" onclick="MD.f=${jsq(k)};renderMain()">${esc(l)}</button>`).join('');
   return head + `<div class="art" style="margin-bottom:6px">Revisé <b>${d.total}</b> canciones; <b>${d.rows.length}</b> tienen algo incompleto.</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">${chips}
+      <span class="art" style="margin-left:auto">Ordenar por</span><select onchange="MD.sort=this.value;renderMain()" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit">${MD_SORTS.map(([v,t])=>`<option value="${v}" ${v===MD.sort?'selected':''}>${t}</option>`).join('')}</select></div>
+    <datalist id="mdGenres">${mdGenreList().map(g=>`<option value="${esc(g)}">`).join('')}</datalist>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <input placeholder="Buscar…" value="${esc(MD.q)}" oninput="MD.q=this.value; clearTimeout(MD.t); MD.t=setTimeout(()=>{renderMain(); const i=document.querySelector('#main input[placeholder=\\'Buscar…\\']'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}},200)" style="${IN_ST};flex:1;min-width:140px">
       <button class="ghost" onclick="mdMark('prop')">Marcar las que tienen propuesta</button><button class="ghost" onclick="mdMark('none')">Ninguna</button>
-      <input id="mdG" placeholder="Género para las marcadas" style="${IN_ST};width:190px"><button class="ghost" onclick="mdGenre()">Aplicar</button>
+      <input id="mdG" placeholder="Género para las marcadas" list="mdGenres" autocomplete="off" oninput="gAuto(this,event)" onkeydown="gKey(this,event)" style="${IN_ST};width:190px"><button class="ghost" onclick="mdGenre()">Aplicar</button>
       ${running('meta_lookup') ? `<button class="ghost" onclick="api().meta_lookup_stop()">⏹ Parar la búsqueda</button>` : `<button class="ghost" onclick="mdWeb()" title="Busca artista, título y género en Deezer y Apple Music (gratis, sin gastar Spotify)">🌐 Buscar datos en internet</button>`}
       <button id="mdGo" class="primary" onclick="mdGo()">Arreglar</button></div>
     ${rows.length ? `<table><tr><th></th><th>Canción</th><th>Artista y título</th><th>Género</th><th>Archivo</th><th></th></tr>${tb}</table>${rows.length>400?`<div class="art">Mostrando 400 de ${rows.length}: filtra o busca.</div>`:''}` : '<div class="empty"><h3>Nada con ese filtro</h3></div>'}`;
@@ -4309,7 +4348,7 @@ async function oxAccept(k){
   const r = await api().accept_version(o.tid, x.path);
   if(!r.ok){ taskErr(r); return; }
   await applyAnalysis(r); render();
-  toast(r.matched ? `✅ <b>${esc(x.file)}</b> ahora cuenta como «${esc(o.name)}» de <b>${esc(o.playlist)}</b>: se organiza con ella.` : `Listo, pero no la pude ubicar todavía: dale Analizar a «${esc(o.playlist)}».`, !r.matched);
+  toast(r.matched ? `✅ <b>${esc(x.file)}</b> ahora cuenta como «${esc(o.name)}» de <b>${esc(o.playlist)}</b>: se organiza con ella.` : esc(r.why || `Quedó anotado, pero no la pude ubicar todavía en «${o.playlist}».`), !r.matched);
   askOrganizeAll();
 }
 function oxAllLoose(on){ document.querySelectorAll('input.oxl').forEach(c=>{ c.checked=on; on?OX.loose.add(c.dataset.f):OX.loose.delete(c.dataset.f); }); oxSum(); }

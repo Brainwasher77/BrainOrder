@@ -592,9 +592,7 @@ def _rb_apply(path_change, dup_of, retired=None, progress=None):
         if progress:
             progress("Guardando Rekordbox…", 1.0)
         db.commit()
-        if progress and len(anlz) > 200:
-            progress(f"Corrigiendo los análisis de {len(anlz)} canción(es) en Rekordbox…", 1.0)
-        RC.write_anlz(anlz)
+        RC.write_anlz(anlz, progress if len(anlz) > 200 else None)
         return stats
     except Exception:
         try:

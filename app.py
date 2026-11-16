@@ -2070,16 +2070,37 @@ class Api:
         return out
 
     def accept_version(self, tid, path):
-        """«Usar esta versión»: ese archivo cuenta como esa canción de tus playlists (aunque sea otra versión)."""
+        """«Usar esta versión»: ese archivo cuenta como esa canción de tus playlists (aunque sea otra versión).
+        2.52.0: se guarda también la ruta del archivo (cuenta aunque tus Reglas lo dejen fuera, por ejemplo por
+        la duración mínima) y, si aun así no se pudo ubicar, se dice el motivo real (antes siempre decía
+        «dale Analizar», aunque la playlist ya estuviera analizada)."""
         def run():
             key = biblioteca.norm(Path(path).stem)
             vl = dict(self._cfg.get("version_links") or {})
             vl[tid] = sorted(set(vl.get(tid) or []) | {key})
             self._cfg["version_links"] = vl
+            vf = dict(self._cfg.get("version_files") or {})
+            vf[tid] = sorted(set(vf.get(tid) or []) | {str(path)})[-5:]
+            self._cfg["version_files"] = vf
             config.save(self._cfg)
             analysis = self._build_analysis(light=True)
-            ok = any(r["id"] == tid and r["status"] != "missing" for p in analysis for r in p["tracks"])
-            return {"analysis": analysis, "matched": ok, "inbox": self.inbox_status()}
+            rows = [(p, r) for p in analysis for r in p.get("tracks") or [] if r["id"] == tid]
+            ok = any(r["status"] != "missing" for _, r in rows)
+            why = None
+            if not ok:
+                busy = [k for k in self._running if k != f"version:{tid}"]
+                if not rows:
+                    why = "Esa canción ya no está en tus playlists analizadas (¿la quitaste de la playlist?)."
+                elif not os.path.isfile(path):
+                    why = (f"El archivo ya no está en {Path(path).parent.name}: " +
+                           ("otra tarea lo está moviendo ahora. Quedó anotado: se cruza solo cuando termine."
+                            if busy else "lo moviste o lo movió Organizar. Quedó anotado: se cruza solo en el próximo análisis."))
+                elif all(p.get("pending") for p, _ in rows):
+                    why = f"Quedó anotado, pero «{rows[0][0]['name']}» está sin analizar: dale Analizar a esa playlist."
+                else:
+                    why = "Quedó anotado, pero no pude cruzarla todavía. Dale ⟳ Analizar y si sigue igual avísame."
+                config.log(f"usar esta versión sin cruce: {tid} {path} -> {why}")
+            return {"analysis": analysis, "matched": ok, "why": why, "inbox": self.inbox_status()}
         return self._task(run, f"version:{tid}", "Usar esta versión")
 
     # ---------- vigilante de la carpeta de descargas ----------
@@ -8000,10 +8021,14 @@ class Api:
             self._progress("Buscando tu música…", 0)
             files = self._all_music_files()
             rows, counts = [], {"artista": 0, "título": 0, "nombre": 0, "género": 0}
+            genres = {}
             for n, p in enumerate(files, 1):
                 if n % 200 == 0:
                     self._progress(f"Revisando etiquetas: {n}/{len(files)}…", n / max(1, len(files)))
                 t = etiquetas.read(p)
+                g = re.sub(r"\s+", " ", str((t or {}).get("genre") or "")).strip()
+                if g:  # géneros que ya usas, para sugerirlos mientras escribes
+                    genres.setdefault(g.casefold(), [g, 0])[1] += 1
                 c = etiquetas.check(p, t, hint.get(p))
                 if not c:
                     continue
@@ -8012,7 +8037,8 @@ class Api:
                 rows.append({"path": p, "name": Path(p).name, "cur": t, **c})
             etiquetas.save()
             self._progress("Listo.", 1)
-            return {"rows": rows, "counts": counts, "total": len(files),
+            gl = sorted(genres.values(), key=lambda x: (-x[1], x[0].casefold()))[:400]
+            return {"rows": rows, "counts": counts, "total": len(files), "genres": [g for g, _ in gl],
                     "spotify": {"connected": self._sp().connected, "paused": spotify_api.paused_until()}}
         return self._task(run, "meta_scan", "Datos incompletos")
 

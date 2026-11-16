@@ -12,6 +12,8 @@ Ojo: pyrekordbox.remove_from_playlist hace commit por su cuenta; aquí se usa _d
 """
 import base64
 import os
+import re
+import struct
 from datetime import date, datetime
 
 from config import log
@@ -135,14 +137,13 @@ def _insert_song(db, snap):
 # ---------------------------------------------------------------- operaciones
 def set_path(db, c, new, undo, anlz):
     """La pista c pasa a apuntar a `new`. Los archivos de análisis (ANLZ) se corrigen DESPUÉS del commit
-    (write_anlz) para que un error no deje la base y los ANLZ desparejos."""
+    (write_anlz) para que un error no deje la base y los ANLZ desparejos.
+    2.52.0: aquí solo se anotan las RUTAS de sus ANLZ (antes se leía y se interpretaba cada archivo entero,
+    con su forma de onda: ~0,5 s por canción, y 7.000 canciones tardaban una hora)."""
     new = rb_path(new)
     undo.append({"op": "path", "id": str(c.ID), "FolderPath": c.FolderPath, "OrgFolderPath": c.OrgFolderPath,
                  "FileNameL": c.FileNameL, "FileSize": c.FileSize})
-    try:
-        files = db.read_anlz_files(c.ID)
-    except Exception:
-        files = {}
+    files = anlz_files(db, c)
     old = c.FolderPath
     c.FolderPath = new
     if c.OrgFolderPath and rb_path(c.OrgFolderPath) == rb_path(old or ""):
@@ -157,17 +158,84 @@ def set_path(db, c, new, undo, anlz):
     anlz.append((files, new))
 
 
-def write_anlz(anlz):
-    for files, new in anlz:
-        for apath, a in (files or {}).items():
+_ANLZ_RX = re.compile(r"^ANLZ\d{4}\.(DAT|EXT|2EX)$", re.I)
+
+
+def anlz_files(db, c):
+    """Rutas de los archivos de análisis de la pista (sin abrirlos)."""
+    try:
+        d = db.get_anlz_dir(c)
+        return [str(p) for p in d.iterdir() if _ANLZ_RX.match(p.name)]
+    except Exception:
+        return []
+
+
+def _u32(b, i):
+    return struct.unpack_from(">I", b, i)[0]
+
+
+def ppth_set(path, new):
+    """Cambia la ruta guardada en un ANLZ (etiqueta PPTH) tocando solo esos bytes. -> True si cambió.
+    Si la ruta vieja empieza por «?/» (Rekordbox no guardó la carpeta) se deja «?/<nombre>».
+    Si el archivo no tiene la forma esperada se usa pyrekordbox (lento pero seguro)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:4] != b"PMAI" or len(data) < 12:
+        raise ValueError("no es un ANLZ")
+    pos, n = _u32(data, 4), len(data)
+    while pos + 12 <= n:
+        typ, lh, lt = data[pos:pos + 4], _u32(data, pos + 4), _u32(data, pos + 8)
+        if lt < 12 or pos + lt > n:
+            raise ValueError("ANLZ con una etiqueta rara")
+        if typ == b"PPTH":
+            if lh != 16:
+                raise ValueError("PPTH con otra cabecera")
+            lp = _u32(data, pos + 12)
+            cur = data[pos + 16:pos + 16 + max(0, lp - 2)].decode("utf-16-be", "replace")
+            p = new
+            if cur.startswith("?/"):
+                p = "?/" + new.rsplit("/", 1)[-1]
+            if cur == p:
+                return False
+            enc = p.encode("utf-16-be") + b"\0\0"
+            tag = b"PPTH" + struct.pack(">III", 16, 16 + len(enc), len(enc)) + enc
+            out = bytearray(data[:pos] + tag + data[pos + lt:])
+            struct.pack_into(">I", out, 8, len(out))
+            tmp = path + ".bo-tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(out)
+            os.replace(tmp, path)
+            return True
+        pos += lt
+    return False  # sin etiqueta de ruta (algunos .2EX): nada que cambiar
+
+
+def _ppth_slow(apath, new):
+    from pyrekordbox.anlz import AnlzFile
+    a = AnlzFile.parse_file(apath)
+    p = new
+    if str(a.get("path") or "").startswith("?/"):
+        p = "?/" + new.rsplit("/", 1)[-1]
+    a.set_path(p)
+    a.save(apath)
+
+
+def write_anlz(anlz, progress=None):
+    total = len(anlz)
+    for k, (files, new) in enumerate(anlz, 1):
+        if progress and (k % 500 == 0 or k == total):
+            progress(f"Corrigiendo los análisis en Rekordbox: {k}/{total}", k / max(1, total))
+        if isinstance(files, dict):  # forma vieja {ruta: AnlzFile}
+            files = list(files)
+        for apath in files or []:
+            apath = str(apath)
             try:
-                p = new
-                if str(a.get("path") or "").startswith("?/"):
-                    p = "?/" + new.rsplit("/", 1)[-1]
-                a.set_path(p)
-                a.save(apath)
-            except Exception as e:
-                log(f"ANLZ {apath}: {e}")
+                ppth_set(apath, new)
+            except Exception:
+                try:
+                    _ppth_slow(apath, new)
+                except Exception as e:
+                    log(f"ANLZ {apath}: {e}")
 
 
 def delete(db, c, undo):

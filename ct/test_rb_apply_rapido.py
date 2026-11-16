@@ -17,7 +17,7 @@ class C:
         self.ID, self.FolderPath, self.OrgFolderPath, self.FileNameL, self.FileSize = i, p, p, p.rsplit("/", 1)[-1], 1
 
 
-ST = {"q": 0, "commit": 0}
+ST = {"q": 0, "commit": 0, "anlz": 0}
 
 
 class DB:
@@ -29,7 +29,11 @@ class DB:
         return [c for c in self.cs if FolderPath is None or c.FolderPath == FolderPath]
 
     def read_anlz_files(self, i):
+        ST["anlz"] += 1
         return {}
+
+    def get_anlz_dir(self, c):
+        return Path("/no/existe")
 
     def commit(self):
         ST["commit"] += 1
@@ -58,7 +62,9 @@ assert ST["q"] <= 2, ST  # la colección se lee una vez (antes: 2-3 búsquedas p
 assert st["paths"] == N - 1 and st["merged"] == 1 and merged == [(7, "ya")], (st, merged)
 assert ST["cs"][5].FolderPath == "/Users/f/Music/Nuevo/t5.mp3" and ST["cs"][100].FileNameL == "t100.mp3"
 assert ST["cs"][100].FolderPath.endswith("Nuevo/t100.mp3") and ST["commit"] == 1
-assert any("20000/20000" in x for x in seen) and len(seen) < 100, seen[-3:]
+rutas = [x for x in seen if x.startswith("Corrigiendo rutas")]
+assert any("20000/20000" in x for x in rutas) and len(rutas) < 100, rutas[-3:]
+assert ST["anlz"] == 0, "no se deben interpretar los ANLZ enteros"
 assert dt < 30, dt
 print(f"{N} canciones en {dt:.1f} s")
 print("OK")
