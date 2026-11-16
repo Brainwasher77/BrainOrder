@@ -119,25 +119,28 @@ def deemix_ok(url: str) -> bool:
                          r"|open\.spotify\.com/(intl-[a-z]+/)?(track|album|playlist)/)", u))
 
 
-def _deemix_queue(url: str) -> bool:
-    """Si deemix-gui está abierto, le manda el link directo a su cola."""
-    import json, urllib.request
+def _deemix_queue(url: str):
+    """Si deemix-gui está abierto, le manda el link directo a su cola.
+    Devuelve True (en cola), "login" (deemix abierto pero sin sesión de Deezer) o False (no responde)."""
+    import json, urllib.request, urllib.error
+    req = urllib.request.Request(f"http://127.0.0.1:{DEEMIX_PORT}/api/addToQueue",
+                                 data=json.dumps({"url": url}).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost sin proxy
     try:
-        req = urllib.request.Request(f"http://127.0.0.1:{DEEMIX_PORT}/api/addToQueue",
-                                     data=json.dumps({"url": url}).encode("utf-8"),
-                                     headers={"Content-Type": "application/json"}, method="POST")
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost sin proxy
         with opener.open(req, timeout=2) as r:
-            if r.status != 200:
-                return False
             body = r.read().decode("utf-8", "replace").strip()
-        try:
-            data = json.loads(body)
-        except ValueError:
-            return False
-        return bool(data.get("result")) if isinstance(data, dict) else bool(data)
+    except urllib.error.HTTPError as e:
+        body = (e.read() or b"").decode("utf-8", "replace").strip()
     except Exception:
         return False
+    if "notloggedin" in body.lower().replace("_", "").replace(" ", ""):
+        return "login"
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return False
+    return bool(data.get("result")) if isinstance(data, dict) else bool(data)
 
 
 def _deemix_apps_win():
@@ -173,14 +176,21 @@ def open_deemix(url: str) -> dict:
     """Manda el link a deemix: a su cola si está abierto; si no, lo abre con el link copiado para pegar."""
     if not deemix_ok(url):
         return {"ok": False, "error": "Ese link no lo entiende deemix (necesita una canción, álbum o playlist)."}
-    if _deemix_queue(url):
+    q = _deemix_queue(url)
+    if q == "login":
+        copy_text(url)
+        return {"ok": False, "how": "login", "copied": True}
+    if q:
         return {"ok": True, "how": "queue"}
     copied = copy_text(url)
     if _deemix_launch():
         import time
         for _ in range(8):          # recién abierto: darle unos segundos y probar la cola otra vez
             time.sleep(1)
-            if _deemix_queue(url):
+            q = _deemix_queue(url)
+            if q == "login":
+                return {"ok": False, "how": "login", "copied": copied}
+            if q:
                 return {"ok": True, "how": "queue"}
         return {"ok": True, "how": "app", "copied": copied}
     return {"ok": False, "how": "missing", "copied": copied,

@@ -1,5 +1,5 @@
 {
-  "version": "2.57.0",
-  "build": 130,
-  "notes": "Los links de Deezer y Spotify te preguntan si abrirlos en deemix (a su cola si está abierto) o en el navegador; se puede recordar la elección en Ajustes."
+  "version": "2.57.1",
+  "build": 131,
+  "notes": "deemix: si está abierto sin sesión de Deezer, BrainOrder te avisa en vez de decir que lo abrió."
 }
