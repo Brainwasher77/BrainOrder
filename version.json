@@ -1,5 +1,5 @@
 {
-  "version": "2.55.1",
-  "build": 128,
-  "notes": "Comparar y Fusionar: las playlists salen en una sola lista ordenada por canciones en común (ya no separadas por grupo); el grupo aparece al lado del nombre."
+  "version": "2.56.0",
+  "build": 129,
+  "notes": "Ancho de las columnas de la lista de canciones ajustable arrastrando el borde del título (se recuerda). Comparar y Fusionar ordenados por canciones en común en una sola lista."
 }

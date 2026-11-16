@@ -200,6 +200,11 @@ details.rgg summary::-webkit-details-marker{display:none}
 details.rgg summary .rg{margin-left:auto}
 details.rgg table{margin:0 0 6px}
 th.sortable{cursor:pointer;user-select:none}
+table.trk th{position:relative}
+table.trk.fixed{table-layout:fixed}
+table.trk.fixed td{overflow:hidden;text-overflow:ellipsis}
+.colrs{position:absolute;top:0;right:-4px;width:9px;height:100%;cursor:col-resize;z-index:2}
+.colrs:hover,.colrs.on{background:linear-gradient(90deg,transparent 4px,var(--acid) 4px,var(--acid) 5px,transparent 5px)}
 th.sortable:hover{color:var(--text)}
 th.sortable.on{color:var(--acid)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
@@ -1714,7 +1719,7 @@ async function ctxPin(src, on){
 }
 
 // ---------- preferencias de la ventana (se guardan en los ajustes) ----------
-let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[], track_cols:['key','energy','bpm','status','file']};
+let PREF = {pl_sort:'spotify', rg_remember:false, cmp_sort:'list', grp_closed:[], track_cols:['key','energy','bpm','status','file'], col_w:{}};
 async function savePref(k, v){ PREF[k] = v; try{ const r = await api().save_ui({[k]: v}); if(r && r.ui) PREF = r.ui; }catch(e){} }
 // ---------- orden de la lista de playlists ----------
 const PL_SORTS = [['spotify','Orden de Spotify'],['missing_desc','Más faltantes primero'],['missing_asc','Menos faltantes primero'],
@@ -2197,7 +2202,8 @@ function renderTable(){
       if(nil(x) !== nil(y)) return nil(x) ? 1 : -1;  // lo vacío siempre al final
       return ((x<y?-1:x>y?1:0) || a.pos-b.pos) * SO.dir; });
     const chip = (k,t) => cnt[k]||k==='all' ? `<button class="chipf ${SO.filter===k?'on':''} ${k}" onclick="SO.filter='${k}';renderTable()">${t} <span class="mono">${cnt[k]}</span></button>` : '';
-    const th = (c,t,extra='') => `<th class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}</th>`;
+    const CW = PREF.col_w || {}, cw = c => CW[c] ? `style="width:${CW[c]}px"` : '', rz = c => `<span class="colrs" title="Arrastra para cambiar el ancho · doble clic: como venía" onmousedown="colDrag(event,'${c}')" onclick="event.stopPropagation()" ondblclick="colReset(event,'${c}')"></span>`;
+    const th = (c,t,extra='') => `<th data-col="${c}" ${cw(c)} class="sortable ${SO.col===c?'on':''}" onclick="sortBy('${c}')" ${extra}>${t}${SO.col===c?(SO.dir>0?' ▲':' ▼'):''}${rz(c)}</th>`;
     const rpTag = r => { const k = RPI.nth.get(r.pos); if(k===undefined) return '';
       const f = RPI.first.get(r.pos); return ` <span class="gtag" style="color:var(--org);border-color:var(--org);cursor:pointer" title="${k ? `Repetida: la misma canción que la #${f.pos+1}` : 'Esta canción está más de una vez en la playlist'}" onclick="event.stopPropagation();SO.filter='rep';renderTable()">⧉ ${k ? (k+1)+'ª vez' : 'repetida'}</span>`; };
     const cellOf = (c, r) => c==='status' ? `<td><span class="st ${cls[ds(r)]}">${lab[ds(r)]}</span></td>`
@@ -2209,7 +2215,7 @@ function renderTable(){
         <select onchange="tcSort(this.value)" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font:inherit;font-size:12px">${TC_SORTS.map(([v,t])=>`<option value="${v}" ${v===SO.col?'selected':''}>${t}</option>`).join('')}</select>
         <button class="ghost" style="font-size:12px;padding:3px 8px" onclick="tcPick()" title="Elegir qué columnas ver (como en Apple Music: Opciones de visualización)">☰ Columnas</button></span></div>
       ${need && TD.loading ? '<div class="art" style="margin:4px 0">Leyendo datos de tus archivos (género, año, bitrate…). La primera vez tarda un poco; después es al instante.</div>' : ''}
-      <table><tr>${th('pos','#')}<th class="sortable ${SO.col==='name'||SO.col==='artist'?'on':''}"><span onclick="sortBy('name')" title="Ordenar por nombre de la canción">Canción${SO.col==='name'?(SO.dir>0?' ▲':' ▼'):''}</span> <span class="art">·</span> <span onclick="sortBy('artist')" title="Ordenar por artista (A–Z)">Artista${SO.col==='artist'?(SO.dir>0?' ▲':' ▼'):''}</span></th>${vis.map(c => th(c, c==='status'?'Estado':c==='file'?'Archivo':TC[c].t)).join('')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
+      <table class="trk ${Object.keys(CW).length?'fixed':''}"><tr>${th('pos','#')}<th data-col="song" ${cw('song')} class="sortable ${SO.col==='name'||SO.col==='artist'?'on':''}">${rz('song')}<span onclick="sortBy('name')" title="Ordenar por nombre de la canción">Canción${SO.col==='name'?(SO.dir>0?' ▲':' ▼'):''}</span> <span class="art">·</span> <span onclick="sortBy('artist')" title="Ordenar por artista (A–Z)">Artista${SO.col==='artist'?(SO.dir>0?' ▲':' ▼'):''}</span></th>${vis.map(c => th(c, c==='status'?'Estado':c==='file'?'Archivo':TC[c].t)).join('')}</tr>` + (rows.length? limRows(rows).map(r=>`<tr data-pos="${r.pos}" ${r.source?'data-src="1"':''}>
       <td class="mono" style="color:var(--mute)">${r.pos+1}</td>
       <td><div style="display:flex;align-items:flex-start">${pvBtn(r)}<div><div>${esc(r.name)}${rpTag(r)}</div><div class="art">${esc(r.artists.join(', '))}</div></div></div></td>
       ${vis.map(c => cellOf(c, r)).join('')}</tr>`).join('') + moreRows(rows.length, ncol)
@@ -2693,9 +2699,26 @@ function tcPick(){
   modal(`<h3>☰ Columnas de la lista</h3><p class="art">Elige qué ver además de # y Canción · Artista. Clic en el título de una columna para ordenar por ella (otro clic invierte).</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin:10px 0">${TC_ORDER.map(k => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" class="tcx" value="${k}" ${cur.has(k)?'checked':''}> ${esc(TC[k].t)}${TC[k].det?' <span class="art">·</span>':''}</label>`).join('')}</div>
     <p class="art">· se lee de tus archivos (etiquetas): la primera vez tarda un poco en playlists grandes.</p>
+    <p class="art">El ancho de cada columna se cambia arrastrando el borde derecho de su título (doble clic en el borde: como venía).</p>
     <div class="actions"><button class="ghost" style="margin-right:auto" onclick="document.querySelectorAll('.tcx').forEach(c=>c.checked=['key','energy','bpm','status','file'].includes(c.value))">Como venía</button>
+      <button class="ghost" onclick="savePref('col_w', {}).then(()=>{closeModal();renderTable();})">Anchos como venían</button>
       <button onclick="closeModal()">Cancelar</button><button class="primary" onclick="tcSave()">Listo</button></div>`);
 }
+// ancho de las columnas: arrastrar el borde derecho del título (se recuerda); doble clic lo devuelve a como venía
+function colDrag(ev, c){
+  ev.preventDefault(); ev.stopPropagation();
+  const th = ev.target.closest('th'), tb = th && th.closest('table'); if(!th || !tb) return;
+  if(!tb.classList.contains('fixed')){  // congelar los anchos actuales para que las demás no salten
+    tb.querySelectorAll('th[data-col]').forEach(h => h.style.width = h.offsetWidth + 'px'); tb.classList.add('fixed'); }
+  const x0 = ev.clientX, w0 = th.offsetWidth, bar = ev.target; bar.classList.add('on');
+  const mv = e => { th.style.width = Math.max(36, w0 + e.clientX - x0) + 'px'; };
+  const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); bar.classList.remove('on');
+    const w = {}; tb.querySelectorAll('th[data-col]').forEach(h => w[h.dataset.col] = Math.round(h.offsetWidth));
+    savePref('col_w', {...(PREF.col_w||{}), ...w}); };
+  document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+}
+async function colReset(ev, c){ ev.preventDefault(); ev.stopPropagation(); const w = {...(PREF.col_w||{})}; delete w[c];
+  await savePref('col_w', w); renderTable(); }
 async function tcSave(){ const v = [...document.querySelectorAll('.tcx')].filter(c=>c.checked).map(c=>c.value); closeModal(); await savePref('track_cols', v); renderTable(); }
 function sortBy(c){ if(SO.col===c) SO.dir=-SO.dir; else { SO.col=c; SO.dir=1; } renderTable(); }
 function show(v){ if(v==='plgroups' && S.view!=='plgroups'){ GST = null; grpStatusLoad(); } if(v==='gather' && S.view!=='gather') gatherLoad(); if(v==='dupclean' && S.view!=='dupclean') dcLoad(); if(v==='mik' && S.view!=='mik') mikInit(); if(v==='folders') fdLoad(); if(v==='rbchg') rbLoad(); if(v==='rblost' && S.view!=='rblost') lostLoad(); if(v==='rbgrid' && S.view!=='rbgrid' && !GR.data) gridLoad(); if(v==='rbbpm' && S.view!=='rbbpm' && !GR.data) gridLoad(); if(v==='noplaylist' && S.view!=='noplaylist') npLoad(); if(v==='suggest' && S.view!=='suggest' && !SG.data) sgLoad(); if(v==='meta' && S.view!=='meta' && !MD.data) mdLoad(); if(v==='rules' && S.view!=='rules') rulesInit(); if(v==='conn' && S.view!=='conn') cxInit(); S.view=v; S.q=''; render(); }

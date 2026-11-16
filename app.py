@@ -66,7 +66,8 @@ UI_DEFAULTS = {"pl_sort": "spotify",       # orden de la lista de playlists
                "rg_remember": False,       # Reorganizar: recordar lo que dejo donde está (no volver a proponerlo)
                "cmp_sort": "list",         # Comparar: orden de las playlists para elegir
                "grp_closed": [],           # grupos de playlists cerrados en la lista de la izquierda
-               "track_cols": ["key", "energy", "bpm", "status", "file"]}  # columnas de la lista de canciones
+               "track_cols": ["key", "energy", "bpm", "status", "file"],  # columnas de la lista de canciones
+               "col_w": {}}                # ancho (px) de esas columnas, arrastrando el borde
 UI_CHOICES = {"pl_sort": {"spotify", "missing_desc", "missing_asc", "complete", "incomplete", "organize",
                           "name", "size", "created_desc", "created_asc", "updated_desc"},
               "cmp_sort": {"list", "name", "name_desc", "created_desc", "created_asc", "updated_desc",
@@ -1654,6 +1655,9 @@ class Api:
                 continue
             if isinstance(UI_DEFAULTS[k], list):
                 v = [str(x)[:40] for x in v][:200] if isinstance(v, list) else []
+            elif isinstance(UI_DEFAULTS[k], dict):
+                v = {str(a)[:20]: int(max(30, min(2000, b))) for a, b in (v.items() if isinstance(v, dict) else [])
+                     if isinstance(b, (int, float))}
             cur[k] = bool(v) if isinstance(UI_DEFAULTS[k], bool) else v
         self._cfg["ui"] = cur
         config.save(self._cfg)
