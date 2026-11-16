@@ -36,6 +36,11 @@ class SpotifyNetError(SpotifyError):
     """Se cortó la conexión con Spotify (no es culpa del pendiente: se reintenta sin contar como intento)."""
 
 
+class SpotifyDown(SpotifyNetError):
+    """Spotify respondió 500/502/503/504 (falla de ellos, no de BrainOrder ni de la playlist): se reintenta
+    después sin contar como intento."""
+
+
 class SpotifyPaused(SpotifyError):
     """Spotify castigó a la app por exceso de consultas: no se le pregunta nada hasta que pase."""
 
@@ -88,6 +93,24 @@ def _only_spotify(url):
     u = urllib.parse.urlparse(url)
     if u.scheme != "https" or (u.hostname or "").lower() != "api.spotify.com":
         raise SpotifyError(f"Dirección inesperada para Spotify: {url[:80]}")
+
+
+_5XX = (500, 502, 503, 504)
+_DOWN = {"until": 0.0}
+DOWN_WAIT = 180      # tras una falla de Spotify, la cola automática espera 3 min antes de volver a probar
+WRITE_WAITS = (3, 8, 20)  # escribir: reintentos ante 5xx (solo PUT/DELETE, que no duplican nada)
+
+
+def down_until():
+    """Hora (epoch) hasta la que conviene no reintentar porque Spotify está fallando, o None."""
+    return _DOWN["until"] if _DOWN["until"] > time.time() else None
+
+
+def _down(e, what):
+    _DOWN["until"] = time.time() + DOWN_WAIT
+    log(f"Spotify falló por su lado ({e.code}) en {what}: {_body(e)[:150]}")
+    return SpotifyDown(f"Spotify está fallando por su lado ahora mismo (error {e.code}; ya se reintentó). "
+                       "No es BrainOrder ni tu playlist: vuelve a intentarlo en unos minutos.")
 
 
 _TOKEN_LOCK = threading.Lock()  # varias tareas a la vez: un solo refresco del token
@@ -358,6 +381,8 @@ class Spotify:
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
                 return self.get(path_or_url, params, _retry - 1)
+            if e.code in _5XX:  # _urlopen ya reintentó
+                raise _down(e, "GET " + url.split("?")[0])
             detail = _body(e)
             if e.code == 403 and _forbidden(detail):
                 raise SpotifyError(_forbidden(detail))
@@ -431,7 +456,7 @@ class Spotify:
         granted = set(((self.token or {}).get("scope") or "").split())
         return WRITE_SCOPES <= granted
 
-    def send(self, method, path, body=None, _retry=3):
+    def send(self, method, path, body=None, _retry=3, _fail=0):
         url = path if path.startswith("http") else API + path
         _only_spotify(url)
         data = json.dumps(body).encode() if body is not None else None
@@ -449,11 +474,19 @@ class Spotify:
             if e.code == 429:
                 if _retry:
                     _retry_after(e)
-                    return self.send(method, path, body, _retry - 1)
+                    return self.send(method, path, body, _retry - 1, _fail)
                 _pause_short(e)
             if e.code == 401 and _retry:
                 self._refresh(stale=access)
-                return self.send(method, path, body, _retry - 1)
+                return self.send(method, path, body, _retry - 1, _fail)
+            if e.code in _5XX:
+                # PUT (reemplazar/renombrar) y DELETE dejan lo mismo aunque se repitan: se reintentan solos.
+                # POST (agregar) NO: si Spotify alcanzó a agregarlas, repetirlo las duplicaría.
+                if method in ("PUT", "DELETE") and _fail < len(WRITE_WAITS):
+                    log(f"Spotify {e.code} en {method} {url.split('?')[0]}: reintento en {WRITE_WAITS[_fail]} s")
+                    time.sleep(WRITE_WAITS[_fail])
+                    return self.send(method, path, body, _retry, _fail + 1)
+                raise _down(e, f"{method} {url.split('?')[0]}")
             detail = _body(e)[:200]
             if e.code == 403 and _forbidden(detail):
                 raise SpotifyError(_forbidden(detail))

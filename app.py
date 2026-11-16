@@ -2762,7 +2762,7 @@ class Api:
         return new_files, info
 
     # ---------- cola de Spotify (lo que quedó pendiente por la pausa) ----------
-    _Q_ORDER = {"rename": 0, "delete": 1, "remove": 2, "merge_add": 2, "add": 3, "import": 4, "reorder": 5}
+    _Q_ORDER = {"rename": 0, "delete": 1, "remove": 2, "replace": 2, "merge_add": 2, "add": 3, "import": 4, "reorder": 5}
 
     def _queue_blocked(self):
         """¿Por qué no se pueden hacer los pendientes ahora mismo? -> texto o None."""
@@ -2844,9 +2844,9 @@ class Api:
                         self._update_sp(put)
                         done.append({"name": job["name"], "kind": "import", "found": len(uris),
                                      "unresolved": unresolved, "reused": reused})
-                    elif job["kind"] in ("rename", "delete", "merge_add", "remove", "reorder"):
+                    elif job["kind"] in ("rename", "delete", "merge_add", "remove", "reorder", "replace"):
                         out = self._spotify_exec(job, sp) or {}
-                        done.append({"name": job["name"], "kind": job["kind"], "found": out.get("added", out.get("removed", 0)),
+                        done.append({"name": job["name"], "kind": job["kind"], "found": out.get("added", out.get("removed", out.get("replaced", 0))),
                                      "unresolved": out.get("unresolved", 0), "reused": True})
                     elif job["kind"] == "add":
                         out = self._link_add_now(job["path"], job.get("files"), job=job)
@@ -3167,6 +3167,13 @@ class Api:
                 return {"state": "ok", **(self._spotify_exec(job, self._sp()) or {})}
             except SpotifyPaused:
                 pass
+            except SpotifyNetError as e:
+                # Spotify falló por su lado (5xx) o se cortó la conexión: no es error tuyo; queda pendiente y
+                # el vigilante lo reintenta solo. Al reintentar se relee la playlist (pudo quedar a medias).
+                job = {**job, "fresh": True, "error": str(e)}
+                cola_spotify.add(job)
+                return {"state": "queued", "why": "down" if isinstance(e, spotify_api.SpotifyDown) else "net",
+                        "msg": str(e), "until": None}
         cola_spotify.add(job)
         return {"state": "queued", "until": spotify_api.paused_until()}
 
@@ -3209,7 +3216,7 @@ class Api:
         if k == "merge_add":
             import cola_spotify
             pid = job["pid"]
-            have = self._sp_have(pid, sp)
+            have = self._sp_have(pid, sp, fresh=job.get("fresh"))
             uris, unresolved = self._job_uris(job, sp)
             add = [u for u in uris if u not in have]
             snap = sp.add_items(pid, add) if add else None
@@ -3220,6 +3227,27 @@ class Api:
             if job.get("id"):
                 cola_spotify.remove(job["id"])
             return {"added": len(add), "unresolved": unresolved}
+        if k == "replace":  # dejar la playlist exactamente con estas canciones (PUT: repetirlo no duplica)
+            import cola_spotify
+            uris = list(job.get("uris") or [])
+            snap = sp.replace_items(job["pid"], uris)
+            keep = [u.rsplit(":", 1)[-1] for u in uris]
+
+            def put(data, pid=job["pid"]):
+                x = next((y for y in data["playlists"] if y["id"] == pid), None)
+                if x is None or x.get("tracks") is None:
+                    return
+                by = {}
+                for t in x["tracks"]:
+                    by.setdefault(t.get("id"), []).append(t)
+                x["tracks"] = [by[i].pop(0) for i in keep if by.get(i)]
+                x["total"] = len(x["tracks"])
+                if snap and x.get("snapshot") == x.get("analyzed_snapshot"):
+                    x["snapshot"] = x["analyzed_snapshot"] = snap
+            self._update_sp(put)
+            if job.get("id"):
+                cola_spotify.remove(job["id"])
+            return {"replaced": len(uris)}
         if k == "reorder":
             import cola_spotify
             out = self._sp_reorder(job, sp)
@@ -3258,10 +3286,10 @@ class Api:
         self._update_sp(put)
         return {"reordered": len(want)}
 
-    def _sp_have(self, pid, sp):
+    def _sp_have(self, pid, sp, fresh=False):
         """Canciones que ya tiene una playlist de Spotify: de la caché si está al día (0 consultas); si no,
-        se lee una vez."""
-        cur = next((x for x in self._load_sp()["playlists"] if x["id"] == pid), None)
+        se lee una vez. fresh: leer siempre de Spotify (tras una falla pudo quedar a medias)."""
+        cur = None if fresh else next((x for x in self._load_sp()["playlists"] if x["id"] == pid), None)
         if cur and cur.get("tracks") is not None and cur.get("snapshot") and cur.get("snapshot") == cur.get("analyzed_snapshot"):
             import cola_spotify
             pend = {t.get("id") for t in cola_spotify.pending_tracks(pid)}  # lo pendiente no está en Spotify
@@ -4223,22 +4251,23 @@ class Api:
                 res["spotify_src"] = {"state": "ok"}
             elif sa == "spotify":
                 if twin:  # Spotify quita TODAS las apariciones de una canción: se reescribe la lista sin esas posiciones
-                    drop = {r["pos"] for r in twin}
+                    # salen TODAS las filas elegidas (no solo las repetidas): si esto queda pendiente, al hacerse
+                    # después no puede volver a poner las que el «remove» de abajo ya quitó
+                    drop = {r["pos"] for r in rows}
                     cur = next((x for x in self._load_sp()["playlists"] if x["id"] == src_pid), None) or {}
                     left = [t for i, t in enumerate(cur.get("tracks") or []) if i not in drop]
-                    snap = sp.replace_items(src_pid, ["spotify:track:" + t["id"] for t in left])
+                    # «replace» se hace ya o, si Spotify está en pausa o fallando, queda pendiente (en BrainOrder
+                    # ya se ve sin esas filas)
+                    res["spotify_src"] = self._spotify_do({"kind": "replace", "pid": src_pid, "name": A["name"],
+                                                           "uris": ["spotify:track:" + t["id"] for t in left]})
 
-                    def put(data, left=left, snap=snap):
+                    def put(data, left=left):
                         x = next((y for y in data["playlists"] if y["id"] == src_pid), None)
                         if x is None or x.get("tracks") is None:
                             return
                         x["tracks"], x["total"] = left, len(left)
-                        if snap and x.get("snapshot") == x.get("analyzed_snapshot"):
-                            x["snapshot"] = x["analyzed_snapshot"] = snap
                     self._update_sp(put)
-                    res["spotify_src"] = {"state": "ok"}
-                    tw = {r["pos"] for r in twin}
-                    rows = [r for r in rows if r["pos"] not in tw]
+                    rows = [r for r in rows if r["pos"] not in drop]  # ya van en el «replace»
                 uris = list(dict.fromkeys("spotify:track:" + r["id"] for r in rows if self._SP_ID.fullmatch(r.get("id") or "")))
                 pend = [r for r in rows if str(r.get("id") or "").startswith(FC.PREFIX)]  # aún esperaban para entrar
                 local = self._local_items(rows, A.get("tracks"))
@@ -4320,7 +4349,7 @@ class Api:
         """Pasar ya a Spotify lo pendiente (si Spotify lo permite). auto: lo llama el vigilante."""
         import cola_spotify as Q
         import time as _t
-        if auto and (not Q.load() or spotify_api.paused_until()):
+        if auto and (not Q.load() or spotify_api.paused_until() or spotify_api.down_until()):
             # en pausa también se deja el informe (cada 10 min), para saber qué espera y hasta cuándo
             if Q.load() and _t.time() - getattr(self, "_q_rep_t", 0) > 600:
                 self._q_rep_t = _t.time()

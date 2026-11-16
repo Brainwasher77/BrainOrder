@@ -349,6 +349,8 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 let S = {analysis:null, foreign:{}, settings:{}, connected:false, view:'missing', q:''};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// por qué quedó pendiente en Spotify: pausa/cuota, o Spotify fallando (5xx) / sin conexión
+const spWhy = (...xs) => { const x = xs.find(y => y && y.state==='queued' && y.why); return !x ? 'Spotify está en pausa' : x.why==='down' ? 'Spotify está fallando por su lado ahora mismo (no es BrainOrder)' : 'Se cortó la conexión con Spotify'; };
 const jsq = s => esc(JSON.stringify(String(s ?? '')));
 const api = () => window.pywebview.api;
 // rutas de Mac (/) y de Windows (\)
@@ -665,7 +667,7 @@ async function fdImport(){
   if(x.adopt) msg += '<br>' + (x.adopt.state==='done' ? (x.adopt.mode==='delete' ? `🎛️ La original se quitó de Rekordbox (sus canciones están en «${esc(x.merged_into)}»).` : `🎛️ La original ya está en la carpeta «${fold}» de Rekordbox.`)
     : x.adopt.state==='pending' ? `🎛️ Cuando cierres Rekordbox, la original ${x.adopt.mode==='delete'?'se quita':`pasa a la carpeta «${fold}»`} sola.`
     : `<span style="color:var(--org)">🎛️ ${esc(x.adopt.why)}.</span>`);
-  if(x.spotify && x.spotify.state==='queued') msg += `<br>⏳ Spotify está en pausa: se suman allá solas en cuanto lo permita.`;
+  if(x.spotify && x.spotify.state==='queued') msg += `<br>⏳ ${spWhy(x.spotify)}: se suman allá solas en cuanto lo permita.`;
   else if(x.spotify && x.spotify.state==='ok') msg += `<br>Spotify: ${x.spotify.added||0} agregadas.`;
   if(x.move){ msg += `<br>📁 ${x.move.moved} archivo${x.move.moved!==1?'s':''} pasado${x.move.moved!==1?'s':''} a <code>${esc(short(x.move.dest))}</code>` + (x.move.already?` (${x.move.already} ya estaban ahí)`:'') + '.';
     if(x.move.skipped && x.move.skipped.length) msg += `<br><span style="color:var(--org)">${x.move.skipped.length} no se movieron: ${x.move.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
@@ -1360,7 +1362,7 @@ async function plCommonGo(){
   if(f.moved) msg += `<br>📁 ${f.home} archivo(s) a ${f.to ? `<code>${esc(short(f.to))}</code>` : `las carpetas de esas playlists`}${f.dup?` · ${f.dup} copia(s) repetida(s) a <code>${esc(short(f.dup_dir))}</code>`:''}.` + undoLink(f);
   if(f.kept) msg += `<br><span class="art">${f.kept} archivo(s) se quedaron donde estaban (otra versión o chocaban por nombre).</span>`;
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">${f.skipped.length} no se movieron: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
-  if(x.spotify) msg += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: se quitan allá solas en cuanto lo permita (aquí ya no aparecen).` : `<br>🟢 Spotify: listo.`;
+  if(x.spotify) msg += x.spotify.state==='queued' ? `<br>⏳ ${spWhy(x.spotify)}: se quitan allá solas en cuanto lo permita (aquí ya no aparecen).` : `<br>🟢 Spotify: listo.`;
   if(x.no_uri){ const mn = (x.manual||[]).slice(0,3).map(n=>'«'+esc(n)+'»').join(', ');
     msg += `<br><span style="color:var(--org)">Spotify no dejó quitar ${x.no_uri} archivo(s) local(es)${mn?` (${mn})`:''}: quítalos a mano en Spotify.</span>`; }
   if(x.still) msg += `<br><span style="color:var(--org)">${x.still} siguen en «${esc(x.name)}» porque su archivo no se pudo sacar de su carpeta.</span>`;
@@ -1430,7 +1432,7 @@ function plResult(x){
   const dj = Object.values(x.dj||{});
   if(dj.length) m += `<br>🎛️ ${dj.map(d => esc(d.label)).join(', ')}: listo` + (dj.some(d=>d.backup)?' (con respaldo)':'') + '.';
   for(const w of (x.dj_warnings||[])) m += `<br><span style="color:var(--org)">${esc(w)}</span>`;
-  if(x.spotify) m += x.spotify.state==='queued' ? `<br>⏳ Spotify está en pausa: el cambio se hace solo en cuanto lo permita.` : `<br>🟢 Spotify: listo${x.spotify.added!==undefined?` (${x.spotify.added} canciones agregadas)`:''}.`;
+  if(x.spotify) m += x.spotify.state==='queued' ? `<br>⏳ ${spWhy(x.spotify)}: el cambio se hace solo en cuanto lo permita.` : `<br>🟢 Spotify: listo${x.spotify.added!==undefined?` (${x.spotify.added} canciones agregadas)`:''}.`;
   if(x.platform_untouched) m += `<br><span class="art">${esc(x.platform_untouched)} no deja cambiarla desde aquí: el cambio quedó en BrainOrder y tus programas.</span>`;
   if(x.origin_untouched) m += `<br><span class="art">La playlist original en ${esc(x.origin_untouched)} no se tocó.</span>`;
   if(x.rekordbox_origin) m += `<br>🎛️ ${esc((x.rekordbox_origin.labels||['Tu programa de DJ']).join(', '))}: también en tu playlist original de allá (con respaldo).`;
@@ -1672,7 +1674,7 @@ async function tmDone(res, dj){
     msg += `<br><span class="art">${x.shared>1 ? `${x.shared} canciones estaban repetidas` : `${sn||'La canción'} estaba dos veces`} en «${esc(x.name)}»${x.shared>1&&sn?` (${sn}${x.shared>3?'…':''})`:''}: se quitó una y el archivo se queda en su carpeta porque la otra lo sigue usando.</span>`; }
   if(f.skipped && f.skipped.length) msg += `<br><span style="color:var(--org)">No se movió: ${f.skipped.slice(0,3).map(k=>esc(k.file+' ('+k.why+')')).join('; ')}</span>`;
   const sps = [x.spotify, x.spotify_src].filter(Boolean);
-  if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ Spotify está en pausa: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;
+  if(sps.length) msg += sps.some(s => s.state==='queued') ? `<br>⏳ ${spWhy(...sps)}: el cambio se hace allá solo en cuanto lo permita (aquí ya se ve).` : `<br>🟢 Spotify: listo.`;
   if(x.no_file) msg += `<br><span style="color:var(--org)">No entró a «${esc(x.into)}»: es de carpeta y no tienes el archivo.</span>`;
   if(x.not_found) msg += `<br><span style="color:var(--org)">No la encontré en Spotify para ponerla en Me gusta.</span>`;
   if(x.local_done) msg += `<br>🟢 ${x.local_done>1 ? `${x.local_done} archivos locales de Spotify también se quitaron` : 'El archivo local de Spotify también se quitó'} allá.`;

@@ -154,9 +154,11 @@ class SPr:
         SPr.sent = uris; return "y"
 o._spotify_ready = lambda: SPr()
 r = o.playlist_tracks_move('pa', [2], None)
-assert SPr.sent == ['spotify:track:' + SP('a'), 'spotify:track:' + SP('b')], SPr.sent
-assert not o.jobs and not o.got.get('ops') and [t["id"] for t in CACHE["playlists"][0]["tracks"]] == [SP('a'), SP('b')]
-print('mismo id dos veces: lista reescrita', SPr.sent)
+# 2.57.6: se pide como trabajo «replace» (si Spotify falla o está en pausa, queda pendiente)
+assert [j["kind"] for j in o.jobs] == ["replace"], o.jobs
+assert o.jobs[0]["uris"] == ['spotify:track:' + SP('a'), 'spotify:track:' + SP('b')], o.jobs
+assert not o.got.get('ops') and [t["id"] for t in CACHE["playlists"][0]["tracks"]] == [SP('a'), SP('b')]
+print('mismo id dos veces: lista reescrita', o.jobs[0]["uris"])
 
 # 12) nació en Rekordbox: mover de una playlist de Rekordbox a una de Spotify cambia también la original allá
 o = setup()
