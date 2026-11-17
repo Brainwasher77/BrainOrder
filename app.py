@@ -8383,10 +8383,12 @@ class Api:
                     "analysis": analysis}
         return self._task(run, "trash_restore", "Recuperar de la papelera" if source == "trash" else "Traer de otras carpetas")
 
-    def rb_lost_replace(self, ids, remove_ids=None):
+    def rb_lost_replace(self, ids, remove_ids=None, merge_versions=None):
         """Repara las perdidas elegidas (reconectar al archivo o unir con su copia) y, si lo pides, saca de la
-        colección las que no tienen copia en ninguna parte. Rekordbox cerrado, con respaldo y Deshacer."""
-        ids = {str(i) for i in ids or []}
+        colección las que no tienen copia en ninguna parte. merge_versions: «Otra versión» que decidiste unir
+        con la versión que ya está en tu colección (no se hace sola). Rekordbox cerrado, con respaldo y Deshacer."""
+        mv = {str(i) for i in merge_versions or []}
+        ids = {str(i) for i in ids or []} | mv
         remove_ids = {str(i) for i in remove_ids or []}
 
         def run():
@@ -8399,7 +8401,14 @@ class Api:
                 raise rekordbox_sync.RekordboxError("Rekordbox está abierto. Ciérralo para reparar las perdidas.")
             self._progress("Revisando otra vez la colección…")
             scan = self._rb_lost_scan()["items"]
-            items = [x for x in scan if x["id"] in ids and x.get("action")]
+            items = []
+            for x in scan:
+                if x["id"] not in ids:
+                    continue
+                if not x.get("action") and x["kind"] == "version" and x["id"] in mv and (x.get("copy") or {}).get("in_collection"):
+                    x = {**x, "action": "merge"}  # tú decidiste que es la misma canción
+                if x.get("action"):
+                    items.append(x)
             # solo se saca de la colección lo que de verdad no está en ninguna parte (no las de _duplicados)
             remove = [x["id"] for x in scan if x["id"] in remove_ids and x["state"] == "lost" and not x.get("action")]
             if not items and not remove:

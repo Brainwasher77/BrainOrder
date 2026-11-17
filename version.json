@@ -1,5 +1,5 @@
 {
-  "version": "2.58.0",
-  "build": 140,
-  "notes": "Revisión completa: analizar es hasta 6 veces más rápido, los respaldos de Rekordbox y Traktor no se repiten si nada cambió, y la cola de Spotify ya no pierde quitadas ni agregadas cuando hay varias seguidas."
+  "version": "2.58.1",
+  "build": 141,
+  "notes": "Perdidas en Rekordbox: las de «Otra versión» ya se pueden resolver desde su fila (unir con la otra versión o sacarlas de la colección)."
 }
