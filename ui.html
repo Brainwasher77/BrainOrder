@@ -349,6 +349,10 @@ code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:12px}
 let S = {analysis:null, foreign:{}, settings:{}, connected:false, view:'missing', q:''};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// qué hace un pendiente de Spotify (lista de pendientes)
+const spqWhat = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify', reorder:'Ponerla en el orden de Rekordbox',
+  remove:`Quitar ${j.count} canción(es) de la playlist en Spotify`, replace:'Quitar las canciones repetidas en Spotify (reescribir la lista)',
+  remove_nth:`Quitar ${j.count} copia(s) repetida(s) en Spotify`})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
 // por qué quedó pendiente en Spotify: pausa/cuota, o Spotify fallando (5xx) / sin conexión
 const spWhy = (...xs) => { const x = xs.find(y => y && y.state==='queued' && y.why); return !x ? 'Spotify está en pausa' : x.why==='down' ? 'Spotify está fallando por su lado ahora mismo (no es BrainOrder)' : 'Se cortó la conexión con Spotify'; };
 const jsq = s => esc(JSON.stringify(String(s ?? '')));
@@ -724,7 +728,7 @@ async function spqModal(jobs){
   let blocked = null;
   if(!jobs){ const r = await api().spotify_queue(); jobs = r.jobs || []; blocked = r.blocked; }
   if(!jobs.length){ if($('spqList')) closeModal(); toast('No hay nada pendiente para Spotify.'); return; }
-  const what = j => ({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify', reorder:'Ponerla en el orden de Rekordbox'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`;
+  const what = spqWhat;
   modal(`<h3>⏳ Pendientes para Spotify</h3>
     <div class="art" style="margin-bottom:8px">Se hacen solos en cuanto Spotify lo permita, y siempre <b>antes</b> de volver a leer tus playlists. Cancela los que ya no quieras (con ✕ o clic derecho).</div>
     ${blocked ? `<div class="box warn" style="margin-bottom:8px">⏸ Ahora no se pueden hacer: ${esc(blocked)}.</div>` : ''}
@@ -742,6 +746,7 @@ window.onSpotifyQueue = async (x) => {
       : d.kind==='rename' ? `✅ En Spotify ya se llama «${esc(d.name)}».`
       : d.kind==='delete' ? `✅ «${esc(d.name)}» ya se eliminó en Spotify.`
       : d.kind==='reorder' ? `✅ «${esc(d.name)}» ya está en Spotify en el orden de Rekordbox.`
+      : (d.kind==='remove' || d.kind==='remove_nth' || d.kind==='replace') ? `✅ Ya se quitaron en Spotify las canciones de «${esc(d.name)}».`
       : `✅ ${d.found} canción(es) agregadas a «${esc(d.name)}» en Spotify.`);
   const bad = (x.failed||[]).map(f => `<span style="color:var(--org)">No pude pasar «${esc(f.name)}» a Spotify: ${esc(f.error)}</span>`);
   if(ok.length || bad.length) toast(ok.concat(bad).join('<br>') + (x.left?`<br>Quedan ${x.left} pendientes.`:''), !!bad.length && !ok.length);
@@ -835,7 +840,7 @@ function foldersView(){
   const qBox = q.length ? `<div class="box" style="margin:0 0 18px;border-color:var(--org)">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="flex:1">⏳ Pendientes para Spotify (${q.length})</b>
         ${qp ? `<span class="art">Spotify en pausa hasta las ${new Date(d.spotify.paused*1000).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}: se hacen solas después.</span>` : `<button onclick="spqRun()">Pasarlas ya</button>`}</div>
-      <table style="margin-top:8px">${q.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${({import:'Crear la playlist en Spotify', rename:'Cambiarle el nombre en Spotify', delete:'Eliminarla en Spotify', reorder:'Ponerla en el orden de Rekordbox'})[j.kind] || `Agregar ${j.count} canción(es) a la playlist de Spotify`}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
+      <table style="margin-top:8px">${q.map(j=>`<tr data-spq="${esc(j.id)}" data-name="${esc(j.name)}"><td><b>${esc(j.name)}</b><div class="art">${spqWhat(j)}${j.error?` · <span style="color:var(--org)">último intento: ${esc(j.error)}</span>`:''}</div></td>
         <td style="text-align:right;width:40px"><button class="spq-x ib" onclick="spqCancel(${jsq(j.id)})" title="Cancelar este pendiente (en BrainOrder se queda como está)">${IC.x}</button></td></tr>`).join('')}</table></div>` : '';
   return `<div class="vhead"><h2>✨ Playlists nuevas</h2>
     <span class="sub">Carpetas que creas en tus carpetas de música y playlists que creas en tus programas de DJ. Cuando aparece una nueva te pregunto si la importo; aquí puedes hacerlo cuando quieras.</span></div>

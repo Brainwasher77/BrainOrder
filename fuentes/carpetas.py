@@ -30,18 +30,39 @@ def _mfile():
     return SUPPORT_DIR / "miembros.json"
 
 
+_MCACHE = {"key": None, "data": None}  # miembros.json leído (se relee solo si el archivo cambió)
+
+
+def _mstat():
+    try:
+        f = _mfile()
+        st = f.stat()
+        return (str(f), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
 def _mload():
+    """{pid: [rutas]}. Se leía el archivo entero varias veces por playlist en cada análisis (cientos de
+    lecturas): ahora se guarda en memoria mientras el archivo no cambie."""
+    key = _mstat()
+    if key is not None and key == _MCACHE["key"] and _MCACHE["data"] is not None:
+        return _MCACHE["data"]
     try:
         d = json.loads(_mfile().read_text("utf-8"))
-        return d if isinstance(d, dict) else {}
+        d = d if isinstance(d, dict) else {}
     except Exception:
-        return {}
+        d = {}
+    _MCACHE["key"], _MCACHE["data"] = key, d
+    return d
 
 
 def _msave(d):
     from config import write_atomic
     _mfile().parent.mkdir(parents=True, exist_ok=True)
+    _MCACHE["key"] = None  # si algo falla a mitad, la próxima lectura va al disco
     write_atomic(_mfile(), json.dumps(d, ensure_ascii=False))
+    _MCACHE["key"], _MCACHE["data"] = _mstat(), d
 
 
 def members(pid):

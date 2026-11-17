@@ -4,6 +4,7 @@ import heapq
 import json
 import threading
 import os
+import functools
 import re
 import unicodedata
 from pathlib import Path
@@ -42,6 +43,7 @@ def _norm_v1(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+@functools.lru_cache(maxsize=262144)  # función pura: se llama cientos de miles de veces por análisis
 def norm(s: str) -> str:
     s = (s or "").translate(_APOS).translate(_TRANSLIT)
     s = re.sub(r"(\w)'(\w)", r"\1\2", s)          # Can't / Can’t -> cant · MC's -> MCs
@@ -58,6 +60,7 @@ def _strip_feat(t: str) -> str:
     return re.sub(r"\s*[\(\[]\s*(feat|ft|with|con)\b.*?[\)\]]", "", t, flags=re.I)
 
 
+@functools.lru_cache(maxsize=262144)  # función pura: se llama cientos de miles de veces por análisis
 def core_title(t: str) -> str:
     t = _strip_feat(t)
     t = re.sub(r"\s*[\(\[].*?[\)\]]", "", t)
@@ -70,6 +73,7 @@ SAME_VERSION = re.compile(r"\b(radio\s+edit|radio\s+version|radio\s+mix|short\s+
                           r"album\s+version|original\s+mix|clean\s+edit|\d+[\W_]*\s*edit)\b", re.I)
 
 
+@functools.lru_cache(maxsize=262144)  # función pura: se llama cientos de miles de veces por análisis
 def extras(t: str) -> frozenset:
     """Palabras de versión (remix, edit…) que tiene el título además del núcleo."""
     t = SAME_VERSION.sub(" ", _strip_feat(t))
@@ -253,6 +257,7 @@ def resolve_folder(dest_root: Path, playlist_name: str, _cache={}) -> Path:
 _AND = re.compile(r"\b(y|e|x|und|et|vs|feat|ft|featuring|with|con)\b")
 
 
+@functools.lru_cache(maxsize=262144)  # función pura: se llama cientos de miles de veces por análisis
 def _artist_forms(s):
     """'alexis y fido' -> {'alexis and fido', 'alexisandfido'}: 'y', '&', 'x'… cuentan igual y sin espacios."""
     a = re.sub(r"\s+", " ", _AND.sub("and", s)).strip()
@@ -288,14 +293,27 @@ class LocalFile:
         self.artist_n = norm(artist)
 
 
-def parse_file(p: Path):
-    stem = p.stem
+@functools.lru_cache(maxsize=262144)
+def _parse_stem(stem):
+    """«Artista - Título» del nombre (sin leer el archivo) o None si hay que mirar las etiquetas."""
     stem = re.sub(r"\s*\(\d+\)$", "", stem)  # "Canción (2)" -> copia duplicada
     if " - " in stem:
         artist, title = stem.split(" - ", 1)
         artist, title = artist.strip(), title.strip()
         if not re.fullmatch(r"\d{1,3}", artist):
             return artist, title
+    return None
+
+
+def parse_file(p: Path):
+    p = p if isinstance(p, Path) else Path(p)
+    hit = _parse_stem(p.stem)
+    if hit is not None:
+        return hit
+    stem = re.sub(r"\s*\(\d+\)$", "", p.stem)
+    if " - " in stem:
+        artist, title = stem.split(" - ", 1)
+        artist, title = artist.strip(), title.strip()
         # "01 - Canción.mp3" (álbum/EP): el número es la pista, no el artista
         tag_a = ""
         if mutagen:

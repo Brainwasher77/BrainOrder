@@ -257,6 +257,15 @@ def _prune(sub):
 
 def backup(path):
     p = Path(path)
+    # sin cambios desde el último respaldo: ese mismo sirve (no se copia otra vez ni se saca uno viejo)
+    try:
+        olds = sorted(p.parent.glob("collection.brainorder-*.nml.bak"), key=lambda x: x.name.split("-", 1)[-1])
+        if olds:
+            stamp = datetime.strptime(olds[-1].name.split("-", 1)[1][:15], "%Y%m%d-%H%M%S").timestamp()
+            if stamp >= p.stat().st_mtime + 1 and olds[-1].stat().st_size > 0:
+                return olds[-1].name
+    except (OSError, ValueError, IndexError):
+        pass
     dst = p.with_name(f"collection.brainorder-{datetime.now():%Y%m%d-%H%M%S}.nml.bak")
     shutil.copy2(p, dst)
     for old in sorted(p.parent.glob("collection.brainorder-*.nml.bak"),

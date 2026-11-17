@@ -56,9 +56,33 @@ def add(job):
             jobs.append(job)
             _save(jobs)
             return job
+        if job["kind"] == "add":  # canciones nuevas de la misma carpeta vinculada: se suman, no se reemplazan
+            prev = next((j for j in jobs if j.get("kind") == "add" and j.get("path") == job.get("path")), None)
+            if prev is not None:
+                prev["files"] = list(dict.fromkeys(list(prev.get("files") or []) + list(job.get("files") or [])))
+                _save(jobs)
+                return prev
+        if job["kind"] in ("remove", "remove_nth"):
+            # varias quitadas de la misma playlist mientras Spotify está en pausa: se SUMAN (antes la segunda
+            # reemplazaba a la primera y lo quitado primero volvía a aparecer en Spotify)
+            prev = next((j for j in jobs if j.get("kind") == job["kind"] and j.get("pid") == job.get("pid")), None)
+            if prev is not None:
+                for k in ("uris", "local", "items"):
+                    seen = [json.dumps(x, sort_keys=True) for x in prev.get(k) or []]
+                    for x in job.get(k) or []:
+                        if json.dumps(x, sort_keys=True) not in seen:
+                            prev.setdefault(k, []).append(x)
+                            seen.append(json.dumps(x, sort_keys=True))
+                prev["fresh"] = bool(prev.get("fresh") or job.get("fresh"))
+                _save(jobs)
+                return prev
+            jobs.append(job)
+            _save(jobs)
+            return job
         # el mismo trabajo dos veces no: se reemplaza por el más nuevo
         same = (lambda j: j.get("kind") == job["kind"] and j.get("name") == job.get("name")
-                and (j.get("entry") or {}) == (job.get("entry") or {}) and j.get("path") == job.get("path"))
+                and (j.get("entry") or {}) == (job.get("entry") or {}) and j.get("path") == job.get("path")
+                and j.get("pid") == job.get("pid"))
         jobs = [j for j in jobs if not same(j)] + [job]
         _save(jobs)
         return job
@@ -102,7 +126,7 @@ def update(job_id, **changes):
 
 def summary():
     return [{"id": j["id"], "kind": j["kind"], "name": j.get("name"), "created": j.get("created"),
-             "error": j.get("error"), "count": len(j.get("files") or []) + len(j.get("uris") or []) + len(j.get("paths") or [])
+             "error": j.get("error"), "count": len(j.get("files") or []) + len(j.get("uris") or []) + len(j.get("paths") or []) + len(j.get("items") or []) + len(j.get("local") or [])
              + len(j.get("queries") or [])} for j in load()]
 
 

@@ -68,8 +68,18 @@ def backup():
     src = RB_DIR / "master.db"
     if not src.exists():
         raise RekordboxError(f"No encontré la librería de Rekordbox en {src}")
-    dst = RB_DIR / f"master.backup.brainorder-{datetime.now():%Y%m%d-%H%M%S}.db"
     wal = src.with_name("master.db-wal")
+    # si la librería no cambió desde el último respaldo, ese mismo sirve (antes cada «Quitar» copiaba toda la
+    # librería otra vez y en pocos minutos los respaldos nuevos e idénticos sacaban a los viejos)
+    try:
+        changed = max(src.stat().st_mtime, wal.stat().st_mtime if wal.exists() else 0)
+        olds = [b for b in RB_DIR.glob("master.backup.brainorder-*.db") if b.stat().st_size > 0]
+        last = max(olds, key=_backup_stamp, default=None)
+        if last is not None and _backup_stamp(last).timestamp() >= changed + 1:
+            return last
+    except OSError:
+        pass
+    dst = RB_DIR / f"master.backup.brainorder-{datetime.now():%Y%m%d-%H%M%S}.db"
     try:
         need = src.stat().st_size + (wal.stat().st_size if wal.exists() else 0)
         if shutil.disk_usage(RB_DIR).free < need * 1.2 + 50 * 1024 * 1024:

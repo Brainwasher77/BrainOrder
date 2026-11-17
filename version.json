@@ -1,5 +1,5 @@
 {
-  "version": "2.57.9",
-  "build": 139,
-  "notes": "Quitar archivos locales de Spotify: los que salen del todo se quitan con la forma que Spotify usa hoy; solo una copia de un local repetido queda para quitarla a mano."
+  "version": "2.58.0",
+  "build": 140,
+  "notes": "Revisión completa: analizar es hasta 6 veces más rápido, los respaldos de Rekordbox y Traktor no se repiten si nada cambió, y la cola de Spotify ya no pierde quitadas ni agregadas cuando hay varias seguidas."
 }

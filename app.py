@@ -1009,7 +1009,8 @@ class Api:
         self._sub_stage(0.95, 1.0)
         with self._state:
             self._progress("Guardando y escribiendo la lista de faltantes…", 0)
-            a = self._compute(None)  # re-cruce rápido con los archivos de este momento
+            if rows:  # mientras se buscaba en Deezer pudo llegar música: re-cruce con los archivos de ahora
+                a = self._compute(None)
             reportes.write_reports([p for p in a if focus is None or p["id"] in focus], self._cfg)
             self._attach_reports(a)
             self._progress(None, 1)
@@ -1327,7 +1328,8 @@ class Api:
                     raise SpotifyError("No encontré esa playlist.")
                 # descargas que YA usas en Rekordbox (por ejemplo en una playlist que armaste allá): al moverlas
                 # hay que corregir su ruta en Rekordbox, o quedarían «perdidas» allá
-                moving = set(organizador.plan(subset)[0]) | set(organizador.plan(subset)[1]) if subset else set()
+                _pl = organizador.plan(subset) if subset else None  # una sola vez (recorre todas las canciones)
+                moving = (set(_pl[0]) | set(_pl[1])) if _pl else set()
                 if extra and not pid:
                     inbox_p = Path(self._cfg["inbox"])
                     for name in extra.get("groups") or []:
@@ -2791,7 +2793,7 @@ class Api:
         r = self._process_spotify_queue(rebuild=False) or {}
         return len(r.get("done") or []), len(Q.load())
 
-    def _process_spotify_queue(self, force=False, rebuild=True):
+    def _process_spotify_queue(self, force=False, rebuild=True, auto=False):
         """Hace lo pendiente en Spotify si ya se puede: lo barato primero (renombrar, eliminar), después
         agregar canciones y crear playlists. Lo que ya se buscó queda guardado en cada pendiente."""
         import cola_spotify as Q
@@ -2812,7 +2814,13 @@ class Api:
             # lo barato primero: renombrar/eliminar, y entre las playlists a crear, las que menos búsquedas
             # necesitan (las gigantes al final: con la cuota de un día alcanzan a pasar muchas pequeñas)
             jobs = sorted(Q.load(), key=lambda j: (self._Q_ORDER.get(j.get("kind"), 9), self._job_cost(j), j.get("created") or ""))
+            import time as _t
             for n, job in enumerate(jobs, 1):
+                # el vigilante no repite cada minuto un pendiente que viene fallando: espera cada vez más
+                # (5, 10, 20… min, hasta 6 h) para no gastar la cuota de Spotify; «Hacerlos ya» lo intenta igual
+                tr = int(job.get("tries") or 0)
+                if auto and tr and _t.time() - float(job.get("last_try") or 0) < min(6 * 3600, 300 * 2 ** (tr - 1)):
+                    continue
                 self._progress(f"Pendiente {n}/{len(jobs)} para Spotify: {job.get('name')}", (n - 1) / max(1, len(jobs)))
                 try:
                     if job["kind"] == "import":
@@ -2872,7 +2880,7 @@ class Api:
                         Q.remove(job["id"])
                         failed.append({"name": job.get("name"), "error": msg})
                     else:
-                        Q.update(job["id"], tries=tries, error=msg)
+                        Q.update(job["id"], tries=tries, error=msg, last_try=_t.time())
         finally:
             self._q_mine, self._q_in_run = None, False
             lock.release()
@@ -4439,7 +4447,7 @@ class Api:
                 config.log(f"informe de pendientes: {e!r}")
             return {"ok": True, "idle": True, "blocked": why, "jobs": Q.summary(),
                     "report": str(Path(self._reports_dir(), "Pendientes de Spotify.txt"))}
-        out = self._task(lambda: self._process_spotify_queue() or {"idle": True}, "spotify_queue", "Pasar pendientes a Spotify")
+        out = self._task(lambda: self._process_spotify_queue(auto=auto) or {"idle": True}, "spotify_queue", "Pasar pendientes a Spotify")
         out["jobs"] = Q.summary()
         out["report"] = str(Path(self._reports_dir(), "Pendientes de Spotify.txt"))
         return out
