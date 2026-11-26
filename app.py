@@ -667,6 +667,48 @@ class Api:
                 "pending": [destinos.DESTINATIONS[k].LABEL for k in self._cfg.get("dj_folder_pending") or {}],
                 "name": self._cfg.get("rekordbox_folder")}
 
+    def _rb_link_known(self, state, analysis):
+        """Playlists dentro de la carpeta de BrainOrder en Rekordbox que la foto no tiene pero que YA son de
+        BrainOrder (las que agregaste desde Rekordbox y se movieron a la carpeta de su grupo, las que BrainOrder
+        llevó a la carpeta, o una con el mismo nombre que una playlist de BrainOrder): entran a la foto solas.
+        Antes salían para siempre como «Creaste la playlist» en «Cambios en Rekordbox». Las de verdad nuevas
+        (ningún nombre de BrainOrder) y las vacías repetidas siguen saliendo para que decidas."""
+        import rb_cambios
+        from fuentes import carpetas as FC
+        if not state:
+            return 0
+        base = rb_cambios.load_baseline()
+        # las que tienen canciones primero: si hay una vacía repetida con el mismo nombre, la vacía es la que sale
+        new = sorted((rid for rid in state if rid not in base), key=lambda r: -len(state[r].get("paths") or []))
+        if not new:
+            return 0
+        by_ref = {}
+        for e in FC.entries(self._cfg):
+            if e.get("program") == "rekordbox" and e.get("ref") is not None:
+                by_ref[str(e["ref"])] = FC.entry_pid(e)
+        by_name = {}
+        for p in analysis or []:
+            by_name.setdefault(self._norm_name(p.get("name")), p["id"])
+        # pid que ya tiene su playlist en la foto (y sigue en Rekordbox): no se le asigna una segunda
+        taken = {b.get("pid") for rid, b in base.items() if b.get("pid") and rid in state}
+        add = {}
+        for rid in new:
+            cur = state[rid]
+            pid = by_ref.get(str(rid))
+            if not pid:
+                pid = by_name.get(self._norm_name(cur.get("name")))
+                if pid in taken:
+                    continue  # repetida (p. ej. una vacía con el mismo nombre): que decidas tú
+            if not pid:
+                continue
+            taken.add(pid)
+            add[rid] = {"pid": pid, "name": cur["name"], "paths": cur.get("paths") or []}
+        if add:
+            rb_cambios.merge_baseline(add)
+            config.log(f"Rekordbox: {len(add)} playlist(s) que ya son de BrainOrder entran a la foto: "
+                       + ", ".join(sorted(v["name"] for v in add.values()))[:400])
+        return len(add)
+
     def _rb_rebase(self):
         """Las playlists de BrainOrder en Rekordbox que la foto no tenga (por ejemplo si antes dijiste
         «dejar así» cuando parecían borradas) vuelven a la foto: no son cambios tuyos."""
@@ -4745,6 +4787,10 @@ class Api:
             rb_cambios.save_baseline({rid: {"pid": by_name.get(v["name"]), "name": v["name"], "paths": v["paths"]}
                                       for rid, v in (state or {}).items()})
             return [], state
+        try:
+            self._rb_link_known(state, analysis)
+        except Exception as e:
+            config.log(f"foto de Rekordbox (playlists conocidas): {e!r}")
         if rb_cambios.FOUND.get("renamed") and rb_cambios.FOUND.get("name"):
             import carpeta_dj
             found = rb_cambios.FOUND["name"]

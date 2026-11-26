@@ -1,5 +1,5 @@
 {
-  "version": "2.58.1",
-  "build": 141,
-  "notes": "Perdidas en Rekordbox: las de «Otra versión» ya se pueden resolver desde su fila (unir con la otra versión o sacarlas de la colección)."
+  "version": "2.58.2",
+  "build": 142,
+  "notes": "Cambios en Rekordbox: las playlists que ya son de BrainOrder dejan de salir como «Creaste la playlist», y «Aplicar» por fin aplica lo que ves en cada lista."
 }

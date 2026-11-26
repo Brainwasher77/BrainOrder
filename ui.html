@@ -3051,7 +3051,7 @@ function rbOptions(c){
   const sp = c.type==='created' || c.source==='spotify';
   const w = RBC.data && RBC.data.spotify.can_write;
   const o = [];
-  if(c.type==='created'){ o.push(['spotify','Crear también en Spotify', !w]); o.push(['keep','Dejar solo en Rekordbox']); return o; }
+  if(c.type==='created'){ o.push(['keep','Dejar solo en Rekordbox']); o.push(['spotify','Crear también en Spotify', !w]); return o; }
   if(sp) o.push(['spotify', c.type==='deleted' ? 'Borrar también de Spotify' : c.type==='renamed' ? 'Renombrar también en Spotify' : 'Hacer lo mismo en Spotify', !w]);
   o.push(['keep', c.type==='deleted' ? 'No volver a crearla (manda Rekordbox)' : 'Solo en Rekordbox (manda Rekordbox)']);
   o.push(['revert', c.type==='deleted' ? 'Volver a crearla en Rekordbox' : `Deshacer en Rekordbox (como está en ${SRC_NAME[c.source]||'la plataforma'})`]);
@@ -3208,7 +3208,7 @@ function rbView(){
       ${cs.map(c=>`<div class="df" style="grid-template-columns:1fr auto">
         <div><div>${RB_TXT[c.type](c)}</div>${c.files&&c.files.length&&c.type!=='deleted'?`<div class="meta">${c.files.slice(0,8).map(esc).join(' · ')}${c.files.length>8?' …':''}</div>`:''}
           ${c.source && c.source!=='spotify' && c.type!=='created' ? `<div class="meta">Esta playlist viene de ${esc(SRC_NAME[c.source]||c.source)}: desde BrainOrder no se puede modificar allá.</div>`:''}</div>
-        <select onchange="RBC.dec['${c.id}']=this.value">${rbOptions(c).map(([v,t,dis])=>`<option value="${v}" ${RBC.dec[c.id]===v?'selected':''} ${dis?'disabled':''}>${t}${dis?' (reconecta Spotify)':''}</option>`).join('')}</select></div>`).join('')}</div>`).join('')
+        <select onchange="RBC.dec['${c.id}']=this.value">${rbOptions(c).map(([v,t,dis])=>`<option value="${v}" ${(RBC.dec[c.id]||'keep')===v?'selected':''} ${dis?'disabled':''}>${t}${dis?' (reconecta Spotify)':''}</option>`).join('')}</select></div>`).join('')}</div>`).join('')
     + `<div class="rbar"><span class="art" style="flex:1">Al buscar en Spotify se usa la canción de tus playlists, el ISRC del archivo o artista + título (con la misma duración). Lo que no encuentre te lo digo.</span>
         <button class="primary" ${running('rb_apply')?'disabled':''} onclick="rbApply()">${running('rb_apply')?'Aplicando…':'Aplicar'}</button></div>` + keepBox;
 }
@@ -4064,7 +4064,10 @@ async function lostGo(){
 function c0src(c){ return c.type==='created' && !c.source ? 'nueva' : (SRC_NAME[c.source]||c.source||''); }
 async function rbApply(){
   setTimeout(()=>{ if(S.view==='rbchg') render(); }, 120);
-  const r = await api().rb_apply(RBC.dec);
+  // lo que ves en cada lista es lo que se aplica; sin tocarla = «solo en Rekordbox» (antes no se mandaba nada y el cambio no se iba)
+  const dec = {};
+  ((RBC.data && RBC.data.changes) || []).forEach(c => { dec[c.id] = RBC.dec[c.id] || 'keep'; });
+  const r = await api().rb_apply(dec);
   if(!r.ok){ taskErr(r); render(); return; }
   await applyAnalysis(r); await rbLoad();
   let msg = r.done.map(esc).join('<br>') || 'Listo.';
