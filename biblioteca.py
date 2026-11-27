@@ -672,6 +672,8 @@ def analyze(playlists, cfg, progress=None, alt=None):
             })
         out.append({"id": pl["id"], "name": pl["name"], "folder": folder_s, "tracks": rows,
                     "liked": pl.get("liked", False)})
+    if progress and done_tracks:
+        progress(f"Cruzando canciones: {done_tracks}/{done_tracks} ✓", 1.0)
     save_durations()
     import armonia
     armonia.save()

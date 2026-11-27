@@ -89,7 +89,7 @@ def homes_of(analysis):
     return out
 
 
-def plan(analysis, cfg, dir_pids=(), resolve=None, pinned=()):
+def plan(analysis, cfg, dir_pids=(), resolve=None, pinned=(), tick=None):
     """Qué hay que mudar para que el disco quede como Rekordbox.
     -> [{"pid", "name", "from", "to", "files": [rutas]}] y {pid: carpeta} de las que ya están donde van.
     Solo se mueve un archivo a la carpeta de una playlist si su hogar ES esa carpeta: así una carpeta vieja
@@ -101,7 +101,9 @@ def plan(analysis, cfg, dir_pids=(), resolve=None, pinned=()):
     pinned = {_norm(p) for p in pinned or ()}
     moves, settled = [], {}
     targets = {_norm(a["folder"]) for a in analysis if a.get("folder")}
-    for a in analysis:
+    for i, a in enumerate(analysis, 1):
+        if tick:
+            tick(i, force=i == len(analysis))  # avance: aquí se mira el disco playlist por playlist
         to = a.get("folder")
         if not to or a.get("ignored") or a["id"] in dir_pids or not inside(to, dest):
             continue

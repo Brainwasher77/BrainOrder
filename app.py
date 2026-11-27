@@ -36,6 +36,21 @@ import plataforma  # noqa: E402
 import rekordbox_sync  # noqa: E402
 import reportes  # noqa: E402
 import deezer  # noqa: E402
+
+
+def _ticker(progress, label, total, every=0.7):
+    """Avance de un paso largo sin barra propia: «label: i/total», como mucho cada `every` s (no llena el log).
+    -> tick(i, force=False); no hace nada si no hay progress."""
+    if not progress or not total:
+        return lambda i, force=False: None
+    last = [float("-inf")]
+
+    def tick(i, force=False):
+        now = time.monotonic()
+        if force or now - last[0] >= every:
+            last[0] = now
+            progress(f"{label}: {i}/{total}")
+    return tick
 import unificar  # noqa: E402
 import sugerencias  # noqa: E402
 import actualizador  # noqa: E402
@@ -912,12 +927,16 @@ class Api:
         loaded = self._mirror_folders(loaded)  # subcarpetas como en Rekordbox
         result = biblioteca.analyze(loaded, self._cfg, progress, alt=deezer.targets())
         if self._rb_master() and destinos.DESTINATIONS["rekordbox"].enabled(self._cfg):
+            if progress:
+                progress("Poniendo el orden de Rekordbox…")
             try:
                 import rb_cambios
                 orden.apply(result, orden.order_map(rb_cambios.load_baseline()))  # un solo orden: el de Rekordbox
             except Exception as e:
                 config.log(f"orden de Rekordbox: {e!r}")
-        self._prune_folder_members(result)
+        self._prune_folder_members(result, progress)
+        if progress:
+            progress("Juntando los datos de tus playlists…")
         deezer.add_links(result, offline=True)  # links ya conocidos
         by_id = {a["id"]: a for a in result}
         analysis = []
@@ -944,7 +963,7 @@ class Api:
         analysis += [a for a in result if a["id"] not in meta]  # playlists ajenas integradas
         return analysis
 
-    def _prune_folder_members(self, result):
+    def _prune_folder_members(self, result, progress=None):
         """Playlists de carpeta: una canción cuyo archivo borraste sigue en la playlist mientras exista otra
         copia en tu música. Si ya no hay ninguna copia, sale de la playlist (la borraste de verdad)."""
         from fuentes import carpetas as FC
@@ -952,7 +971,11 @@ class Api:
         if not all(r and os.path.isdir(r) for r in roots):
             return  # un disco desconectado: no se decide nada
         by_pid = {FC.entry_pid(e): e for e in FC.entries(self._cfg) if e.get("path")}
-        for a in result:
+        mine = [a for a in result if a["id"] in by_pid]
+        tick = _ticker(progress, "Revisando playlists de carpeta", len(mine))
+        tick(0, force=True)
+        for i, a in enumerate(mine, 1):
+            tick(i, force=i == len(mine))
             e = by_pid.get(a["id"])
             if not e or not os.path.isdir(e["path"]):
                 continue
@@ -1039,6 +1062,8 @@ class Api:
         if light:
             with self._state:
                 a = self._compute(prog)
+                if prog:
+                    prog("Guardando el análisis…")
                 self._attach_reports(a)
                 return self._save_analysis(a)
         self._sub_stage(0.0, 0.45)
@@ -5575,17 +5600,20 @@ class Api:
                 return True
         return False
 
-    def _mirror_plan(self, analysis):
+    def _mirror_plan(self, analysis, progress=None):
         from fuentes import carpetas as FC
         dest = Path(self._cfg["dest_root"])
         tree = self._tree()
         dir_entries = [e for e in FC.entries(self._cfg) if e.get("path")]
         dir_pids = {FC.entry_pid(e) for e in dir_entries}
+        tick = _ticker(progress, "Revisando qué hay que mudar", len(analysis or []))
         moves, settled = estructura.plan(analysis, {**self._cfg, "rb_tree": tree}, dir_pids, biblioteca.resolve_folder,
-                                         self._cfg.get("pinned_paths") or [])
+                                         self._cfg.get("pinned_paths") or [], tick=tick)
+        tick2 = _ticker(progress, "Revisando tus playlists de carpeta en el disco", len(dir_entries))
         others = {estructura._norm(a["folder"]) for a in analysis or [] if a.get("folder")} | \
             {estructura._norm(e["path"]) for e in dir_entries}
-        for e in dir_entries:
+        for i, e in enumerate(dir_entries, 1):
+            tick2(i, force=i == len(dir_entries))
             pid, src = FC.entry_pid(e), e["path"]
             trail = tree.get(pid)
             if not trail or not estructura.inside(src, dest) or not os.path.isdir(src):
@@ -5628,15 +5656,18 @@ class Api:
         otras playlists); nunca se pisa nada: si en la nueva ya hay un archivo con ese nombre, se deja."""
         from fuentes import carpetas as FC
         import carpetas_nuevas as CN
-        moves, settled = self._mirror_plan(analysis)
+        self._progress("Revisando qué hay que mudar…")
+        moves, settled = self._mirror_plan(analysis, self._progress)
         dirs = dict(self._cfg.get("pl_dirs") or {})
         dirs.update(settled)
         if not moves:
+            self._progress("Todo ya está en su carpeta como en Rekordbox.")
             if dirs != (self._cfg.get("pl_dirs") or {}):
                 self._cfg["pl_dirs"] = dirs
                 config.save(self._cfg)
             return None
         ops = []
+        self._progress(f"Preparando la mudanza de {len(moves)} playlist(s)…")
         for m in moves:
             Path(m["to"]).mkdir(parents=True, exist_ok=True)
             CN.mark(m["to"], known=True)
@@ -5778,7 +5809,9 @@ class Api:
         no se iba. -> (ops que siguen, {origen: ruta en _duplicados}, {origen: la que se queda})"""
         keep, dup_ch, dup_of, planned = [], {}, {}, set()
         dupdir = Path(self._cfg["dest_root"]) / "_duplicados"
-        for op in ops:
+        tick = _ticker(self._progress, "Buscando repetidas por nombre", len(ops))
+        for i, op in enumerate(ops, 1):
+            tick(i, force=i == len(ops))
             src, dest = op[0], op[1]
             target = Path(dest) / Path(src).name
             if not os.path.isfile(src) or not target.exists() or plataforma.same_file(src, target):

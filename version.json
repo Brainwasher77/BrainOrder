@@ -1,5 +1,5 @@
 {
-  "version": "2.58.2",
-  "build": 142,
-  "notes": "Cambios en Rekordbox: las playlists que ya son de BrainOrder dejan de salir como «Creaste la playlist», y «Aplicar» por fin aplica lo que ves en cada lista."
+  "version": "2.58.3",
+  "build": 143,
+  "notes": "Después de «Cruzando canciones» la barra ya no se queda quieta: dice qué está revisando (playlists de carpeta, qué hay que mudar, repetidas) y cuántas lleva."
 }
